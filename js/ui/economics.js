@@ -968,12 +968,7 @@ export function updateFundraiseDisplay() {
   }
   section.classList.remove('hidden-until-unlocked');
 
-  // Show notification dot on Finance subtab when a round is available but not raised
-  // AND the player is not already viewing the Finance tab
-  const hasUnraised = Object.values(gameState.fundraiseRounds).some(r => r.available && !r.raised);
-  const financeTabActive = document.querySelector('.sub-tab[data-category="finance"]')?.classList.contains('active');
-  const notifyDot = $('finance-notify');
-  if (notifyDot) notifyDot.classList.toggle('hidden', !hasUnraised || financeTabActive);
+  // Notification dot now handled by tab-notifications.js
 
   // Show equity sold
   if (equityEl) {

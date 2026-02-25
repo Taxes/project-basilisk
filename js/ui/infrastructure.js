@@ -50,6 +50,7 @@ import {
 } from '../automation-state.js';
 import { getCount } from '../purchasable-state.js';
 import { getAmplificationBonusText } from '../resources.js';
+import { initTabNotifications, markTabSeen } from './tab-notifications.js';
 
 // ---------------------------------------------------------------------------
 // Click throttles
@@ -857,6 +858,7 @@ const SUBTAB_CONTENT = {
 export function initInfraTabs() {
   const opsColumn = document.getElementById('col-operations');
   if (!opsColumn) return;
+  initTabNotifications();
   // Sub-tab switching: toggle .subtab-content visibility
   opsColumn.querySelectorAll('.sub-tab').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -866,6 +868,7 @@ export function initInfraTabs() {
 
       // Show/hide subtab content divs
       const activeCategory = btn.dataset.category;
+      markTabSeen(activeCategory);
       for (const [category, contentId] of Object.entries(SUBTAB_CONTENT)) {
         const contentEl = document.getElementById(contentId);
         if (contentEl) {

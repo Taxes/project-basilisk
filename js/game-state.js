@@ -196,6 +196,7 @@ export function createDefaultGameState() {
       currentTab: "research",
       currentTrack: "capabilities",
       notificationQueue: [],
+      seenItems: [],   // IDs of purchasable items the player has seen (serialized Set)
     },
 
     // Event tracking
@@ -696,6 +697,12 @@ export function loadGame() {
       }
       if (gameState.pauseReason === 'act_completion') {
         gameState.pauseReason = 'phase_completion';
+      }
+
+      // Save migration: seenItems (added in tab notifications)
+      if (!loaded.ui?.seenItems) {
+        if (!gameState.ui) gameState.ui = createDefaultGameState().ui;
+        gameState.ui.seenItems = [];
       }
 
       // NOTE: restoreQueueIdCounter() must be called after loadGame()

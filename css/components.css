@@ -1060,6 +1060,15 @@ body[data-arc="2"] .arc-1-hidden {
   display: none;
 }
 
+/* Notification tooltips */
+.notif-tooltip {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.notif-item {
+  white-space: nowrap;
+}
+
 /* Compact Research Cards */
 .compact-research-card {}
 
