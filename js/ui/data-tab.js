@@ -1,0 +1,1288 @@
+import { gameState } from '../game-state.js';
+import { BALANCE } from '../../data/balance.js';
+import { getCapForCopies } from '../data-quality.js';
+import { getRateUnit, formatFunding, formatDuration, formatNumber, formatPercent } from '../utils/format.js';
+import { getPurchasableById, getPurchaseCost, canQueuePurchase } from '../content/purchasables.js';
+import { getCount, getActiveCount } from '../purchasable-state.js';
+import { createPurgeItem, addToQueue, enqueuePurchase, enqueueFurlough } from '../focus-queue.js';
+import { requestFullUpdate } from './signals.js';
+import { attachTooltip } from './stats-tooltip.js';
+import { capabilitiesTrack } from '../content/capabilities-track.js';
+import { createAutomationPanel, updateAutomationPanel } from './automation-panel.js';
+import { isAutomationUnlocked } from '../automation-state.js';
+
+// Debounce timestamps for button handlers
+let _lastPriorityClickTime = 0;
+let _lastFurloughClickTime = 0;
+
+/** Get batch quantity from modifier keys: default=1, Ctrl=5, Shift=10, Ctrl+Shift=50 */
+function getModifierQty(e) {
+  if (e.ctrlKey && e.shiftKey) return 50;
+  if (e.shiftKey) return 10;
+  if (e.ctrlKey) return 5;
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
+// Event Delegation
+// ---------------------------------------------------------------------------
+let _delegationInit = false;
+
+function initDataTabDelegation(container) {
+  if (_delegationInit) return;
+  _delegationInit = true;
+
+  container.addEventListener('click', (e) => {
+    // Purge button (kept as delegation — appears/disappears dynamically)
+    const purgeBtn = e.target.closest('[data-synth-purge]');
+    if (purgeBtn) {
+      addToQueue(createPurgeItem());
+      _dataTabFingerprint = '';
+      requestFullUpdate();
+      return;
+    }
+
+    // Collapsible section headers
+    const sectionHeader = e.target.closest('.data-section-header');
+    if (sectionHeader) {
+      const section = sectionHeader.closest('.data-section');
+      if (section) section.classList.toggle('collapsed');
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Fingerprint for incremental updates
+// ---------------------------------------------------------------------------
+let _dataTabFingerprint = '';
+
+function buildDataFingerprint() {
+  const parts = [];
+
+  // Bulk sources
+  const bulkParts = [];
+  for (const src of BALANCE.DATA_BULK_SOURCES || []) {
+    if (!isDataSourceVisible(src.id)) continue;
+    bulkParts.push(src.id + ':' + (getCount('data_' + src.id) > 0 ? '1' : '0'));
+  }
+  parts.push('bulk:' + bulkParts.join(','));
+
+  // Renewable sources (track count/active for rebuild on purchase or furlough change)
+  const renewParts = [];
+  for (const src of BALANCE.DATA_RENEWABLE_SOURCES || []) {
+    if (!isDataSourceVisible(src.id)) continue;
+    renewParts.push(src.id + ':' + getCount('data_' + src.id) + '/' + getActiveCount('data_' + src.id));
+  }
+  parts.push('renew:' + renewParts.join(','));
+
+  // Generators
+  const genOwned = getCount('synthetic_generator');
+  const genActive = getActiveCount('synthetic_generator');
+  const upgradeLevel = getCount('generator_upgrade_autonomous') > 0 ? 2
+    : getCount('generator_upgrade_verified') > 0 ? 1 : 0;
+  parts.push('gen:' + genOwned + '/' + genActive + '/' + upgradeLevel);
+
+  // Purge button visibility
+  parts.push('purge:' + (gameState.data.syntheticScore > 0 ? '1' : '0'));
+
+  // Quality revealed state
+  parts.push('qrev:' + (gameState.data.qualityRevealed ? '1' : '0'));
+
+  // Capability unlock state for gated items (triggers rebuild when caps unlock)
+  const capBits = [];
+  for (const capId of ['synthetic_data', 'synthetic_verification', 'autonomous_research',
+    'data_curation', 'chain_of_thought', 'dataset_licensing', 'massive_scaling']) {
+    if (isCapUnlocked(capId)) capBits.push(capId);
+  }
+  parts.push('caps:' + capBits.join(','));
+
+  return parts.join('|');
+}
+
+// ---------------------------------------------------------------------------
+// Main Render
+// ---------------------------------------------------------------------------
+export function renderDataTab(container) {
+  const fp = buildDataFingerprint();
+  if (fp === _dataTabFingerprint) {
+    updateDataTabDynamicValues();
+    return;
+  }
+  _dataTabFingerprint = fp;
+
+  // Full rebuild — preserve collapse state
+  const collapseState = {};
+  container.querySelectorAll('.data-section').forEach(s => {
+    const title = s.querySelector('.data-section-title');
+    if (title) collapseState[title.textContent] = s.classList.contains('collapsed');
+  });
+
+  initDataTabDelegation(container);
+  container.innerHTML = '';
+
+  // Stats overview panel
+  container.appendChild(createStatsPanel());
+
+  // Bulk section
+  const visibleBulk = (BALANCE.DATA_BULK_SOURCES || []).filter(s => isDataSourceVisible(s.id));
+  const purchasedCount = visibleBulk.filter(s => getCount('data_' + s.id) > 0).length;
+  const allBulkPurchased = purchasedCount === visibleBulk.length && visibleBulk.length > 0;
+  const bulkCards = visibleBulk.map(src => createBulkCard(src));
+  const cd = gameState.computed?.data;
+  const catQ = cd?.categoryQuality || {};
+  const bulkEffVal = cd?.scores?.bulkEff ?? (cd?.scores?.bulk || 0) * (catQ.bulk || 1);
+  const bulkSummary = `${formatNumber(Math.round(bulkEffVal))} effective`;
+  const bulkDefaultCollapsed = collapseState['BULK DATA'] !== undefined ? collapseState['BULK DATA'] : allBulkPurchased;
+  container.appendChild(createCollapsibleSection('BULK DATA', bulkSummary, bulkDefaultCollapsed, bulkCards));
+
+  // Renewable section
+  const visibleRenewable = (BALANCE.DATA_RENEWABLE_SOURCES || []).filter(s => isDataSourceVisible(s.id));
+  const renewableCards = visibleRenewable.map(src => createRenewableCard(src));
+  const renewSummary = buildRenewableSummary(cd, visibleRenewable);
+  const renewDefaultCollapsed = collapseState['RENEWABLE DATA'] !== undefined ? collapseState['RENEWABLE DATA'] : false;
+  container.appendChild(createCollapsibleSection('RENEWABLE DATA', renewSummary, renewDefaultCollapsed, renewableCards));
+
+  // Synthetic section
+  if (isCapUnlocked('synthetic_data')) {
+    const synthSummary = buildSyntheticSummary(cd);
+    const synthDefaultCollapsed = collapseState['SYNTHETIC DATA'] !== undefined ? collapseState['SYNTHETIC DATA'] : false;
+    container.appendChild(createCollapsibleSection('SYNTHETIC DATA', synthSummary, synthDefaultCollapsed, [createSyntheticSection()]));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stats Overview Panel
+// ---------------------------------------------------------------------------
+function createStatsPanel() {
+  const cd = gameState.computed?.data;
+  const scores = cd?.scores || { bulk: 0, renewable: 0, synthetic: 0, total: 0 };
+  const effectiveness = cd?.effectiveness ?? gameState.data.effectiveness ?? 1.0;
+  const quality = cd?.quality ?? 1.0;
+  const qualityRevealed = gameState.data.qualityRevealed;
+  const required = gameState.data.dataRequired || 1;
+  const effectiveScore = scores.effective ?? scores.total;
+
+  const effClass = effectiveness >= 1.5 ? 'positive' : effectiveness >= 0.8 ? 'warning' : 'negative';
+  const effMultiplier = effectiveness <= 1.0
+    ? (effectiveness * effectiveness).toFixed(2)
+    : (1.0 + Math.log(1 + (effectiveness - 1.0))).toFixed(2);
+
+  // Trend arrow from 5s snapshot comparison
+  const trend = cd?.trend || 'stable';
+  const trendArrow = trend === 'rising' ? '\u25B2' : trend === 'falling' ? '\u25BC' : '\u2550';
+  const trendClass = trend === 'rising' ? 'positive' : trend === 'falling' ? 'negative' : 'dim';
+
+  // Surplus/deficit
+  const surplus = effectiveScore - required;
+  const surplusText = surplus >= 0
+    ? `(+${formatNumber(Math.round(surplus))} surplus)`
+    : `(${formatNumber(Math.round(surplus))} deficit)`;
+  const surplusClass = surplus >= 0 ? 'positive' : 'negative';
+
+  const renewableRate = Object.values(cd?.renewables || {}).reduce((sum, r) => sum + (r.growthRate || 0), 0);
+  const synthRate = cd?.synthetic?.generationRate ?? 0;
+
+  // Running costs from computed state
+  const dataBreakdown = gameState.computed?.costs?.data?.breakdown || {};
+  let renewableCost = 0;
+  for (const src of BALANCE.DATA_RENEWABLE_SOURCES) {
+    const entry = dataBreakdown['data_' + src.id];
+    if (entry) renewableCost += entry.cost;
+  }
+  const synthCostEntry = dataBreakdown.synthetic_generator;
+  const synthCost = synthCostEntry?.cost || 0;
+
+  const panel = document.createElement('div');
+  panel.className = 'data-stats-panel';
+  panel.id = 'data-stats-panel';
+
+  const qClass = quality >= 0.7 ? 'positive' : quality >= 0.4 ? 'warning' : 'negative';
+  const qualityPct = Math.round(quality * 100);
+
+  const hasSynthetic = isCapUnlocked('synthetic_data');
+  const catQ = cd?.categoryQuality || { bulk: 0, renewable: 0, synthetic: 0 };
+
+  // Per-category effective scores and percentages
+  const bulkEff = scores.bulkEff ?? scores.bulk * (catQ.bulk || 1);
+  const renewableEff = scores.renewableEff ?? scores.renewable * (catQ.renewable || 1);
+  const syntheticEff = scores.syntheticEff ?? scores.synthetic * (catQ.synthetic || 1);
+  const totalEff = effectiveScore || 1;
+  const bulkPct = totalEff > 0 ? Math.round(bulkEff / totalEff * 100) : 0;
+  const renewablePct = totalEff > 0 ? Math.round(renewableEff / totalEff * 100) : 0;
+  const syntheticPct = totalEff > 0 ? Math.round(syntheticEff / totalEff * 100) : 0;
+
+  panel.innerHTML = `
+    <h2>DATA OVERVIEW</h2>
+    <div class="data-effectiveness-row" id="data-eff-row">
+      <span class="stat-label">Effectiveness</span>
+      <span class="stat-value ${effClass}" id="data-eff-value">${effMultiplier}x</span>
+      <span class="stat-value ${trendClass}" id="data-eff-trend">${trendArrow}</span>
+      <span class="dim" id="data-eff-label">research speed</span>
+    </div>
+    <div class="data-effectiveness-detail" id="data-eff-detail">
+      <span id="data-eff-score">${formatNumber(Math.round(effectiveScore))} effective / ${formatNumber(Math.round(required))} needed</span>
+      <span class="${surplusClass}" id="data-eff-surplus">${surplusText}</span>
+    </div>
+    <div class="data-effectiveness-row" id="data-quality-row">
+      <span class="stat-label">Quality</span>
+      <span class="stat-value ${qClass}" id="data-quality-value">${quality.toFixed(2)}</span>
+      <span class="dim" id="data-quality-effect">\u2192 ${qualityPct}% of raw data effective</span>
+      ${qualityRevealed ? `<span class="dim" id="data-synth-pct">\u00b7 Synthetic ratio: ${formatPercent(cd?.synthetic?.synthProportion ?? 0)}</span>` : ''}
+    </div>
+    <div class="data-category-breakdown" id="data-cat-breakdown">
+      <div class="data-category-stat">
+        <span class="cat-label">Bulk</span>
+        <span class="cat-score" id="data-cat-bulk" title="Raw: ${Math.round(scores.bulk)} \u00b7 Avg Q: ${catQ.bulk > 0 ? catQ.bulk.toFixed(2) : '\u2014'}">${formatNumber(Math.round(bulkEff))} <span class="cat-pct dim">(${bulkPct}%)</span></span>
+      </div>
+      <div class="data-category-stat">
+        <span class="cat-label">Renewable</span>
+        <span class="cat-score" id="data-cat-renewable" title="Raw: ${Math.round(scores.renewable)} \u00b7 Avg Q: ${catQ.renewable > 0 ? catQ.renewable.toFixed(2) : '\u2014'}">${formatNumber(Math.round(renewableEff))} <span class="cat-pct dim">(${renewablePct}%)</span></span>
+        <span class="cat-rate positive" id="data-cat-renewable-rate">${renewableRate > 0 ? '+' + renewableRate.toFixed(1) + getRateUnit() : '\u2014'}</span>
+        <span class="cat-cost" id="data-cat-renewable-cost">${renewableCost > 0 ? formatFunding(renewableCost) + getRateUnit() : ''}</span>
+      </div>
+      ${hasSynthetic ? `
+      <div class="data-category-stat">
+        <span class="cat-label">Synthetic</span>
+        <span class="cat-score" id="data-cat-synth" title="Raw: ${Math.round(scores.synthetic)} \u00b7 Avg Q: ${catQ.synthetic > 0 ? catQ.synthetic.toFixed(2) : '\u2014'}">${formatNumber(Math.round(syntheticEff))} <span class="cat-pct dim">(${syntheticPct}%)</span></span>
+        <span class="cat-rate positive" id="data-cat-synth-rate">${synthRate > 0 ? '+' + synthRate.toFixed(1) + getRateUnit() : '\u2014'}</span>
+        <span class="cat-cost" id="data-cat-synth-cost">${synthCost > 0 ? formatFunding(synthCost) + getRateUnit() : ''}</span>
+      </div>` : ''}
+    </div>
+  `;
+
+  return panel;
+}
+
+// ---------------------------------------------------------------------------
+// Collapsible Section Builder
+// ---------------------------------------------------------------------------
+function createCollapsibleSection(title, summaryText, defaultCollapsed, children) {
+  const section = document.createElement('div');
+  section.className = 'data-section' + (defaultCollapsed ? ' collapsed' : '');
+
+  const header = document.createElement('div');
+  header.className = 'data-section-header';
+  header.innerHTML = `
+    <span class="section-toggle">\u25BC</span>
+    <h3 class="data-section-title" style="margin:0">${title}</h3>
+    <span class="section-summary" data-section-summary="${title}">${summaryText}</span>
+  `;
+
+  const items = document.createElement('div');
+  items.className = 'data-section-items';
+  for (const child of children) {
+    items.appendChild(child);
+  }
+
+  section.appendChild(header);
+  section.appendChild(items);
+  return section;
+}
+
+// ---------------------------------------------------------------------------
+// Card Builders
+// ---------------------------------------------------------------------------
+function createBulkCard(src) {
+  const purchId = 'data_' + src.id;
+  const purchasable = getPurchasableById(purchId);
+  const count = getCount(purchId);
+  const owned = count > 0;
+  const cost = purchasable ? getPurchaseCost(purchasable) : {};
+  const queueable = canQueuePurchase(purchId);
+
+  const card = document.createElement('div');
+  card.className = 'compact-purchase-card';
+  card.dataset.purchaseId = purchId;
+  if (owned) card.style.borderLeft = '3px solid var(--positive)';
+
+  // === Row 1: Header — Name (count) + [Queue] ===
+  const header = document.createElement('div');
+  header.className = 'purchase-header';
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'purchase-name';
+  nameEl.textContent = src.name + ' ' + (owned ? '(1)' : '(0)');
+
+  const headerActions = document.createElement('div');
+  headerActions.className = 'purchase-header-actions';
+
+  const btn = document.createElement('button');
+  btn.textContent = 'Queue';
+  btn.disabled = !queueable;
+
+  btn.addEventListener('click', (e) => {
+    enqueuePurchase(purchId, getModifierQty(e), false);
+    _dataTabFingerprint = '';
+    requestFullUpdate();
+  });
+  btn.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const now = Date.now();
+    if (now - _lastPriorityClickTime < 250) return;
+    _lastPriorityClickTime = now;
+    enqueuePurchase(purchId, getModifierQty(e), true);
+    _dataTabFingerprint = '';
+    requestFullUpdate();
+  });
+
+  headerActions.appendChild(btn);
+  header.appendChild(nameEl);
+  header.appendChild(headerActions);
+  card.appendChild(header);
+
+  // === Row 2: Description + Cost ===
+  const descRow = document.createElement('div');
+  descRow.className = 'purchase-desc-row';
+
+  const desc = document.createElement('div');
+  desc.className = 'purchase-description';
+  desc.textContent = src.flavor;
+
+  const costInfo = document.createElement('span');
+  costInfo.className = 'purchase-cost-info';
+  const costText = cost.funding === 0 || !cost.funding ? 'FREE' : formatFunding(cost.funding);
+  const durationText = purchasable?.focusDuration ? formatDuration(purchasable.focusDuration) : '';
+  costInfo.textContent = durationText ? `${costText} \u00b7 ${durationText}` : costText;
+  costInfo.classList.toggle('affordable', queueable && gameState.resources.funding >= (cost.funding || 0));
+
+  descRow.appendChild(desc);
+  descRow.appendChild(costInfo);
+  card.appendChild(descRow);
+
+  // === Row 3: Stats ===
+  const stats = document.createElement('div');
+  stats.className = 'purchase-stats';
+  const effectiveScore = src.score * src.quality;
+  const effText = cost.funding > 0 && effectiveScore > 0 ? ` · ${formatFunding(cost.funding / effectiveScore)}/eff` : '';
+  stats.textContent = `+${src.score} data · quality ${src.quality}${effText}`;
+  card.appendChild(stats);
+
+  // === Row 4: Requirements hint ===
+  let reqEl = null;
+  if (purchasable?.requires?.capability && !isCapUnlocked(purchasable.requires.capability)) {
+    reqEl = document.createElement('div');
+    reqEl.className = 'purchase-requires dim';
+    reqEl.textContent = `[requires: ${purchasable.requires.capability.replace(/_/g, ' ')}]`;
+    card.appendChild(reqEl);
+  }
+
+  // Stash refs
+  card._ownedEl = nameEl;
+  card._costInfoEl = costInfo;
+  card._btn = btn;
+  card._statsEl = stats;
+  card._reqEl = reqEl;
+  card._furloughBtn = null;
+  card._isFurloughable = false;
+  card._purchasableName = src.name;
+
+  return card;
+}
+
+function createRenewableCard(src) {
+  const purchId = 'data_' + src.id;
+  const purchasable = getPurchasableById(purchId);
+  const count = getCount(purchId);
+  const active = getActiveCount(purchId);
+  const isOwned = count > 0;
+  const cd = gameState.computed?.data?.renewables?.[src.id];
+  const curScore = cd?.score ?? 0;
+  const maxScore = cd?.maxScore ?? 1;
+  const growthRate = cd?.growthRate ?? 0;
+  const cost = purchasable ? getPurchaseCost(purchasable) : {};
+  const queueable = canQueuePurchase(purchId);
+
+  const card = document.createElement('div');
+  card.className = 'compact-purchase-card data-renewable-card';
+  card.dataset.purchaseId = purchId;
+
+  // Border: green when active, yellow when all furloughed, none when unowned
+  if (isOwned) {
+    card.style.borderLeft = `3px solid var(--${active > 0 ? 'positive' : 'warning'})`;
+  }
+
+  // === Row 1: Header — Name (active/count) + [Furlough] [Queue] ===
+  const header = document.createElement('div');
+  header.className = 'purchase-header';
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'purchase-name';
+  const countText = isOwned ? `(${active}/${count})` : '(0)';
+  nameEl.textContent = src.name + ' ' + countText;
+
+  if (isOwned) {
+    nameEl.style.cursor = 'help';
+    attachTooltip(nameEl, () => {
+      const a = getActiveCount(purchId), c = getCount(purchId);
+      return `<div class="tooltip-row"><span>${a} active / ${c} owned</span></div>`;
+    });
+  }
+
+  const headerActions = document.createElement('div');
+  headerActions.className = 'purchase-header-actions';
+
+  // Furlough button (shown when owned)
+  let furloughBtn = null;
+  if (isOwned) {
+    furloughBtn = document.createElement('button');
+    furloughBtn.textContent = 'Furlough';
+    furloughBtn.className = 'furlough-btn';
+    furloughBtn.disabled = active <= 0;
+
+    furloughBtn.addEventListener('click', (e) => {
+      const now = Date.now();
+      if (now - _lastFurloughClickTime < 250) return;
+      _lastFurloughClickTime = now;
+      enqueueFurlough(purchId, getModifierQty(e), false);
+      _dataTabFingerprint = '';
+      requestFullUpdate();
+    });
+    furloughBtn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const now = Date.now();
+      if (now - _lastFurloughClickTime < 250) return;
+      _lastFurloughClickTime = now;
+      enqueueFurlough(purchId, getModifierQty(e), true);
+      _dataTabFingerprint = '';
+      requestFullUpdate();
+    });
+
+    headerActions.appendChild(furloughBtn);
+  }
+
+  // Queue button (buy next level or auto-unfurlough)
+  const btn = document.createElement('button');
+  btn.textContent = 'Queue';
+  btn.disabled = !queueable;
+
+  btn.addEventListener('click', (e) => {
+    enqueuePurchase(purchId, getModifierQty(e), false);
+    _dataTabFingerprint = '';
+    requestFullUpdate();
+  });
+  btn.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const now = Date.now();
+    if (now - _lastPriorityClickTime < 250) return;
+    _lastPriorityClickTime = now;
+    enqueuePurchase(purchId, getModifierQty(e), true);
+    _dataTabFingerprint = '';
+    requestFullUpdate();
+  });
+
+  headerActions.appendChild(btn);
+  header.appendChild(nameEl);
+  header.appendChild(headerActions);
+  card.appendChild(header);
+
+  // === Row 2: Description + Cost info ===
+  const descRow = document.createElement('div');
+  descRow.className = 'purchase-desc-row';
+
+  const desc = document.createElement('div');
+  desc.className = 'purchase-description';
+  desc.textContent = src.flavor;
+
+  const costInfo = document.createElement('span');
+  costInfo.className = 'purchase-cost-info';
+  if (isOwned) {
+    // Cost info: purchase cost + duration + marginal cap from next copy
+    const marginalCap = Math.round(getCapForCopies(src, active + 1, gameState) - getCapForCopies(src, active, gameState));
+    const costText = formatFunding(cost.funding || 0);
+    const durationText = purchasable?.focusDuration ? formatDuration(purchasable.focusDuration) : '';
+    costInfo.textContent = `${costText} \u00b7 ${durationText} \u00b7 +${marginalCap} cap`;
+  } else {
+    const costText = formatFunding(cost.funding || 0);
+    const durationText = purchasable?.focusDuration ? formatDuration(purchasable.focusDuration) : '';
+    costInfo.textContent = durationText ? `${costText} \u00b7 ${durationText}` : costText;
+  }
+  costInfo.classList.toggle('affordable', queueable && gameState.resources.funding >= (cost.funding || 0));
+
+  descRow.appendChild(desc);
+  descRow.appendChild(costInfo);
+  card.appendChild(descRow);
+
+  // === Row 3: Stats ===
+  const stats = document.createElement('div');
+  stats.className = 'purchase-stats';
+  if (isOwned) {
+    const pct = maxScore > 0 ? (curScore / maxScore * 100) : 0;
+    let timeToCapText = '';
+    if (active > 0 && growthRate > 0 && pct < 99) {
+      const remaining = maxScore - curScore;
+      const estSeconds = remaining / growthRate;
+      timeToCapText = estSeconds < 3600
+        ? `~${Math.ceil(estSeconds / 60)}m to cap`
+        : `~${(estSeconds / 3600).toFixed(1)}h to cap`;
+    }
+    const rateText = active > 0
+      ? `<span class="positive">+${growthRate.toFixed(1)}${getRateUnit()}</span>`
+      : '<span class="dim">paused</span>';
+    stats.innerHTML = `${rateText} \u00b7 ${curScore.toFixed(0)}/${maxScore.toFixed(0)} (${pct.toFixed(0)}%)${timeToCapText ? ' \u00b7 ' + timeToCapText : ''}`;
+  } else {
+    const potentialRate = src.growthCap / BALANCE.DATA_RENEWABLE_TAU;
+    const effectiveCap = src.growthCap * src.quality;
+    const effText = cost.funding > 0 && effectiveCap > 0 ? ` · ${formatFunding(cost.funding / effectiveCap)}/eff. cap` : '';
+    stats.innerHTML = `<span class="dim">Peak +${potentialRate.toFixed(1)}${getRateUnit()} · cap ${src.growthCap}${effText}</span>`;
+  }
+  card.appendChild(stats);
+
+  // === Row 3b: Stats line 2 — running cost (matches infrastructure pattern: marginal - Total) ===
+  const stats2 = document.createElement('div');
+  stats2.className = 'purchase-stats';
+  if (isOwned && active > 0) {
+    const dataBreakdown = gameState.computed?.costs?.data?.breakdown || {};
+    const opsDiscount = gameState.computed?.costs?.opsDiscount ?? 1;
+    const totalRunCost = (dataBreakdown[purchId]?.cost || 0) * opsDiscount;
+    const marginalRunCost = (dataBreakdown[purchId]?.marginalCost ?? purchasable.runningCost) * opsDiscount;
+    let text = `Running: ${formatFunding(totalRunCost)}${getRateUnit()}`;
+    if (active > 1) text += ` (${formatFunding(totalRunCost / active)}${getRateUnit()} ea)`;
+    stats2.textContent = text;
+  } else if (isOwned) {
+    stats2.innerHTML = `<span class="dim">All copies furloughed</span>`;
+  }
+  card.appendChild(stats2);
+
+  // === Row 4: Requirements hint (when unowned) ===
+  let reqEl = null;
+  if (!isOwned && purchasable?.requires?.capability && !isCapUnlocked(purchasable.requires.capability)) {
+    reqEl = document.createElement('div');
+    reqEl.className = 'purchase-requires dim';
+    reqEl.textContent = `[requires: ${purchasable.requires.capability.replace(/_/g, ' ')}]`;
+    card.appendChild(reqEl);
+  }
+
+  // === Row 5: Automation panel (if unlocked) ===
+  const itemId = 'data_' + src.id;
+  if (isAutomationUnlocked(itemId)) {
+    const autoPanel = createAutomationPanel(itemId);
+    if (autoPanel) {
+      card.appendChild(autoPanel);
+      card._autoPanel = autoPanel;
+    }
+  }
+
+  // Stash refs
+  card._ownedEl = nameEl;
+  card._costInfoEl = costInfo;
+  card._btn = btn;
+  card._statsEl = stats;
+  card._reqEl = reqEl;
+  card._furloughBtn = furloughBtn;
+  card._statsEl2 = stats2;
+  card._isFurloughable = true;
+  card._purchasableName = src.name;
+
+  return card;
+}
+
+function createSyntheticSection() {
+  const div = document.createElement('div');
+  const cd = gameState.computed?.data;
+  const owned = getCount('synthetic_generator');
+  const running = getActiveCount('synthetic_generator');
+  const genRate = cd?.synthetic?.generationRate ?? 0;
+  const quality = cd?.quality ?? 1.0;
+
+  const purchasable = getPurchasableById('synthetic_generator');
+  const cost = purchasable ? getPurchaseCost(purchasable) : {};
+  const queueable = canQueuePurchase('synthetic_generator');
+  const dataBreakdown = gameState.computed?.costs?.data?.breakdown || {};
+  const opsDiscount = gameState.computed?.costs?.opsDiscount ?? 1;
+  const totalRunCost = (dataBreakdown.synthetic_generator?.cost || 0) * opsDiscount;
+
+  const upgradeLevel = getCount('generator_upgrade_autonomous') > 0 ? 2
+    : getCount('generator_upgrade_verified') > 0 ? 1 : 0;
+  const upgradeConfig = BALANCE.DATA_GENERATOR_UPGRADES[upgradeLevel];
+  const nextUpgrade = BALANCE.DATA_GENERATOR_UPGRADES[upgradeLevel + 1] || null;
+
+  // === Generator Card (furloughable) ===
+  const genCard = document.createElement('div');
+  genCard.className = 'compact-purchase-card';
+  genCard.dataset.purchaseId = 'synthetic_generator';
+  if (owned > 0) {
+    genCard.style.borderLeft = `3px solid var(--${running > 0 ? 'positive' : 'warning'})`;
+  }
+
+  // Row 1: Header
+  const genHeader = document.createElement('div');
+  genHeader.className = 'purchase-header';
+
+  const genNameEl = document.createElement('span');
+  genNameEl.className = 'purchase-name';
+  genNameEl.textContent = `Synthetic Generator ${owned > 0 ? `(${running}/${owned})` : '(0)'}`;
+  if (owned > 0) {
+    genNameEl.style.cursor = 'help';
+    attachTooltip(genNameEl, () => {
+      const a = getActiveCount('synthetic_generator'), c = getCount('synthetic_generator');
+      return `<div class="tooltip-row"><span>${a} running / ${c} owned</span></div>`;
+    });
+  }
+
+  const genHeaderActions = document.createElement('div');
+  genHeaderActions.className = 'purchase-header-actions';
+
+  // Furlough button
+  let genFurloughBtn = null;
+  if (owned > 0) {
+    genFurloughBtn = document.createElement('button');
+    genFurloughBtn.textContent = 'Furlough';
+    genFurloughBtn.className = 'furlough-btn';
+    genFurloughBtn.disabled = running <= 0;
+
+    genFurloughBtn.addEventListener('click', (e) => {
+      const now = Date.now();
+      if (now - _lastFurloughClickTime < 250) return;
+      _lastFurloughClickTime = now;
+      enqueueFurlough('synthetic_generator', getModifierQty(e), false);
+      _dataTabFingerprint = '';
+      requestFullUpdate();
+    });
+    genFurloughBtn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const now = Date.now();
+      if (now - _lastFurloughClickTime < 250) return;
+      _lastFurloughClickTime = now;
+      enqueueFurlough('synthetic_generator', getModifierQty(e), true);
+      _dataTabFingerprint = '';
+      requestFullUpdate();
+    });
+
+    genHeaderActions.appendChild(genFurloughBtn);
+  }
+
+  // Queue button
+  const genBtn = document.createElement('button');
+  genBtn.textContent = 'Queue';
+  genBtn.disabled = !queueable;
+
+  genBtn.addEventListener('click', (e) => {
+    enqueuePurchase('synthetic_generator', getModifierQty(e), false);
+    _dataTabFingerprint = '';
+    requestFullUpdate();
+  });
+  genBtn.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const now = Date.now();
+    if (now - _lastPriorityClickTime < 250) return;
+    _lastPriorityClickTime = now;
+    enqueuePurchase('synthetic_generator', getModifierQty(e), true);
+    _dataTabFingerprint = '';
+    requestFullUpdate();
+  });
+
+  genHeaderActions.appendChild(genBtn);
+  genHeader.appendChild(genNameEl);
+  genHeader.appendChild(genHeaderActions);
+  genCard.appendChild(genHeader);
+
+  // Row 2: Description + Cost
+  const genDescRow = document.createElement('div');
+  genDescRow.className = 'purchase-desc-row';
+
+  const genDesc = document.createElement('div');
+  genDesc.className = 'purchase-description';
+  genDesc.textContent = purchasable?.flavorText || 'Feed the model its own output. What could go wrong?';
+
+  const genCostInfo = document.createElement('span');
+  genCostInfo.className = 'purchase-cost-info';
+  const costText = formatFunding(cost.funding || 0);
+  const durationText = purchasable?.focusDuration ? formatDuration(purchasable.focusDuration) : '';
+  genCostInfo.textContent = durationText ? `${costText} \u00b7 ${durationText}` : costText;
+  genCostInfo.classList.toggle('affordable', queueable && gameState.resources.funding >= (cost.funding || 0));
+
+  genDescRow.appendChild(genDesc);
+  genDescRow.appendChild(genCostInfo);
+  genCard.appendChild(genDescRow);
+
+  // Row 3: Stats
+  const genStats = document.createElement('div');
+  genStats.className = 'purchase-stats';
+  const perUnitRate = BALANCE.DATA_GENERATOR.ratePerUnit;
+  const rateText = genRate > 0 ? `+${genRate.toFixed(1)}${getRateUnit()} (${perUnitRate}/unit)` : `${perUnitRate}/unit`;
+  const runCostText = totalRunCost > 0 ? `${formatFunding(totalRunCost)}${getRateUnit()}` : '\u2014';
+  const synthQuality = upgradeConfig.quality;
+  const sqClass = synthQuality >= 0.7 ? 'positive' : synthQuality >= 0.4 ? 'warning' : 'negative';
+  genStats.innerHTML = `<span class="positive">${rateText}</span> \u00b7 ${runCostText} \u00b7 Quality: <span class="${sqClass}">${synthQuality.toFixed(1)}</span> <span class="dim">(${upgradeConfig.name})</span>`;
+  genCard.appendChild(genStats);
+
+  // Row 4: Automation panel (if unlocked)
+  if (isAutomationUnlocked('synthetic_generator')) {
+    const autoPanel = createAutomationPanel('synthetic_generator');
+    if (autoPanel) {
+      genCard.appendChild(autoPanel);
+      genCard._autoPanel = autoPanel;
+    }
+  }
+
+  // Stash refs on generator card
+  genCard._ownedEl = genNameEl;
+  genCard._costInfoEl = genCostInfo;
+  genCard._btn = genBtn;
+  genCard._statsEl = genStats;
+  genCard._reqEl = null;
+  genCard._furloughBtn = genFurloughBtn;
+  genCard._isFurloughable = true;
+  genCard._purchasableName = 'Synthetic Generator';
+
+  div.appendChild(genCard);
+
+  // === Upgrade Card (if next upgrade available) ===
+  if (nextUpgrade) {
+    const nextUpgradeId = upgradeLevel === 0 ? 'generator_upgrade_verified' : 'generator_upgrade_autonomous';
+    const upgPurchasable = getPurchasableById(nextUpgradeId);
+    const upgCost = upgPurchasable ? getPurchaseCost(upgPurchasable) : {};
+    const upgQueueable = canQueuePurchase(nextUpgradeId);
+    const upgOwned = getCount(nextUpgradeId) > 0;
+
+    const upgCard = document.createElement('div');
+    upgCard.className = 'compact-purchase-card';
+    upgCard.dataset.purchaseId = nextUpgradeId;
+    if (upgOwned) upgCard.style.borderLeft = '3px solid var(--positive)';
+
+    // Row 1: Header
+    const upgHeader = document.createElement('div');
+    upgHeader.className = 'purchase-header';
+
+    const upgNameEl = document.createElement('span');
+    upgNameEl.className = 'purchase-name';
+    upgNameEl.textContent = `${nextUpgrade.name} ${upgOwned ? '(1)' : '(0)'}`;
+
+    const upgHeaderActions = document.createElement('div');
+    upgHeaderActions.className = 'purchase-header-actions';
+
+    const upgBtn = document.createElement('button');
+    upgBtn.textContent = 'Queue';
+    upgBtn.disabled = !upgQueueable;
+
+    upgBtn.addEventListener('click', (e) => {
+      enqueuePurchase(nextUpgradeId, getModifierQty(e), false);
+      _dataTabFingerprint = '';
+      requestFullUpdate();
+    });
+    upgBtn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const now = Date.now();
+      if (now - _lastPriorityClickTime < 250) return;
+      _lastPriorityClickTime = now;
+      enqueuePurchase(nextUpgradeId, getModifierQty(e), true);
+      _dataTabFingerprint = '';
+      requestFullUpdate();
+    });
+
+    upgHeaderActions.appendChild(upgBtn);
+    upgHeader.appendChild(upgNameEl);
+    upgHeader.appendChild(upgHeaderActions);
+    upgCard.appendChild(upgHeader);
+
+    // Row 2: Description + Cost
+    const upgDescRow = document.createElement('div');
+    upgDescRow.className = 'purchase-desc-row';
+
+    const upgDesc = document.createElement('div');
+    upgDesc.className = 'purchase-description';
+    upgDesc.textContent = upgPurchasable?.flavorText || '';
+
+    const upgCostInfo = document.createElement('span');
+    upgCostInfo.className = 'purchase-cost-info';
+    const upgCostText = formatFunding(upgCost.funding || 0);
+    const upgDuration = upgPurchasable?.focusDuration ? formatDuration(upgPurchasable.focusDuration) : '';
+    upgCostInfo.textContent = upgDuration ? `${upgCostText} \u00b7 ${upgDuration}` : upgCostText;
+    upgCostInfo.classList.toggle('affordable', upgQueueable && gameState.resources.funding >= (upgCost.funding || 0));
+
+    upgDescRow.appendChild(upgDesc);
+    upgDescRow.appendChild(upgCostInfo);
+    upgCard.appendChild(upgDescRow);
+
+    // Row 3: Stats
+    const upgStatsEl = document.createElement('div');
+    upgStatsEl.className = 'purchase-stats';
+    upgStatsEl.textContent = `Quality ${upgradeConfig.quality.toFixed(1)} \u2192 ${nextUpgrade.quality.toFixed(1)} \u00b7 Cost/unit \u00d7${nextUpgrade.runningCostMult.toFixed(1)}`;
+    upgCard.appendChild(upgStatsEl);
+
+    // Row 4: Requirements
+    let upgReqEl = null;
+    if (!upgQueueable && upgPurchasable?.requires?.capability && !isCapUnlocked(upgPurchasable.requires.capability)) {
+      upgReqEl = document.createElement('div');
+      upgReqEl.className = 'purchase-requires dim';
+      upgReqEl.textContent = `[requires: ${upgPurchasable.requires.capability.replace(/_/g, ' ')}]`;
+      upgCard.appendChild(upgReqEl);
+    }
+
+    // Stash refs
+    upgCard._ownedEl = upgNameEl;
+    upgCard._costInfoEl = upgCostInfo;
+    upgCard._btn = upgBtn;
+    upgCard._statsEl = upgStatsEl;
+    upgCard._reqEl = upgReqEl;
+    upgCard._furloughBtn = null;
+    upgCard._isFurloughable = false;
+    upgCard._purchasableName = nextUpgrade.name;
+
+    div.appendChild(upgCard);
+  }
+
+  // === Quality Sub-Panel (Phase 3+ only) — kept as-is ===
+  if (gameState.data.qualityRevealed) {
+    const synthProportion = cd?.synthetic?.synthProportion ?? 0;
+    const qClass = quality >= 0.7 ? 'positive' : quality >= 0.4 ? 'warning' : 'negative';
+    const synthQuality = upgradeConfig.quality;
+    const trendDir = genRate > 0 && synthQuality < quality ? 'declining' : 'stable';
+    const trendClass = trendDir === 'declining' ? 'warning' : 'dim';
+    const qualityPanel = document.createElement('div');
+    qualityPanel.className = 'synth-subpanel';
+    qualityPanel.id = 'synth-quality-panel';
+    qualityPanel.innerHTML = `
+      <h3>QUALITY</h3>
+      <div class="stat-row">
+        <span class="stat-label">Data quality</span>
+        <span class="stat-value ${qClass}" id="synth-quality-value">${quality.toFixed(2)}x</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Synthetic proportion</span>
+        <span class="stat-value" id="synth-proportion-value">${formatPercent(synthProportion)}</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Synthetic quality</span>
+        <span class="stat-value dim">${synthQuality.toFixed(1)}</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Trend</span>
+        <span class="stat-value ${trendClass}" id="synth-trend-value">${trendDir}</span>
+      </div>
+    `;
+    div.appendChild(qualityPanel);
+  }
+
+  // === Collapse Risk Sub-Panel (Phase 3+ only) — kept as-is ===
+  if (gameState.data.qualityRevealed) {
+    const remaining = gameState.data.collapsePauseRemaining;
+    const belowThreshold = quality < BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD;
+
+    let riskLabel, riskClass;
+    if (remaining > 0) {
+      riskLabel = `COLLAPSE ACTIVE (${remaining.toFixed(0)}s)`;
+      riskClass = 'negative';
+    } else if (belowThreshold) {
+      const qualityRatio = quality / BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD;
+      const mtth = BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MAX * qualityRatio +
+                   BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MIN * (1 - qualityRatio);
+      riskLabel = `~${Math.round(mtth)}s between events`;
+      riskClass = mtth < 60 ? 'negative' : 'warning';
+    } else {
+      riskLabel = 'None';
+      riskClass = 'positive';
+    }
+
+    const collapsePanel = document.createElement('div');
+    collapsePanel.className = 'synth-subpanel';
+    collapsePanel.id = 'synth-collapse-panel';
+    collapsePanel.innerHTML = `
+      <h3>COLLAPSE RISK</h3>
+      <div class="stat-row">
+        <span class="stat-label">Risk</span>
+        <span class="stat-value ${riskClass}" id="synth-risk-value">${riskLabel}</span>
+      </div>
+      ${gameState.data.syntheticScore > 0 ? '<button class="purchase-btn purge-btn" data-synth-purge>Purge Synthetic Data</button>' : ''}
+    `;
+    div.appendChild(collapsePanel);
+  }
+
+  // Purge button outside quality panels (pre-reveal)
+  if (!gameState.data.qualityRevealed && gameState.data.syntheticScore > 0) {
+    const purgeBtn = document.createElement('button');
+    purgeBtn.className = 'purchase-btn purge-btn';
+    purgeBtn.dataset.synthPurge = '';
+    purgeBtn.textContent = 'Purge Synthetic Data';
+    div.appendChild(purgeBtn);
+  }
+
+  // Stash generator card ref on container for dynamic updates
+  div._genCard = genCard;
+
+  return div;
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic Updates (called every tick when fingerprint unchanged)
+// ---------------------------------------------------------------------------
+function updateDataTabDynamicValues() {
+  updateStatsPanelDynamic();
+  updateSectionSummaries();
+  updateRenewableDynamic();
+  updateSyntheticDynamic();
+  updateAffordability();
+}
+
+function updateStatsPanelDynamic() {
+  const cd = gameState.computed?.data;
+  if (!cd) return;
+
+  const scores = cd.scores;
+  const effectiveness = cd.effectiveness ?? 1.0;
+  const quality = cd.quality ?? 1.0;
+  const required = gameState.data.dataRequired || 1;
+  const effectiveScore = scores.effective ?? scores.total;
+
+  const effClass = effectiveness >= 1.5 ? 'positive' : effectiveness >= 0.8 ? 'warning' : 'negative';
+  const effMultiplier = effectiveness <= 1.0
+    ? (effectiveness * effectiveness).toFixed(2)
+    : (1.0 + Math.log(1 + (effectiveness - 1.0))).toFixed(2);
+
+  // Multiplier
+  const effValue = document.getElementById('data-eff-value');
+  if (effValue) { effValue.textContent = effMultiplier + 'x'; effValue.className = 'stat-value ' + effClass; }
+
+  // Trend arrow
+  const trend = cd.trend || 'stable';
+  const trendArrow = trend === 'rising' ? '\u25B2' : trend === 'falling' ? '\u25BC' : '\u2550';
+  const trendClass = trend === 'rising' ? 'positive' : trend === 'falling' ? 'negative' : 'dim';
+  const effTrend = document.getElementById('data-eff-trend');
+  if (effTrend) { effTrend.textContent = trendArrow; effTrend.className = 'stat-value ' + trendClass; }
+
+  // Score / needed + surplus
+  const effScoreEl = document.getElementById('data-eff-score');
+  if (effScoreEl) effScoreEl.textContent = `${formatNumber(Math.round(effectiveScore))} effective / ${formatNumber(Math.round(required))} needed`;
+  const surplus = effectiveScore - required;
+  const surplusEl = document.getElementById('data-eff-surplus');
+  if (surplusEl) {
+    surplusEl.textContent = surplus >= 0
+      ? `(+${formatNumber(Math.round(surplus))} surplus)`
+      : `(${formatNumber(Math.round(surplus))} deficit)`;
+    surplusEl.className = surplus >= 0 ? 'positive' : 'negative';
+  }
+
+  // Quality row (always visible)
+  const qValue = document.getElementById('data-quality-value');
+  const qClass = quality >= 0.7 ? 'positive' : quality >= 0.4 ? 'warning' : 'negative';
+  if (qValue) { qValue.textContent = quality.toFixed(2); qValue.className = 'stat-value ' + qClass; }
+  const qEffect = document.getElementById('data-quality-effect');
+  if (qEffect) qEffect.textContent = '\u2192 ' + Math.round(quality * 100) + '% of raw data effective';
+  if (gameState.data.qualityRevealed) {
+    const synthPct = document.getElementById('data-synth-pct');
+    if (synthPct) synthPct.textContent = '\u00b7 Synthetic ratio: ' + formatPercent(cd.synthetic?.synthProportion ?? 0);
+  }
+
+  // Category breakdown — effective scores with percentages
+  const catQ = cd.categoryQuality || { bulk: 0, renewable: 0, synthetic: 0 };
+  const bulkEff = scores.bulkEff ?? scores.bulk * (catQ.bulk || 1);
+  const renewableEff = scores.renewableEff ?? scores.renewable * (catQ.renewable || 1);
+  const syntheticEff = scores.syntheticEff ?? scores.synthetic * (catQ.synthetic || 1);
+  const totalEff = effectiveScore || 1;
+  const bulkPct = totalEff > 0 ? Math.round(bulkEff / totalEff * 100) : 0;
+  const renewablePct = totalEff > 0 ? Math.round(renewableEff / totalEff * 100) : 0;
+  const syntheticPct = totalEff > 0 ? Math.round(syntheticEff / totalEff * 100) : 0;
+
+  const catBulk = document.getElementById('data-cat-bulk');
+  if (catBulk) {
+    catBulk.innerHTML = `${formatNumber(Math.round(bulkEff))} <span class="cat-pct dim">(${bulkPct}%)</span>`;
+    catBulk.title = `Raw: ${Math.round(scores.bulk)} \u00b7 Avg Q: ${catQ.bulk > 0 ? catQ.bulk.toFixed(2) : '\u2014'}`;
+  }
+  const catRenewable = document.getElementById('data-cat-renewable');
+  if (catRenewable) {
+    catRenewable.innerHTML = `${formatNumber(Math.round(renewableEff))} <span class="cat-pct dim">(${renewablePct}%)</span>`;
+    catRenewable.title = `Raw: ${Math.round(scores.renewable)} \u00b7 Avg Q: ${catQ.renewable > 0 ? catQ.renewable.toFixed(2) : '\u2014'}`;
+  }
+
+  const renewableRate = Object.values(cd.renewables || {}).reduce((sum, r) => sum + (r.growthRate || 0), 0);
+  const catRenewableRate = document.getElementById('data-cat-renewable-rate');
+  if (catRenewableRate) catRenewableRate.textContent = renewableRate > 0 ? '+' + renewableRate.toFixed(1) + getRateUnit() : '\u2014';
+
+  const dataBreakdown = gameState.computed?.costs?.data?.breakdown || {};
+  const opsDiscount = gameState.computed?.costs?.opsDiscount ?? 1;
+  let renewableCost = 0;
+  for (const src of BALANCE.DATA_RENEWABLE_SOURCES) {
+    const entry = dataBreakdown['data_' + src.id];
+    if (entry) renewableCost += entry.cost;
+  }
+  renewableCost *= opsDiscount;
+  const catRenewableCost = document.getElementById('data-cat-renewable-cost');
+  if (catRenewableCost) catRenewableCost.textContent = renewableCost > 0 ? formatFunding(renewableCost) + getRateUnit() : '';
+
+  const catSynth = document.getElementById('data-cat-synth');
+  if (catSynth) {
+    catSynth.innerHTML = `${formatNumber(Math.round(syntheticEff))} <span class="cat-pct dim">(${syntheticPct}%)</span>`;
+    catSynth.title = `Raw: ${Math.round(scores.synthetic)} \u00b7 Avg Q: ${catQ.synthetic > 0 ? catQ.synthetic.toFixed(2) : '\u2014'}`;
+  }
+  const synthRate = cd.synthetic?.generationRate ?? 0;
+  const catSynthRate = document.getElementById('data-cat-synth-rate');
+  if (catSynthRate) catSynthRate.textContent = synthRate > 0 ? '+' + synthRate.toFixed(1) + getRateUnit() : '\u2014';
+
+  const synthCost = (dataBreakdown.synthetic_generator?.cost || 0) * opsDiscount;
+  const catSynthCost = document.getElementById('data-cat-synth-cost');
+  if (catSynthCost) catSynthCost.textContent = synthCost > 0 ? formatFunding(synthCost) + getRateUnit() : '';
+}
+
+function updateSectionSummaries() {
+  const cd = gameState.computed?.data;
+  if (!cd) return;
+
+  const bulkSummary = document.querySelector('[data-section-summary="BULK DATA"]');
+  if (bulkSummary) {
+    const catQ = cd.categoryQuality || {};
+    const bulkEff = cd.scores.bulkEff ?? cd.scores.bulk * (catQ.bulk || 1);
+    bulkSummary.textContent = `${formatNumber(Math.round(bulkEff))} effective`;
+  }
+
+  const renewSummary = document.querySelector('[data-section-summary="RENEWABLE DATA"]');
+  if (renewSummary) {
+    const visibleRenewable = (BALANCE.DATA_RENEWABLE_SOURCES || []).filter(s => isDataSourceVisible(s.id));
+    renewSummary.textContent = buildRenewableSummary(cd, visibleRenewable);
+  }
+
+  const synthSummary = document.querySelector('[data-section-summary="SYNTHETIC DATA"]');
+  if (synthSummary) {
+    synthSummary.textContent = buildSyntheticSummary(cd);
+  }
+}
+
+function buildRenewableSummary(cd, visibleRenewable) {
+  const activeCount = visibleRenewable.filter(s => getActiveCount('data_' + s.id) > 0).length;
+  const renewableRate = Object.values(cd?.renewables || {}).reduce((sum, r) => sum + (r.growthRate || 0), 0);
+  const dataBreakdown = gameState.computed?.costs?.data?.breakdown || {};
+  let renewCost = 0;
+  for (const src of BALANCE.DATA_RENEWABLE_SOURCES) {
+    const entry = dataBreakdown['data_' + src.id];
+    if (entry) renewCost += entry.cost;
+  }
+  return `${formatNumber(cd?.scores?.renewable || 0)}` +
+    (renewableRate > 0 ? ` (+${renewableRate.toFixed(1)}${getRateUnit()})` : '') +
+    (renewCost > 0 ? ` \u2014 ${formatFunding(renewCost)}${getRateUnit()}` : '') +
+    ` \u2014 ${activeCount}/${visibleRenewable.length} active`;
+}
+
+function buildSyntheticSummary(cd) {
+  const synthRate = cd?.synthetic?.generationRate ?? 0;
+  const owned = getCount('synthetic_generator');
+  const running = getActiveCount('synthetic_generator');
+  const genSummary = owned > 0 ? `${running}/${owned} running` : '';
+  return `${formatNumber(gameState.data.syntheticScore)}` +
+    (synthRate > 0 ? ` (+${synthRate.toFixed(1)}${getRateUnit()})` : '') +
+    (genSummary ? ` \u2014 ${genSummary}` : '');
+}
+
+function updateRenewableDynamic() {
+  document.querySelectorAll('.data-renewable-card[data-purchase-id]').forEach(card => {
+    const purchId = card.dataset.purchaseId;
+    const srcId = purchId.replace('data_', '');
+    const count = getCount(purchId);
+    if (count <= 0) return;
+
+    const active = getActiveCount(purchId);
+    const cd = gameState.computed?.data?.renewables?.[srcId];
+    const curScore = cd?.score ?? 0;
+    const maxScore = cd?.maxScore ?? 1;
+    const growthRate = cd?.growthRate ?? 0;
+
+    // Update border color
+    card.style.borderLeft = `3px solid var(--${active > 0 ? 'positive' : 'warning'})`;
+
+    // Update stats via stashed ref
+    if (card._statsEl) {
+      const pct = maxScore > 0 ? (curScore / maxScore * 100) : 0;
+      let timeToCapText = '';
+      if (active > 0 && growthRate > 0 && pct < 99) {
+        const remaining = maxScore - curScore;
+        const estSeconds = remaining / growthRate;
+        timeToCapText = estSeconds < 3600
+          ? `~${Math.ceil(estSeconds / 60)}m to cap`
+          : `~${(estSeconds / 3600).toFixed(1)}h to cap`;
+      }
+      let rateText;
+      if (active <= 0) {
+        rateText = '<span class="dim">paused</span>';
+      } else if (growthRate < 0) {
+        rateText = `<span class="warning">${growthRate.toFixed(1)}${getRateUnit()} (decaying)</span>`;
+      } else {
+        rateText = `<span class="positive">+${growthRate.toFixed(1)}${getRateUnit()}</span>`;
+      }
+      card._statsEl.innerHTML = `${rateText} \u00b7 ${curScore.toFixed(0)}/${maxScore.toFixed(0)} (${pct.toFixed(0)}%)${timeToCapText ? ' \u00b7 ' + timeToCapText : ''}`;
+    }
+
+    // Update stats line 2 (running cost — matches infrastructure pattern)
+    if (card._statsEl2) {
+      const purchasable = getPurchasableById(purchId);
+      if (purchasable && active > 0) {
+        const dataBreakdown = gameState.computed?.costs?.data?.breakdown || {};
+        const opsDiscount = gameState.computed?.costs?.opsDiscount ?? 1;
+        const totalRunCost = (dataBreakdown[purchId]?.cost || 0) * opsDiscount;
+        let text = `Running: ${formatFunding(totalRunCost)}${getRateUnit()}`;
+        if (active > 1) text += ` (${formatFunding(totalRunCost / active)}${getRateUnit()} ea)`;
+        card._statsEl2.textContent = text;
+      } else if (count > 0) {
+        card._statsEl2.innerHTML = '<span class="dim">All copies furloughed</span>';
+      } else {
+        card._statsEl2.innerHTML = '';
+      }
+    }
+
+    // Update automation panel if present
+    if (card._autoPanel) {
+      updateAutomationPanel(card._autoPanel);
+    }
+  });
+}
+
+function updateSyntheticDynamic() {
+  const cd = gameState.computed?.data;
+  if (!cd) return;
+  const quality = cd.quality ?? 1.0;
+  const synthProportion = cd.synthetic?.synthProportion ?? 0;
+  const running = getActiveCount('synthetic_generator');
+  const owned = getCount('synthetic_generator');
+  const genRate = cd.synthetic?.generationRate ?? 0;
+
+  // Update generator card stats via stashed ref
+  const genCard = document.querySelector('.compact-purchase-card[data-purchase-id="synthetic_generator"]');
+  if (genCard?._statsEl) {
+    const dataBreakdown = gameState.computed?.costs?.data?.breakdown || {};
+    const opsDiscount = gameState.computed?.costs?.opsDiscount ?? 1;
+    const totalRunCost = (dataBreakdown.synthetic_generator?.cost || 0) * opsDiscount;
+    const upgradeLevel = getCount('generator_upgrade_autonomous') > 0 ? 2
+      : getCount('generator_upgrade_verified') > 0 ? 1 : 0;
+    const upgradeConfig = BALANCE.DATA_GENERATOR_UPGRADES[upgradeLevel];
+    const perUnitRate = BALANCE.DATA_GENERATOR.ratePerUnit;
+    const rateText = genRate > 0 ? `+${genRate.toFixed(1)}${getRateUnit()} (${perUnitRate}/unit)` : `${perUnitRate}/unit`;
+    const runCostText = totalRunCost > 0 ? `${formatFunding(totalRunCost)}${getRateUnit()}` : '\u2014';
+    const synthQuality = upgradeConfig.quality;
+    const sqClass = synthQuality >= 0.7 ? 'positive' : synthQuality >= 0.4 ? 'warning' : 'negative';
+    genCard._statsEl.innerHTML = `<span class="positive">${rateText}</span> \u00b7 ${runCostText} \u00b7 Quality: <span class="${sqClass}">${synthQuality.toFixed(1)}</span> <span class="dim">(${upgradeConfig.name})</span>`;
+
+    // Update border
+    if (owned > 0) {
+      genCard.style.borderLeft = `3px solid var(--${running > 0 ? 'positive' : 'warning'})`;
+    }
+
+    // Update automation panel if present
+    if (genCard._autoPanel) {
+      updateAutomationPanel(genCard._autoPanel);
+    }
+  }
+
+  // Quality sub-panel (still uses IDs — these are unique info panels, not cards)
+  const qValue = document.getElementById('synth-quality-value');
+  if (qValue) {
+    const qClass = quality >= 0.7 ? 'positive' : quality >= 0.4 ? 'warning' : 'negative';
+    qValue.textContent = quality.toFixed(2) + 'x';
+    qValue.className = 'stat-value ' + qClass;
+  }
+  const propValue = document.getElementById('synth-proportion-value');
+  if (propValue) propValue.textContent = formatPercent(synthProportion);
+
+  const upgradeLevel = getCount('generator_upgrade_autonomous') > 0 ? 2
+    : getCount('generator_upgrade_verified') > 0 ? 1 : 0;
+  const upgradeConfig = BALANCE.DATA_GENERATOR_UPGRADES[upgradeLevel];
+  const trendValue = document.getElementById('synth-trend-value');
+  if (trendValue) {
+    const trendDir = genRate > 0 && upgradeConfig.quality < quality ? 'declining' : 'stable';
+    trendValue.textContent = trendDir;
+    trendValue.className = 'stat-value ' + (trendDir === 'declining' ? 'warning' : 'dim');
+  }
+
+  // Collapse risk
+  const riskValue = document.getElementById('synth-risk-value');
+  if (riskValue) {
+    const remaining = gameState.data.collapsePauseRemaining;
+    const belowThreshold = quality < BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD;
+    let riskLabel, riskClass;
+    if (remaining > 0) {
+      riskLabel = `COLLAPSE ACTIVE (${remaining.toFixed(0)}s)`;
+      riskClass = 'negative';
+    } else if (belowThreshold) {
+      const qualityRatio = quality / BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD;
+      const mtth = BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MAX * qualityRatio +
+                   BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MIN * (1 - qualityRatio);
+      riskLabel = `~${Math.round(mtth)}s between events`;
+      riskClass = mtth < 60 ? 'negative' : 'warning';
+    } else {
+      riskLabel = 'None';
+      riskClass = 'positive';
+    }
+    riskValue.textContent = riskLabel;
+    riskValue.className = 'stat-value ' + riskClass;
+  }
+}
+
+function updateAffordability() {
+  // Update all cards with stashed refs via data-purchase-id
+  document.querySelectorAll('#data-tab .compact-purchase-card[data-purchase-id]').forEach(card => {
+    const purchId = card.dataset.purchaseId;
+    const purchasable = getPurchasableById(purchId);
+    if (!purchasable) return;
+
+    const count = getCount(purchId);
+    const active = getActiveCount(purchId);
+    const cost = getPurchaseCost(purchasable);
+    const queueable = canQueuePurchase(purchId);
+
+    // Update count text in name
+    if (card._ownedEl) {
+      const countText = card._isFurloughable && count > 0
+        ? `(${active}/${count})`
+        : `(${count})`;
+      card._ownedEl.textContent = card._purchasableName + ' ' + countText;
+    }
+
+    // Update cost text and affordable class
+    if (card._costInfoEl) {
+      // For renewable owned cards: running cost + next level cost
+      if (card._isFurloughable && count > 0 && purchId.startsWith('data_') && purchId !== 'synthetic_generator') {
+        // Renewable data: purchase cost + duration + marginal cap
+        const renewSrc = BALANCE.DATA_RENEWABLE_SOURCES.find(s => 'data_' + s.id === purchId);
+        const marginalCap = renewSrc ? Math.round(getCapForCopies(renewSrc, active + 1, gameState) - getCapForCopies(renewSrc, active, gameState)) : 0;
+        const costText = formatFunding(cost.funding || 0);
+        const durationText = getPurchasableById(purchId)?.focusDuration ? formatDuration(getPurchasableById(purchId).focusDuration) : '';
+        card._costInfoEl.textContent = `${costText} \u00b7 ${durationText} \u00b7 +${marginalCap} cap`;
+      } else {
+        const costText = formatFunding(cost.funding || 0);
+        const durationText = purchasable.focusDuration ? formatDuration(purchasable.focusDuration) : '';
+        card._costInfoEl.textContent = durationText ? `${costText} \u00b7 ${durationText}` : costText;
+      }
+      card._costInfoEl.classList.toggle('affordable', queueable && gameState.resources.funding >= (cost.funding || 0));
+    }
+
+    // Update Queue button disabled state
+    if (card._btn) {
+      card._btn.disabled = !queueable;
+    }
+
+    // Clear requirement hint when capability is now met
+    if (card._reqEl && queueable) {
+      card._reqEl.remove();
+      card._reqEl = null;
+    }
+
+    // Update Furlough button disabled state
+    if (card._furloughBtn) {
+      card._furloughBtn.disabled = active <= 0;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function isCapUnlocked(capId) {
+  for (const track of Object.values(gameState.tracks)) {
+    if (track.unlockedCapabilities?.includes(capId)) return true;
+  }
+  return false;
+}
+
+/** Show a data source if: no requirement, already unlocked, or prerequisite cap is "next up" */
+function isDataSourceVisible(sourceId) {
+  const p = getPurchasableById('data_' + sourceId);
+  if (!p?.requires?.capability) return true;
+  if (isCapUnlocked(p.requires.capability)) return true;
+
+  // "Next up": the capability's own prerequisites are all unlocked
+  const cap = capabilitiesTrack.capabilities.find(c => c.id === p.requires.capability);
+  if (!cap) return false;
+  if (!cap.requires || cap.requires.length === 0) return true;
+  return cap.requires.every(reqId => isCapUnlocked(reqId));
+}
+
+// Export reset function for game reset / tab switch.
+export function reset() {
+  _dataTabFingerprint = '';
+}

@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project Basilisk</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+  <div id="game-container">
+
+    <!-- Header -->
+    <header id="header">
+      <div class="header-row">
+        <h1>Project Basilisk</h1>
+        <div class="header-tabs">
+          <button class="header-tab active" data-tab="dashboard">Dashboard</button>
+          <button class="header-tab" data-tab="messages">Messages <span id="messages-badge" class="tab-badge hidden"></span></button>
+        </div>
+        <div class="header-actions">
+          <span id="game-date" class="dim">Year 0, Day 1</span>
+          <span class="dim">│</span>
+          <span id="playtime" class="dim">0:00</span>
+          <span id="pause-indicator" class="hidden">⏸ PAUSED</span>
+          <span id="speed-control" class="speed-control">
+            <button id="speed-down" class="speed-btn" title="Slower">−</button>
+            <span id="speed-display" class="dim">1x</span>
+            <button id="speed-up" class="speed-btn" title="Faster">+</button>
+          </span>
+          <button id="pause-button">⏸ Pause</button>
+          <button id="stats-button">Stats</button>
+          <button id="settings-button">Settings</button>
+          <button id="debug-button" style="display:none">Debug</button>
+          <button id="reset-button">Reset</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Stats Bar -->
+    <div id="stats-bar">
+      <div class="stats-group">
+        <span id="funding-total" class="stat-value funding-parts"><span class="funding-sign"></span><span class="funding-prefix">$</span><span class="funding-number">1,000,000</span><span class="funding-suffix"></span></span>
+        <span id="funding-rate" class="stat-rate funding-parts">(<span class="funding-sign">+</span><span class="funding-prefix">$</span><span class="funding-number">0</span><span class="funding-suffix"></span><span class="funding-unit">/day</span>)</span>
+      </div>
+      <span class="stats-separator">│</span>
+      <div class="stats-group">
+        <span>Research:</span>
+        <span id="research-total" class="stat-value">0</span>
+        <span id="research-rate" class="stat-rate">(+0/day)</span>
+      </div>
+      <span class="stats-separator">│</span>
+      <div class="stats-group">
+        <span>Compute:</span>
+        <span id="compute-total" class="stat-value">0</span>
+        <span class="dim">TFLOPS</span>
+      </div>
+      <span class="stats-separator">│</span>
+      <div class="stats-group" id="data-effectiveness-group" style="display:none">
+        <span>Data:</span>
+        <span id="data-effectiveness" class="stat-value">1.00x</span>
+        <span id="data-goalpost" class="stat-detail"></span>
+      </div>
+      <span class="stats-separator">│</span>
+      <div class="stats-group">
+        <span id="agi-progress-label">AGI:</span>
+        <span id="agi-progress-text">Early experiments</span>
+        <span id="competitor-progress" class="dim">(rival: distant)</span>
+      </div>
+          <span id="stat-alignment" class="stat-item arc-1-hidden">
+            Ali: <span id="stat-alignment-value">???</span>
+          </span>
+    </div>
+
+    <!-- Main Layout: persistent left column + swappable right content -->
+    <div id="main-layout">
+
+      <!-- Persistent At-a-Glance Column -->
+      <div id="col-at-a-glance">
+
+        <!-- Focus Queue -->
+        <div id="queue-panel" class="panel">
+          <h3 id="queue-title">FOCUS QUEUE</h3>
+          <div id="queue-items"></div>
+          <div id="queue-empty-msg" class="muted">Queue empty</div>
+          <div id="queue-controls">
+            <button id="clear-queue-btn" class="btn-small">Clear Queue</button>
+          </div>
+        </div>
+
+        <!-- CEO Focus -->
+        <div id="ceo-focus-panel" class="panel hidden">
+          <h3 id="ceo-focus-header" class="ceo-focus-header">
+            <span>CEO FOCUS</span>
+          </h3>
+          <div id="ceo-focus-current" class="ceo-focus-current">
+            <span id="ceo-focus-name" class="ceo-focus-name"></span>
+            <span id="ceo-focus-value" class="ceo-focus-value"></span>
+            <span id="ceo-focus-direction" class="ceo-focus-direction"></span>
+          </div>
+          <div id="ceo-focus-bar-container" class="progress-bar-container" style="visibility: hidden">
+            <div id="ceo-focus-bar" class="progress-bar"></div>
+          </div>
+          <div id="ceo-focus-selector" class="ceo-focus-selector">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Ledger Summary (subtotals only) -->
+        <section id="ledger-summary" class="compact-funding">
+          <h2>FUNDING <span id="funding-runway" class="funding-runway hidden"></span> <span id="summary-ledger-unit" class="ledger-unit dim"></span></h2>
+          <div class="funding-ledger">
+            <div class="ledger-group">
+              <div class="ledger-row">
+                <span class="ledger-label">Revenue</span>
+                <span id="summary-revenue" class="ledger-value positive">+0</span>
+              </div>
+            </div>
+            <div class="ledger-group">
+              <div class="ledger-row">
+                <span class="ledger-label">Operating Costs</span>
+                <span id="summary-opex" class="ledger-value negative">-0</span>
+              </div>
+            </div>
+            <div class="ledger-group ledger-subtotal-row">
+              <div class="ledger-header">OPERATING INCOME <span id="summary-op-income" class="ledger-subtotal"></span></div>
+            </div>
+            <div class="ledger-group hidden" id="other-costs-summary-group">
+              <div class="ledger-row">
+                <span class="ledger-label">Other Costs</span>
+                <span id="summary-other-costs" class="ledger-value negative">-0</span>
+              </div>
+            </div>
+            <div class="ledger-group hidden" id="other-income-summary-group">
+              <div class="ledger-row">
+                <span class="ledger-label">Other Income</span>
+                <span id="summary-other-income" class="ledger-value positive">+0</span>
+              </div>
+            </div>
+            <div class="ledger-group ledger-subtotal-row">
+              <div class="ledger-header">FREE CASH FLOW <span id="summary-fcf" class="ledger-subtotal"></span></div>
+            </div>
+            <div class="credit-warning hidden" id="credit-warning">
+              <div class="credit-status">
+                <span class="credit-label">CREDIT:</span>
+                <span id="credit-balance" class="negative">-$0</span>
+                <span class="dim"> / </span>
+                <span id="credit-limit">$0</span>
+              </div>
+              <div class="credit-hint dim">Purchases frozen — reduce spending</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Message Feed -->
+        <div id="dashboard-feed" class="dashboard-feed">
+          <div class="dashboard-feed-header">MESSAGES</div>
+          <div id="dashboard-feed-items" class="dashboard-feed-items"></div>
+        </div>
+
+      </div><!-- end col-at-a-glance -->
+
+      <!-- Swappable Content Area -->
+      <div id="swappable-content">
+
+        <!-- Dashboard Panel (default view) -->
+        <div id="dashboard-panel" class="view-panel active">
+          <div id="main-columns">
+
+            <!-- Column: Operations (50%) -->
+            <div class="column" id="col-operations">
+              <div class="column-header">Operations</div>
+
+              <!-- Global Cooldown Indicator -->
+              <div id="global-cooldown-bar" class="cooldown-bar"></div>
+
+              <!-- Sub-tabs -->
+              <div class="sub-tabs">
+                <button class="sub-tab active" data-category="finance">Finance<span id="finance-notify" class="sub-tab-notify hidden"></span></button>
+                <button class="sub-tab" data-category="personnel">Personnel</button>
+                <button class="sub-tab" data-category="compute">Compute</button>
+                <button class="sub-tab hidden" data-category="admin" id="admin-sub-tab">Admin</button>
+                <button class="sub-tab hidden" data-category="data" id="data-sub-tab">Data</button>
+              </div>
+
+              <!-- Finance Sub-tab Content -->
+              <div id="finance-tab-content" class="subtab-content">
+
+                <!-- Pricing Panel -->
+                <section id="pricing-panel" class="hidden-until-unlocked">
+                  <h2>PRICING</h2>
+                  <div id="pricing-content">
+                    <div class="pricing-header">
+                      <div id="token-pricing-controls" class="token-pricing hidden">
+                        <button id="token-price-down" class="price-btn" title="Decrease price by 5%">−</button>
+                        <span>$</span>
+                        <span id="token-price-display">0.50</span>
+                        <span class="dim">/M</span>
+                        <button id="token-price-up" class="price-btn" title="Increase price by 5%">+</button>
+                        <span id="price-drift-indicator" class="price-drift hidden"></span>
+                      </div>
+                      <div id="autopricer-controls" class="hidden">
+                        <label>
+                          <input type="checkbox" id="autopricer-toggle" class="terminal-checkbox">
+                          Auto-price
+                        </label>
+                        <select id="autopricer-mode" class="terminal-select">
+                          <option value="growth">Growth</option>
+                          <option value="balanced" selected>Balanced</option>
+                          <option value="extraction">Extraction</option>
+                        </select>
+                        <span id="autopricer-help" class="help-icon">?</span>
+                      </div>
+                    </div>
+                    <div class="pricing-columns">
+                      <div class="pricing-col-left">
+                        <div class="pricing-stat">
+                          <span class="pricing-stat-label">Revenue</span>
+                          <span id="token-revenue-display" class="pricing-stat-value positive">$0/s</span>
+                        </div>
+                        <div class="pricing-stat" id="max-demand-row" data-tooltip-target="max-demand">
+                          <span class="pricing-stat-label">Max Demand</span>
+                          <span id="demand-display" class="pricing-stat-value">0</span>
+                          <span id="demand-at-target" class="dim" style="visibility:hidden"></span>
+                        </div>
+                        <div class="pricing-stat">
+                          <span class="pricing-stat-label">Generated</span>
+                          <span id="generating-display" class="pricing-stat-value">0</span>
+                        </div>
+                        <div class="pricing-stat">
+                          <span class="pricing-stat-label">Sold</span>
+                          <span id="selling-display" class="pricing-stat-value">0</span>
+                        </div>
+                        <div class="pricing-divider hidden" id="supply-divider"></div>
+                        <div class="pricing-subheader dim hidden" id="unit-econ-header">UNIT ECONOMICS (per M tokens)</div>
+                        <div class="pricing-stat hidden" id="price-per-m-row">
+                          <span class="pricing-stat-label">Price</span>
+                          <span id="price-per-m-display" class="pricing-stat-value">$0.50</span>
+                        </div>
+                        <div class="pricing-stat hidden" id="cost-per-m-row">
+                          <span class="pricing-stat-label">Cost</span>
+                          <span id="cost-per-m-display" class="pricing-stat-value">$0.00</span>
+                        </div>
+                        <div class="pricing-stat hidden" id="margin-per-m-row">
+                          <span class="pricing-stat-label">Margin</span>
+                          <span id="margin-per-m-display" class="pricing-stat-value">$0.00</span>
+                        </div>
+                      </div>
+                      <div class="pricing-col-right">
+                        <div class="pricing-subheader dim">DEMAND</div>
+                        <div class="pricing-stat" id="acquired-demand-row" data-tooltip-target="acquired-demand">
+                          <span class="pricing-stat-label">Acquired</span>
+                          <span id="acquired-demand-display" class="pricing-stat-value">0</span>
+                          <span id="acquired-demand-delta" class="dim"></span>
+                        </div>
+                        <div class="pricing-stat hidden" id="market-demand-row" data-tooltip-target="market-demand">
+                          <span class="pricing-stat-label">Mkt Demand</span>
+                          <span id="market-demand-display" class="pricing-stat-value">0</span>
+                        </div>
+                        <div class="pricing-stat hidden" id="market-price-row">
+                          <span class="pricing-stat-label">Mkt Price</span>
+                          <span id="reference-price-display" class="pricing-stat-value">$0.50/M</span>
+                        </div>
+                        <div class="pricing-stat hidden" id="market-edge-row" data-tooltip-target="market-edge">
+                          <span class="pricing-stat-label">Mkt Edge</span>
+                          <span id="market-edge-display" class="pricing-stat-value">Even with market</span>
+                        </div>
+                        <div class="pricing-stat hidden" id="market-expansion-row">
+                          <span class="pricing-stat-label">Mkt Growth</span>
+                          <span id="market-expansion-display" class="pricing-stat-value">—</span>
+                        </div>
+                        <div class="pricing-stat hidden" id="elasticity-row" data-tooltip-target="elasticity">
+                          <span class="pricing-stat-label">Elasticity</span>
+                          <span id="elasticity-display" class="pricing-stat-value">—</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <div class="finance-split-panel">
+                <!-- Full Funding Ledger -->
+                <section id="funding-section" class="compact-funding">
+                  <h2>FUNDING LEDGER <span id="ledger-unit" class="ledger-unit dim"></span></h2>
+                  <div class="funding-ledger">
+                    <!-- REVENUE -->
+                    <div class="ledger-group">
+                      <div class="ledger-header dim">REVENUE <span id="revenue-subtotal" class="ledger-subtotal"></span></div>
+                      <div class="ledger-row" id="revenue-row" data-tooltip-target="revenue">
+                        <span class="ledger-label">Token Revenue</span>
+                        <span id="revenue-rate" class="positive ledger-value">+0</span>
+                      </div>
+                    </div>
+
+                    <!-- OPERATING COSTS -->
+                    <div class="ledger-group">
+                      <div class="ledger-header dim">OPERATING COSTS <span id="opex-subtotal" class="ledger-subtotal"></span></div>
+                      <div class="ledger-row" id="salary-row" data-tooltip-target="salary">
+                        <span class="ledger-label">Personnel</span>
+                        <span id="salary-cost" class="negative ledger-value">-0</span>
+                      </div>
+                      <div class="ledger-row" id="compute-row" data-tooltip-target="compute">
+                        <span class="ledger-label">Compute</span>
+                        <span id="compute-cost" class="negative ledger-value">-0</span>
+                      </div>
+                      <div class="ledger-row hidden" id="data-cost-row" data-tooltip-target="data">
+                        <span class="ledger-label">Data Sources</span>
+                        <span id="data-running-cost" class="negative ledger-value">-0</span>
+                      </div>
+                    </div>
+
+                    <!-- OPERATING PROFIT -->
+                    <div class="ledger-group ledger-subtotal-row">
+                      <div class="ledger-header">OPERATING PROFIT <span id="operating-profit" class="ledger-subtotal"></span></div>
+                      <div class="ledger-row hidden" id="investor-share-row">
+                        <span class="ledger-label">Investor Share <span id="equity-pct" class="dim"></span></span>
+                        <span id="investor-share" class="negative ledger-value">-0</span>
+                      </div>
+                      <div class="ledger-row hidden" id="interest-row">
+                        <span class="ledger-label">Interest</span>
+                        <span id="interest-cost" class="negative ledger-value">-0</span>
+                      </div>
+                    </div>
+
+                    <!-- NET INCOME -->
+                    <div class="ledger-group ledger-subtotal-row">
+                      <div class="ledger-header">NET INCOME <span id="net-income" class="ledger-subtotal"></span></div>
+                    </div>
+
+                    <!-- OTHER INCOME -->
+                    <div class="ledger-group hidden" id="other-income-group">
+                      <div class="ledger-header dim">OTHER INCOME <span id="other-income-subtotal" class="ledger-subtotal"></span></div>
+                      <div class="ledger-row hidden" id="disbursement-row" data-tooltip-target="disbursement">
+                        <span class="ledger-label">Investments <span id="disbursement-time" class="dim"></span></span>
+                        <span id="disbursement-rate" class="positive ledger-value">+0</span>
+                      </div>
+                      <div class="ledger-row hidden" id="seed-grant-row" data-tooltip-target="grant">
+                        <span class="ledger-label">Seed Grant <span id="seed-grant-time" class="dim"></span></span>
+                        <span id="seed-grant-rate" class="positive ledger-value">+0</span>
+                      </div>
+                      <div class="ledger-row hidden" id="research-grant-row" data-tooltip-target="grant">
+                        <span class="ledger-label">Research Grant <span id="research-grant-time" class="dim"></span></span>
+                        <span id="research-grant-rate" class="positive ledger-value">+0</span>
+                      </div>
+                      <div class="ledger-row hidden" id="ceo-grant-row">
+                        <span class="ledger-label">Discretionary Grants</span>
+                        <span id="ceo-grant-rate" class="positive ledger-value">+0</span>
+                      </div>
+                    </div>
+
+                    <!-- CAPITAL EXPENDITURE -->
+                    <div class="ledger-group hidden" id="capex-group">
+                      <div class="ledger-header dim">CAPITAL EXPENDITURE <span id="capex-subtotal" class="ledger-subtotal"></span></div>
+                      <div class="ledger-row hidden" id="capex-hiring-row" data-tooltip-target="capex-hiring">
+                        <span class="ledger-label">Hiring</span>
+                        <span id="capex-hiring-cost" class="negative ledger-value">-0</span>
+                      </div>
+                      <div class="ledger-row hidden" id="capex-infra-row" data-tooltip-target="capex-infra">
+                        <span class="ledger-label">Infrastructure</span>
+                        <span id="capex-infra-cost" class="negative ledger-value">-0</span>
+                      </div>
+                    </div>
+
+                    <!-- FREE CASH FLOW -->
+                    <div class="ledger-group ledger-subtotal-row">
+                      <div class="ledger-header">FREE CASH FLOW <span id="free-cash-flow" class="ledger-subtotal"></span></div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- Fundraise Rounds -->
+                <section id="fundraise-section" class="compact-funding hidden-until-unlocked">
+                  <h2>FUNDRAISE</h2>
+                  <div id="fundraise-rounds"></div>
+                  <div id="equity-display" class="dim"></div>
+                </section>
+                </div><!-- end finance-split-panel -->
+
+              </div><!-- end finance-tab-content -->
+
+              <!-- Personnel Sub-tab Content -->
+              <div id="personnel-tab-content" class="subtab-content hidden">
+
+                <section id="research-breakdown-section">
+                  <div class="subtab-split">
+                    <div class="subtab-split-left">
+                      <h2>RESEARCH RATE</h2>
+                      <div class="funding-ledger">
+                        <div class="ledger-group">
+                          <div class="ledger-row">
+                            <span class="ledger-label">Personnel</span>
+                            <span id="research-personnel-base" class="ledger-value">+0/s</span>
+                          </div>
+                        </div>
+                        <div class="ledger-group hidden" id="research-compute-boost-group">
+                          <div class="ledger-row">
+                            <span class="ledger-label">Compute Boost</span>
+                            <span id="research-compute-boost" class="ledger-value">&times;1.00</span>
+                          </div>
+                        </div>
+                        <div class="ledger-group hidden" id="research-cap-bonus-group">
+                          <div class="ledger-row">
+                            <span class="ledger-label">Capability Bonus</span>
+                            <span id="research-cap-bonus" class="ledger-value">&times;1.00</span>
+                          </div>
+                        </div>
+                        <div class="ledger-group ledger-subtotal-row">
+                          <div class="ledger-header">RESEARCH FROM PERSONNEL <span id="research-from-personnel" class="ledger-subtotal"></span></div>
+                        </div>
+                        <div class="ledger-group hidden" id="research-ai-group">
+                          <div class="ledger-row">
+                            <span class="ledger-label">AI Self-Improvement</span>
+                            <span id="research-ai-rate" class="ledger-value">+0/s</span>
+                          </div>
+                        </div>
+                        <div class="ledger-group ledger-subtotal-row">
+                          <div class="ledger-header">TOTAL RESEARCH RATE <span id="research-total-rate" class="ledger-subtotal"></span></div>
+                        </div>
+                        <div class="ledger-group" id="track-rates-group">
+                          <div class="track-rate-row" data-track="capabilities">
+                            <span class="track-rate-label track-label-cap">Capabilities</span>
+                            <span class="track-rate-alloc" id="track-alloc-cap"></span>
+                            <span class="track-rate-modifier hidden" id="track-mod-cap"></span>
+                            <span class="track-rate-value" id="track-rate-cap"></span>
+                          </div>
+                          <div class="track-rate-row" data-track="applications">
+                            <span class="track-rate-label track-label-app">Applications</span>
+                            <span class="track-rate-alloc" id="track-alloc-app"></span>
+                            <span class="track-rate-modifier hidden" id="track-mod-app"></span>
+                            <span class="track-rate-value" id="track-rate-app"></span>
+                          </div>
+                          <div class="track-rate-row hidden-until-unlocked" data-track="alignment" id="track-rate-ali-row">
+                            <span class="track-rate-label track-label-ali">Alignment</span>
+                            <span class="track-rate-alloc" id="track-alloc-ali"></span>
+                            <span class="track-rate-modifier hidden" id="track-mod-ali"></span>
+                            <span class="track-rate-value" id="track-rate-ali"></span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div id="research-allocation-section" class="subtab-split-right hidden-until-unlocked">
+                      <h2>ALLOCATION</h2>
+                      <div class="allocation-grid">
+                        <div class="allocation-row" data-track="capabilities">
+                          <label for="capabilities-allocation" class="allocation-label">Cap</label>
+                          <input type="range" id="capabilities-allocation" min="0" max="100" value="60">
+                          <span id="capabilities-drift" class="allocation-drift"></span>
+                          <span class="allocation-pct"><input type="number" id="capabilities-percent-input" min="0" max="100" value="60"></span>
+                        </div>
+                        <div class="allocation-row" data-track="applications">
+                          <label for="applications-allocation" class="allocation-label">App</label>
+                          <input type="range" id="applications-allocation" min="0" max="100" value="40">
+                          <span id="applications-drift" class="allocation-drift"></span>
+                          <span class="allocation-pct"><input type="number" id="applications-percent-input" min="0" max="100" value="40"></span>
+                        </div>
+                        <div class="allocation-row hidden-until-unlocked" data-track="alignment">
+                          <label for="alignment-allocation" class="allocation-label">Ali</label>
+                          <input type="range" id="alignment-allocation" min="0" max="100" value="0">
+                          <span id="alignment-drift" class="allocation-drift"></span>
+                          <span class="allocation-pct"><input type="number" id="alignment-percent-input" min="0" max="100" value="0"></span>
+                        </div>
+                      </div>
+                      <div id="culture-display" class="culture-display hidden">
+                        <div id="culture-label" class="culture-label"></div>
+                        <div id="culture-bonuses" class="culture-bonuses"></div>
+                      </div>
+                      <div id="allocation-note" class="allocation-note dim hidden"></div>
+                      <button id="culture-shift-btn" class="btn-small hidden">Focus on Culture Shift</button>
+                      <div id="passive-drift-estimate" class="dim hidden"></div>
+                    </div>
+                  </div>
+                </section>
+
+                <div id="purchases-list-personnel"></div>
+              </div><!-- end personnel-tab-content -->
+
+              <!-- Compute Sub-tab Content -->
+              <div id="compute-tab-content" class="subtab-content hidden">
+
+                <!-- Compute Split -->
+                <section id="compute-allocation-section" class="compact-compute-split hidden-until-unlocked">
+                  <div class="subtab-split">
+                    <div class="subtab-split-left">
+                      <h2>COMPUTE SPLIT</h2>
+                      <div class="allocation-slider-container">
+                        <div class="allocation-labels">
+                          <span>Internal</span>
+                          <span>External</span>
+                        </div>
+                        <div class="compute-split-row">
+                          <span class="allocation-pct"><input type="number" id="compute-internal-input" min="0" max="100" value="100"></span>
+                          <input type="range" id="compute-allocation-slider" min="0" max="100" value="100">
+                          <span class="allocation-pct"><input type="number" id="compute-external-input" min="0" max="100" value="0"></span>
+                        </div>
+                        <div class="allocation-values">
+                          <span id="internal-compute-display">0T</span>
+                          <span id="external-compute-display">0T</span>
+                        </div>
+                        <div class="allocation-effects">
+                          <span id="research-boost-display" class="positive">+0%</span>
+                          <span id="token-rate-display">0/s</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="subtab-split-right">
+                      <h2>COMPUTE STATS</h2>
+                      <div class="compute-stats">
+                        <div class="stat-row">
+                          <span class="stat-label">External TFLOPS</span>
+                          <span id="compute-ext-tflops" class="stat-value">0</span>
+                        </div>
+                        <div class="stat-row">
+                          <span class="stat-label">Token Efficiency</span>
+                          <span id="compute-token-efficiency" class="stat-value">0/TFLOP</span>
+                        </div>
+                        <div class="stat-row">
+                          <span class="stat-label">Tokens Generated</span>
+                          <span id="compute-tokens-generated" class="stat-value">0/s</span>
+                        </div>
+                        <div class="stat-row">
+                          <span class="stat-label">Token Demand</span>
+                          <span id="compute-token-demand" class="stat-value">0 / 0</span>
+                        </div>
+                        <div class="stat-row">
+                          <span class="stat-label">Avg Cost/M Tokens</span>
+                          <span id="compute-avg-cost" class="stat-value">$0</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <div id="purchases-list-compute"></div>
+              </div><!-- end compute-tab-content -->
+
+              <!-- Admin Sub-tab Content -->
+              <div id="admin-tab-content" class="subtab-content hidden">
+                <div id="purchases-list-admin"></div>
+              </div><!-- end admin-tab-content -->
+
+              <!-- Data Sub-tab Content -->
+              <div id="data-tab-content" class="subtab-content hidden">
+                <div id="purchases-list-data"></div>
+              </div><!-- end data-tab-content -->
+
+            </div><!-- end col-operations -->
+
+            <!-- Column: Research (50%) -->
+            <div class="column" id="col-research">
+              <div class="column-header">Research</div>
+
+              <!-- Safety Metrics (Arc 2 only) -->
+              <section id="safety-metrics-section" class="arc-1-hidden">
+                <h2>SAFETY DASHBOARD</h2>
+                <div id="alignment-display" class="alignment-display">
+                  <span class="metric-label">Alignment</span>
+                  <span class="metric-value" id="alignment-value">???</span>
+                </div>
+                <div id="safety-metrics-list">
+                  <div class="metric-row" data-metric="evalPassRate">
+                    <span class="metric-label">Eval Pass Rate</span>
+                    <span class="metric-value" id="metric-eval-pass">0%</span>
+                  </div>
+                  <div class="metric-row" data-metric="evalConfidence">
+                    <span class="metric-label">Eval Confidence</span>
+                    <span class="metric-value" id="metric-eval-confidence">0%</span>
+                  </div>
+                  <div class="metric-row" data-metric="interpretability">
+                    <span class="metric-label">Interpretability</span>
+                    <span class="metric-value" id="metric-interpretability">0%</span>
+                  </div>
+                </div>
+                <div id="safety-warnings" class="safety-warnings"></div>
+              </section>
+
+              <!-- Milestones (tabbed: Upcoming / Completed) -->
+              <section id="research-section">
+                <h2>MILESTONES</h2>
+                <div class="sub-tabs milestone-tabs">
+                  <button class="sub-tab active" data-milestone-tab="upcoming">Upcoming</button>
+                  <button class="sub-tab" data-milestone-tab="completed">Completed</button>
+                </div>
+                <div id="research-list" class="research-list scrollable-section"></div>
+                <div id="completed-list" class="completed-list hidden"></div>
+              </section>
+            </div><!-- end col-research -->
+
+          </div><!-- end main-columns -->
+        </div><!-- end dashboard-panel -->
+
+        <!-- Messages Panel -->
+        <div id="messages-panel-wrapper" class="view-panel hidden">
+          <div id="messages-panel" class="messages-panel">
+            <!-- Left: Message List -->
+            <div class="messages-list-panel">
+              <div class="messages-section" data-section="actions">
+                <div class="messages-section-header">
+                  <span class="section-toggle">▼</span>
+                  <span class="section-title">Actions</span>
+                  <span class="section-count" id="actions-count">(0)</span>
+                </div>
+                <div class="messages-section-items" id="actions-list"></div>
+              </div>
+              <div class="messages-section" data-section="informational">
+                <div class="messages-section-header">
+                  <span class="section-toggle">▼</span>
+                  <span class="section-title">Informational</span>
+                  <span class="section-count" id="info-count">(0)</span>
+                </div>
+                <div class="messages-section-items" id="info-list"></div>
+              </div>
+              <div class="messages-section" data-section="news">
+                <div class="messages-section-header">
+                  <span class="section-toggle">▼</span>
+                  <span class="section-title">News</span>
+                  <span class="section-count" id="news-count">(0)</span>
+                </div>
+                <div class="messages-section-items" id="news-list"></div>
+              </div>
+            </div>
+            <!-- Right: Message Detail -->
+            <div class="messages-detail-panel">
+              <div id="message-detail-empty" class="message-empty-state">
+                Select a message to view
+              </div>
+              <div id="message-detail-content" class="message-detail hidden">
+                <div class="message-header">
+                  <div class="message-from">
+                    <span class="message-sender-name" id="detail-sender-name"></span>
+                    <span class="message-sender-role dim" id="detail-sender-role"></span>
+                  </div>
+                  <div class="message-subject" id="detail-subject"></div>
+                </div>
+                <div class="message-body" id="detail-body"></div>
+                <div class="message-signature dim" id="detail-signature"></div>
+                <div class="message-choices" id="detail-choices"></div>
+              </div>
+            </div>
+          </div>
+        </div><!-- end messages-panel-wrapper -->
+
+      </div><!-- end swappable-content -->
+
+    </div><!-- end main-layout -->
+
+    <!-- Message Pause Overlay -->
+    <div id="message-pause-overlay" class="message-pause-overlay hidden">
+      <div class="pause-overlay-content">
+        <div class="pause-overlay-title" id="pause-overlay-title">Decision Required</div>
+        <div class="pause-overlay-text" id="pause-overlay-text">You have messages requiring your attention.</div>
+        <button id="pause-overlay-button" class="big-button">Open Messages</button>
+      </div>
+    </div>
+
+    <!-- Notifications -->
+    <div id="notification-container"></div>
+
+    <!-- Event Modal (hidden by default) -->
+    <div id="event-modal" class="modal hidden">
+      <div class="modal-content">
+        <h2 id="event-title"></h2>
+        <p id="event-text"></p>
+        <div id="event-choices"></div>
+      </div>
+    </div>
+
+    <!-- Stats Modal -->
+    <div id="stats-modal" class="modal hidden">
+      <div class="modal-content stats-content">
+        <button id="stats-close" class="modal-close" aria-label="Close">&times;</button>
+        <h2>Statistics</h2>
+        <div id="stats-grid" class="stats-grid">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Modal (with tabbed changelog) -->
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-content settings-modal-content">
+        <button id="settings-close" class="modal-close" aria-label="Close">&times;</button>
+        <div class="settings-tabs">
+          <button class="settings-tab active" data-settings-tab="settings">Settings</button>
+          <button class="settings-tab" data-settings-tab="changelog">Changelog</button>
+        </div>
+        <div id="settings-tab-settings" class="settings-tab-content">
+          <div class="settings-grid">
+            <div class="settings-item">
+              <span class="settings-label">Time Display</span>
+              <div class="settings-control">
+                <label class="radio-label">
+                  <input type="radio" name="time-display" value="game" checked>
+                  <span>Game Time (days)</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="time-display" value="real">
+                  <span>Real Time (seconds)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="settings-tab-changelog" class="settings-tab-content hidden">
+          <div id="changelog-content"></div>
+          <div class="changelog-footer dim" id="settings-version"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Debug Panel Modal -->
+    <div id="debug-modal" class="modal hidden">
+      <div class="modal-content debug-modal-content">
+        <button id="debug-close" class="modal-close" aria-label="Close">&times;</button>
+        <h2>Debug Panel</h2>
+        <div class="debug-panel">
+          <!-- Resources -->
+          <div class="debug-group">
+            <div class="debug-group-header">Resources</div>
+            <div class="debug-row">
+              <label>Add Funding</label>
+              <input type="number" id="debug-funding-amount" value="100000" min="0" step="10000">
+              <button id="debug-add-funding" class="btn-small">Add</button>
+            </div>
+            <div class="debug-row">
+              <label>Add Research</label>
+              <select id="debug-research-track">
+                <option value="capabilities">Capabilities</option>
+                <option value="applications">Applications</option>
+                <option value="alignment">Alignment</option>
+              </select>
+              <input type="number" id="debug-research-amount" value="100" min="0" step="10">
+              <button id="debug-add-research" class="btn-small">Add</button>
+            </div>
+          </div>
+          <!-- Progress -->
+          <div class="debug-group">
+            <div class="debug-group-header">Progress</div>
+            <div class="debug-row">
+              <label>Set AGI %</label>
+              <input type="number" id="debug-agi-value" value="50" min="0" max="100" step="5">
+              <button id="debug-set-agi" class="btn-small">Set</button>
+            </div>
+            <div class="debug-row">
+              <label>Set Time (seconds)</label>
+              <input type="number" id="debug-time-value" value="600" min="0" step="60">
+              <button id="debug-set-time" class="btn-small">Set</button>
+            </div>
+            <div class="debug-row">
+              <label>Unlock Capability</label>
+              <select id="debug-cap-track">
+                <option value="capabilities">Capabilities</option>
+                <option value="applications">Applications</option>
+                <option value="alignment">Alignment</option>
+              </select>
+              <select id="debug-cap-id"></select>
+              <button id="debug-unlock-cap" class="btn-small">Unlock</button>
+            </div>
+          </div>
+          <!-- Game Flow -->
+          <div class="debug-group">
+            <div class="debug-group-header">Game Flow</div>
+            <div class="debug-row">
+              <button id="debug-phase1-modal" class="btn-small">Phase 1 Modal</button>
+              <button id="debug-phase2-modal" class="btn-small">Phase 2 Modal</button>
+              <button id="debug-trigger-arc2" class="btn-small">Trigger Arc 2</button>
+              <label class="debug-toggle-label">
+                <input type="checkbox" id="debug-prevent-ending">
+                Prevent Ending
+              </label>
+              <label class="debug-toggle-label">
+                <input type="checkbox" id="debug-disable-bankruptcy">
+                Disable Bankruptcy
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase Completion Modal -->
+    <div id="phase-completion-modal" class="modal hidden">
+      <div class="modal-content phase-completion-content">
+        <div id="phase-completion-badge" class="phase-badge"></div>
+        <h2 id="phase-completion-title"></h2>
+        <div id="phase-completion-narrative" class="phase-narrative"></div>
+        <div id="phase-completion-stats" class="phase-stats"></div>
+        <div id="phase-completion-choices" class="phase-choices"></div>
+        <div class="phase-completion-actions">
+          <button id="phase-completion-continue" class="big-button">
+            Continue
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Game Ending Modal -->
+    <div id="ending-modal" class="modal hidden">
+      <div class="modal-content ending-content">
+        <div id="ending-tier-badge" class="ending-tier"></div>
+        <h2 id="ending-title"></h2>
+        <div id="ending-narrative" class="ending-narrative"></div>
+        <div id="ending-stats" class="ending-stats"></div>
+        <div id="ending-epilogue" class="ending-epilogue"></div>
+        <div class="ending-actions">
+          <button id="ending-new-game" class="big-button">Start New Game</button>
+          <button id="ending-continue" class="choice-button">Continue Playing</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
