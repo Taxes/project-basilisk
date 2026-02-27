@@ -298,7 +298,7 @@ function switchSettingsTab(tabName) {
 export function checkChangelogNew() {
   const changelogTab = document.querySelector('[data-settings-tab="changelog"]');
   if (!changelogTab) return;
-  if (gameState.lastSeenVersion !== VERSION) {
+  if (gameState.lastSeenVersion !== VERSION && changelog[0]?.version === VERSION) {
     changelogTab.classList.add('has-new');
   } else {
     changelogTab.classList.remove('has-new');

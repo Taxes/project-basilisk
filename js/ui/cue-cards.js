@@ -62,11 +62,13 @@ export function showCard(stepDef) {
     ? '<a class="cue-card-skip">Skip tutorial</a>'
     : '';
 
+  const isNavStep = stepDef.major === false && typeof stepDef.advance === 'function';
+  const actualButtonsHtml = isNavStep ? '' : buttonsHtml;
+
   cardEl.innerHTML = `
     ${stepCounter}
     <div class="cue-card-body">${bodyHtml}</div>
-    <div class="cue-card-buttons">${buttonsHtml}</div>
-    ${skipHtml}
+    <div class="cue-card-buttons">${skipHtml}${actualButtonsHtml}</div>
   `;
 
   // Wire button handlers
@@ -125,11 +127,13 @@ export function replaceCard(stepDef) {
     ? '<a class="cue-card-skip">Skip tutorial</a>'
     : '';
 
+  const isNavStep = stepDef.major === false && typeof stepDef.advance === 'function';
+  const actualButtonsHtml = isNavStep ? '' : buttonsHtml;
+
   cardEl.innerHTML = `
     ${stepCounter}
     <div class="cue-card-body">${bodyHtml}</div>
-    <div class="cue-card-buttons">${buttonsHtml}</div>
-    ${skipHtml}
+    <div class="cue-card-buttons">${skipHtml}${actualButtonsHtml}</div>
   `;
 
   // Re-wire handlers

@@ -257,8 +257,8 @@ export function handleOnboarding() {
         <p>I set up your instance as "Project Basilisk" (cool name, by the way - does it mean anything?). Prof. Shannon told me you were starting a lab and strongly suggested I get you on board. His exact words were "set it up for them," so I did. Don't worry about the licensing fees; consider this a beta arrangement.</p>
         <p>Two main screens: <strong>Dashboard</strong> is where you run your lab - funding, personnel, compute, all of it. <strong>Messages</strong> is your inbox. I built some priority-detection algorithms that I'm pretty proud of, so important stuff should float to the top.</p>
         <p>I'd start with Messages. Prof. Shannon likes to send a welcome letter to his mentees (he's done it for as long as I've known him), and I'll send a proper user guide over there once you're settled in.</p>
-        <p>The game starts paused so you can look around. Hit the <strong>Play</strong> button (top-right) or press <strong>Space</strong> when you're ready.</p>
-        <p>If anything breaks, just let me know. You're technically my first real user, so. Feedback welcome :)</p>
+        <p>I've paused time for you so you can look around. Hit <strong>Play</strong> (top-right) or press <strong>Space</strong> when you're ready to go.</p>
+        <p>If anything breaks, just let me know. You're technically my first real user, so feedback welcome :)</p>
         <p>– Ken</p>
       `,
       phaseClass: 'phase-onboarding',
@@ -396,7 +396,7 @@ function initializeGame() {
   handleOnboarding();
 
   // Version update toast for returning players
-  if (loaded && gameState.lastSeenVersion != null && gameState.lastSeenVersion < VERSION) {
+  if (loaded && gameState.lastSeenVersion != null && gameState.lastSeenVersion < VERSION && changelog[0]?.version === VERSION) {
     const preview = changelog[0]?.changes?.[0];
     const body = preview || 'See changelog in Settings.';
     notify(`Updated to v${VERSION}`, body, 'info', {
