@@ -4,7 +4,7 @@
 import { gameState } from '../game-state.js';
 import { registerUpdate, SLOW } from './scheduler.js';
 import {
-  getMessagesByType,
+  getMessagesBySections,
   getMessageById,
   markMessageRead,
   markActionTaken,
@@ -17,8 +17,10 @@ import { applyMessageChoiceEffects } from '../message-effects.js';
 import { handleAIRequestChoice } from '../ai-requests.js';
 import { handleAlignmentTaxChoice } from '../alignment-tax-handler.js';
 import { handleModelCollapseChoice } from '../data-quality.js';
+import { handleCreditWarningChoice } from '../economics.js';
 import { strategicChoiceDefinitions } from '../../data/strategic-choices.js';
-import { attachTooltip } from './stats-tooltip.js';
+import { attachTooltip, hideTooltip } from './stats-tooltip.js';
+
 
 let selectedMessageId = null;
 
@@ -29,7 +31,9 @@ function getChoiceEffectsTooltipHTML(optionId) {
       if (option.id === optionId && option.effects) {
         let html = '';
         for (const e of option.effects) {
-          html += `<div class="tooltip-row"><span>${e.label}</span></div>`;
+          if (e.minPhase && gameState.phase < e.minPhase) continue;
+          const cls = e.type === 'positive' ? ' class="positive"' : '';
+          html += `<div class="tooltip-row"><span${cls}>${e.label}</span></div>`;
         }
         if (option.alignmentNote) {
           html += `<div class="tooltip-row dim"><span>Note: ${option.alignmentNote}</span></div>`;
@@ -41,6 +45,18 @@ function getChoiceEffectsTooltipHTML(optionId) {
   return null;
 }
 
+// Look up strategic choice option effects as raw array, filtering by current phase
+function getChoiceEffects(optionId) {
+  for (const choice of strategicChoiceDefinitions) {
+    for (const option of choice.options) {
+      if (option.id === optionId && option.effects) {
+        return option.effects.filter(e => !e.minPhase || gameState.phase >= e.minPhase);
+      }
+    }
+  }
+  return [];
+}
+
 // Get currently selected message ID
 export function getSelectedMessageId() {
   return selectedMessageId;
@@ -48,16 +64,25 @@ export function getSelectedMessageId() {
 
 // Render the full messages panel
 export function renderMessagesPanel() {
-  const messagesByType = getMessagesByType();
+  const sections = getMessagesBySections();
 
-  renderMessageList('actions', messagesByType.action, 'Actions');
-  renderMessageList('info', messagesByType.info, 'Informational');
-  renderMessageList('news', messagesByType.news, 'News');
+  renderMessageList('new', sections.new);
+  renderMessageList('reference', sections.reference);
+  renderMessageList('archive', sections.archive);
+  renderMessageList('news', sections.news);
 
   // Update section counts
-  updateSectionCount('actions', messagesByType.action.length);
-  updateSectionCount('info', messagesByType.info.length);
-  updateSectionCount('news', messagesByType.news.length);
+  updateSectionCount('new', sections.new.length);
+  updateSectionCount('reference', sections.reference.length);
+  updateSectionCount('archive', sections.archive.length);
+  updateSectionCount('news', sections.news.length);
+
+  // Show/hide dismiss button (visible when New has non-action messages)
+  const dismissBtn = document.getElementById('dismiss-all-btn');
+  if (dismissBtn) {
+    const hasDismissible = sections.new.some(m => m.type !== 'action');
+    dismissBtn.classList.toggle('hidden', !hasDismissible);
+  }
 
   // Re-select current message if still exists
   if (selectedMessageId) {
@@ -72,51 +97,48 @@ export function renderMessagesPanel() {
 }
 
 // Render a message list section
-function renderMessageList(sectionId, messages, sectionTitle) {
+function renderMessageList(sectionId, messages) {
   const container = document.getElementById(`${sectionId}-list`);
   if (!container) return;
 
-  container.innerHTML = '';
-
-  // Sort: newest first for all types, but unactioned actions first for actions
-  let sortedMessages = [...messages];
-
-  if (sectionId === 'actions') {
-    // Unactioned first, then by timestamp descending
-    sortedMessages.sort((a, b) => {
-      if (a.actionTaken !== b.actionTaken) {
-        return a.actionTaken ? 1 : -1;
-      }
-      return b.timestamp - a.timestamp;
-    });
-  } else {
-    // Newest first
-    sortedMessages.sort((a, b) => b.timestamp - a.timestamp);
+  const frag = document.createDocumentFragment();
+  for (const msg of messages) {
+    frag.appendChild(createMessageListItem(msg, sectionId));
   }
-
-  for (const msg of sortedMessages) {
-    const item = createMessageListItem(msg);
-    container.appendChild(item);
-  }
+  container.replaceChildren(frag);
 }
 
 // Create a message list item element
-function createMessageListItem(msg) {
+function createMessageListItem(msg, sectionId) {
   const item = document.createElement('div');
   item.className = 'message-list-item';
   item.dataset.messageId = msg.id;
 
-  if (!msg.read) {
+  // Action messages use actionTaken (not read) for unread styling
+  if (msg.type === 'action') {
+    if (!msg.actionTaken) item.classList.add('unread');
+  } else if (!msg.read) {
     item.classList.add('unread');
   }
+
   if (selectedMessageId === msg.id) {
     item.classList.add('selected');
   }
 
-  // Tag
+  // Tag — archive uses context-specific labels
   const tag = document.createElement('span');
-  tag.className = `message-tag ${msg.type}`;
-  tag.textContent = getTagLabel(msg.type);
+  if (sectionId === 'archive') {
+    if (msg.type === 'action') {
+      tag.className = 'message-tag decision';
+      tag.textContent = 'DECISION';
+    } else {
+      tag.className = 'message-tag note';
+      tag.textContent = 'NOTE';
+    }
+  } else {
+    tag.className = `message-tag ${msg.type}`;
+    tag.textContent = getTagLabel(msg.type);
+  }
   item.appendChild(tag);
 
   // Subject
@@ -131,7 +153,6 @@ function createMessageListItem(msg) {
   date.textContent = formatGameDate(msg.timestamp);
   item.appendChild(date);
 
-  // Click handler - news items show detail too
   item.addEventListener('click', () => {
     selectMessage(msg.id);
   });
@@ -146,6 +167,31 @@ function getTagLabel(type) {
     case 'info': return 'INFO';
     case 'news': return 'NEWS';
     default: return type.toUpperCase();
+  }
+}
+
+// Prepend a single new message to the panel without full re-render.
+// Avoids flash and scroll-position reset that innerHTML='' causes.
+export function prependNewMessage(msg) {
+  // Route to correct section
+  const sectionId = msg.type === 'news' ? 'news' : 'new';
+  const container = document.getElementById(`${sectionId}-list`);
+  if (!container) return;
+
+  const item = createMessageListItem(msg, sectionId);
+  container.prepend(item);
+
+  // Update count
+  const countEl = document.getElementById(`${sectionId}-count`);
+  if (countEl) {
+    const current = container.children.length;
+    countEl.textContent = `(${current})`;
+  }
+
+  // Show dismiss button if this is a non-action message in "new"
+  if (sectionId === 'new' && msg.type !== 'action') {
+    const dismissBtn = document.getElementById('dismiss-all-btn');
+    if (dismissBtn) dismissBtn.classList.remove('hidden');
   }
 }
 
@@ -164,10 +210,9 @@ export function selectMessage(messageId) {
 
   selectedMessageId = messageId;
 
-  // Mark as read
-  if (!msg.read) {
+  // Mark as read — but NOT action messages (they stay "unread" until actioned)
+  if (!msg.read && msg.type !== 'action') {
     markMessageRead(messageId);
-    // Update badge (dynamic import to break circular dependency)
     import('./tab-navigation.js').then(({ updateTabBadge }) => updateTabBadge());
   }
 
@@ -176,13 +221,21 @@ export function selectMessage(messageId) {
   items.forEach(item => {
     if (item.dataset.messageId === messageId) {
       item.classList.add('selected');
-      item.classList.remove('unread');
+      // Only remove unread class for non-action messages
+      if (msg.type !== 'action') {
+        item.classList.remove('unread');
+      }
+      // Expand collapsed section and scroll into view
+      const section = item.closest('.messages-section');
+      if (section && section.classList.contains('collapsed')) {
+        section.classList.remove('collapsed');
+      }
+      item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     } else {
       item.classList.remove('selected');
     }
   });
 
-  // Render detail
   renderMessageDetail(msg);
 }
 
@@ -215,6 +268,12 @@ function renderMessageDetail(msg) {
   if (body) {
     const rawBody = (msg.type === 'news' && !msg.body) ? msg.subject : (msg.body || '');
     body.innerHTML = renderMarkdown(rawBody);
+    // Faux-link: style inline anchors with # hrefs as hoverable, non-navigating links
+    for (const a of body.querySelectorAll('a[href="#ken-email"]')) {
+      a.removeAttribute('href');
+      a.classList.add('faux-link');
+      attachTooltip(a, () => 'ken@projectbasilisk.com');
+    }
   }
 
   // Signature
@@ -231,11 +290,29 @@ function renderMessageDetail(msg) {
 
     if (msg.type === 'action' && msg.choices) {
       if (msg.actionTaken) {
-        // Show which choice was taken
+        // Show which choice was taken, with consequences
         const actioned = document.createElement('div');
         actioned.className = 'message-actioned';
         const chosenChoice = msg.choices.find(c => c.id === msg.selectedChoice);
-        actioned.textContent = `Decision made: ${chosenChoice?.label || msg.selectedChoice}`;
+        const label = document.createElement('div');
+        label.className = 'message-actioned-label';
+        label.textContent = `Decision made: ${chosenChoice?.label || msg.selectedChoice}`;
+        actioned.appendChild(label);
+
+        // Look up effects from strategic choice definitions
+        const effects = getChoiceEffects(msg.selectedChoice);
+        if (effects.length > 0) {
+          const list = document.createElement('ul');
+          list.className = 'message-actioned-effects';
+          for (const e of effects) {
+            const li = document.createElement('li');
+            li.textContent = e.label;
+            if (e.type === 'positive') li.classList.add('positive');
+            list.appendChild(li);
+          }
+          actioned.appendChild(list);
+        }
+
         choices.appendChild(actioned);
       } else {
         // Show choice buttons
@@ -244,10 +321,11 @@ function renderMessageDetail(msg) {
           btn.className = 'message-choice-btn';
           btn.textContent = choice.label;
 
-          // Add custom tooltip for strategic choice effects
+          // Add tooltip: strategic choice effects lookup, then inline tooltip
           const effectsHTML = getChoiceEffectsTooltipHTML(choice.id);
-          if (effectsHTML) {
-            attachTooltip(btn, () => effectsHTML);
+          const tooltipHTML = effectsHTML || choice.tooltip;
+          if (tooltipHTML) {
+            attachTooltip(btn, () => tooltipHTML);
           }
 
           btn.addEventListener('click', () => handleChoice(msg.id, choice));
@@ -269,16 +347,20 @@ function showEmptyState() {
 
 // Handle action choice selection
 function handleChoice(messageId, choice) {
+  hideTooltip();
   const msg = getMessageById(messageId);
   if (!msg || msg.actionTaken) return;
 
-  // Route to appropriate handler based on triggeredBy
-  if (msg.triggeredBy?.startsWith('ai_request:')) {
-    const requestId = msg.triggeredBy.replace('ai_request:', '');
+  // Route to appropriate handler based on triggeredBy (startsWith for debug compat)
+  const trigger = msg.triggeredBy || '';
+  if (trigger.startsWith('ai_request:')) {
+    const requestId = trigger.replace('ai_request:', '').replace(/_debug_\d+$/, '');
     handleAIRequestChoice(requestId, choice.id);
-  } else if (msg.triggeredBy === 'alignment_tax') {
+  } else if (trigger.startsWith('credit_warning')) {
+    handleCreditWarningChoice(choice.id);
+  } else if (trigger.startsWith('alignment_tax')) {
     handleAlignmentTaxChoice(choice.id);
-  } else if (msg.triggeredBy === 'model_collapse') {
+  } else if (trigger.startsWith('model_collapse')) {
     handleModelCollapseChoice(choice.id);
   } else if (choice.effects && typeof choice.effects === 'object') {
     // Generic effects object
@@ -287,6 +369,7 @@ function handleChoice(messageId, choice) {
 
   // Mark as actioned
   markActionTaken(messageId, choice.id);
+  markMessageRead(messageId);
 
   // Check if we can unpause
   updatePauseState();
@@ -340,6 +423,22 @@ export function initializeMessagesPanel() {
     }
   });
 
+  // Dismiss all button (marks non-action messages in New as read)
+  const dismissBtn = document.getElementById('dismiss-all-btn');
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // Don't toggle section collapse
+      const sections = getMessagesBySections();
+      for (const msg of sections.new) {
+        if (msg.type !== 'action') {
+          markMessageRead(msg.id);
+        }
+      }
+      renderMessagesPanel();
+      import('./tab-navigation.js').then(({ updateTabBadge }) => updateTabBadge());
+    });
+  }
+
   // Register dashboard feed update with scheduler (runs ~1/sec)
   registerUpdate(renderDashboardFeed, SLOW);
 }
@@ -362,7 +461,7 @@ export function renderDashboardFeed() {
   const shouldAutoScroll = recentMessages.length > previousMessageCount;
   previousMessageCount = recentMessages.length;
 
-  container.innerHTML = '';
+  const frag = document.createDocumentFragment();
 
   if (recentMessages.length === 0) {
     const empty = document.createElement('div');
@@ -370,7 +469,8 @@ export function renderDashboardFeed() {
     empty.textContent = 'No messages yet';
     empty.style.color = 'var(--text-dim)';
     empty.style.fontSize = '0.75rem';
-    container.appendChild(empty);
+    frag.appendChild(empty);
+    container.replaceChildren(frag);
     return;
   }
 
@@ -382,6 +482,13 @@ export function renderDashboardFeed() {
     const isTutorial = msg.tags && msg.tags.includes('tutorial');
     if (isTutorial) {
       item.classList.add('tutorial');
+    }
+
+    // Unread state: actions use actionTaken, info uses read, news never unread
+    if (msg.type === 'action' && !msg.actionTaken) {
+      item.classList.add('unread');
+    } else if (msg.type === 'info' && !msg.read) {
+      item.classList.add('unread');
     }
 
     // Action messages are clickable and navigate to Messages tab
@@ -416,8 +523,10 @@ export function renderDashboardFeed() {
     subject.textContent = msg.subject;
     item.appendChild(subject);
 
-    container.appendChild(item);
+    frag.appendChild(item);
   }
+
+  container.replaceChildren(frag);
 
   // Auto-scroll to top when new messages arrive (newest is at top)
   if (feedEl && shouldAutoScroll) {
@@ -428,7 +537,7 @@ export function renderDashboardFeed() {
 // Short tag labels for dashboard
 function getTagLabelShort(type) {
   switch (type) {
-    case 'action': return 'ACT';
+    case 'action': return 'ACTION';
     case 'info': return 'INFO';
     case 'news': return 'NEWS';
     default: return type.toUpperCase().slice(0, 4);

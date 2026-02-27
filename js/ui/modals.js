@@ -1,20 +1,35 @@
 // Modal UI — stats, changelog, events, endings, prestige
 
-import { gameState, resetGame } from '../game-state.js';
+import { gameState, resetGame, saveGame, prepareSaveData } from '../game-state.js';
+import { getAllPurchasables } from '../content/purchasables.js';
+import LZString from '../../vendor/lz-string.min.js';
 import { tracks } from '../capabilities.js';
 import { applyChoiceEffects } from '../events.js';
 import { getEndingById, getEndingStats, triggerEnding, getEndingNarrative, getPersonalityEpilogue } from '../endings.js';
 import { calculatePrestigeGain, applyPrestigeGains, resetForPrestige } from '../prestige.js';
 import { resetQueueIdCounter } from '../focus-queue.js';
-import { resetTriggeredMessages } from '../messages.js';
+import { resetTriggeredMessages, hasMessageBeenTriggered } from '../messages.js';
 import { triggerExtinctionSequence } from '../extinction-sequence.js';
 import { formatNumber, formatFunding, formatPercent, formatTime, getRateUnit } from '../utils/format.js';
 import { changelog } from '../changelog.js';
 import { VERSION } from '../version.js';
+import { attachTooltip } from './stats-tooltip.js';
 import { showNarrativeModal } from '../narrative-modal.js';
 import { $ } from '../utils/dom-cache.js';
 import { requestFullUpdate } from './signals.js';
 import { applyDebugSettings } from '../debug-commands.js';
+import { getDebugMessageStatus } from '../tutorial-messages.js';
+import {
+  onboardingMessage, strategicChoiceMessages,
+  alignmentWarningMessages, researchMilestoneMessages, fundingMessages,
+  boardMessages, creditWarningMessage, creditWarningPreAdaMessage,
+  alignmentTaxActionMessage, kenJobApplicationMessage,
+} from '../content/message-content.js';
+import { farewellEntries } from '../content/farewell-content.js';
+import { AI_REQUESTS } from '../content/ai-requests.js';
+import { phase1Events } from '../content/events-phase1.js';
+import { phase2Events } from '../content/events-phase2.js';
+import { phase3Events } from '../content/events-phase3.js';
 
 // Lazy back-reference to top-level updateUI / resetUI.
 // Imported at call-time to avoid circular-import issues
@@ -47,23 +62,29 @@ export function initModals(updateUI, resetUI) {
 }
 
 // ---------------------------------------------------------------------------
-// Stats modal
+// Stats (rendered inside settings modal Stats tab)
 // ---------------------------------------------------------------------------
 
-export function showStatsModal() {
-  const modal = $('stats-modal');
+function getFlavorStats() {
+  const discovered = gameState.ui?.discoveredFlavor || [];
+  const total = getAllPurchasables().filter(p => p.flavorText).length;
+  return { discovered: discovered.length, total };
+}
+
+function getFlavorTier(discovered, total) {
+  if (total === 0) return '';
+  if (discovered > total) return 'Guy Fieri';
+  const pct = discovered / total;
+  if (pct >= 1) return 'Guy Fieri';
+  if (pct >= 0.75) return 'Unlocking 100% of your tongue';
+  if (pct >= 0.5) return 'Sommelier';
+  if (pct >= 0.25) return 'Spice trade';
+  return 'Br*tish food';
+}
+
+function renderStatsContent() {
   const statsGrid = $('stats-grid');
-
-  if (!modal || !statsGrid) return;
-
-  // Count capabilities from tracks
-  let unlockedCount = 0;
-  let totalCaps = 0;
-  for (const trackId of ['capabilities', 'applications', 'alignment']) {
-    unlockedCount += gameState.tracks[trackId]?.unlockedCapabilities?.length || 0;
-    const track = tracks[trackId];
-    if (track) totalCaps += track.capabilities.length;
-  }
+  if (!statsGrid) return;
 
   const lt = gameState.lifetime || {};
   const at = gameState.lifetimeAllTime || {};
@@ -75,10 +96,6 @@ export function showStatsModal() {
       <div class="stats-item">
         <span class="stats-item-label">Playtime</span>
         <span class="stats-item-value">${formatTime(gameState.timeElapsed)}</span>
-      </div>
-      <div class="stats-item">
-        <span class="stats-item-label">Capabilities</span>
-        <span class="stats-item-value">${unlockedCount} / ${totalCaps}</span>
       </div>
       <div class="stats-item">
         <span class="stats-item-label">Total Funding Earned</span>
@@ -96,6 +113,15 @@ export function showStatsModal() {
         <span class="stats-item-label">Peak Research Rate</span>
         <span class="stats-item-value">${formatNumber(lt.peakResearchRate || 0)}${getRateUnit()}</span>
       </div>`;
+
+  const { discovered, total } = getFlavorStats();
+  if (discovered > 0) {
+    html += `
+      <div class="stats-item flavor-stat-item">
+        <span class="stats-item-label">Flavor</span>
+        <span class="stats-item-value flavor-stat-value" style="cursor:help">${discovered} / ${total}</span>
+      </div>`;
+  }
 
   if ((lt.dataCollapses || 0) > 0) {
     html += `
@@ -136,12 +162,21 @@ export function showStatsModal() {
   }
 
   statsGrid.innerHTML = html;
-  modal.classList.remove('hidden');
-}
 
-export function hideStatsModal() {
-  const modal = $('stats-modal');
-  if (modal) modal.classList.add('hidden');
+  // Flavor stat: tooltip on value shows tier text + easter egg discovery
+  const flavorValEl = statsGrid.querySelector('.flavor-stat-value');
+  if (flavorValEl) {
+    attachTooltip(flavorValEl, () => {
+      // Easter egg: hovering the stat itself counts as a bonus discovery
+      const disc = gameState.ui.discoveredFlavor;
+      if (!disc.includes('__flavor_stat_egg__')) {
+        disc.push('__flavor_stat_egg__');
+        flavorValEl.textContent = `${disc.length} / ${total}`;
+      }
+      const tier = getFlavorTier(disc.length, total);
+      return `<div class="tooltip-section"><div>${tier}</div></div>`;
+    }, { delay: 400 });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +193,7 @@ function renderChangelogContent() {
   let html = '';
   for (const entry of changelog) {
     html += `<div class="changelog-entry">`;
-    html += `<div class="changelog-version">v${entry.version} <span class="changelog-date">${entry.date}</span></div>`;
+    html += `<div class="changelog-version">v${entry.version}</div>`;
     html += `<ul class="changelog-changes">`;
     for (const change of entry.changes) {
       const li = document.createElement('li');
@@ -191,7 +226,19 @@ function switchSettingsTab(tabName) {
 
   // Toggle tab content
   document.getElementById('settings-tab-settings')?.classList.toggle('hidden', tabName !== 'settings');
+  document.getElementById('settings-tab-stats')?.classList.toggle('hidden', tabName !== 'stats');
   document.getElementById('settings-tab-changelog')?.classList.toggle('hidden', tabName !== 'changelog');
+  document.getElementById('settings-tab-about')?.classList.toggle('hidden', tabName !== 'about');
+
+  // Refresh stats when switching to that tab
+  if (tabName === 'stats') {
+    renderStatsContent();
+  }
+
+  if (tabName === 'about') {
+    const aboutVersion = document.getElementById('about-version');
+    if (aboutVersion) aboutVersion.textContent = `v${VERSION}`;
+  }
 
   // Mark changelog as seen when switching to it
   if (tabName === 'changelog') {
@@ -256,7 +303,31 @@ export function showDebugModal() {
   const modal = $('debug-modal');
   if (!modal) return;
   populateCapabilityDropdown();
+  renderDebugMessages();
   modal.classList.remove('hidden');
+}
+
+const DEBUG_GROUP_LABELS = {
+  early: 'Early Game',
+  mid: 'Mid Game',
+  data: 'Data Crisis',
+  late: 'Late Game',
+  progression: 'Progression',
+  other: 'Other',
+};
+
+function switchDebugTab(tabName) {
+  const modal = $('debug-modal');
+  if (!modal) return;
+
+  modal.querySelectorAll('[data-debug-tab]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.debugTab === tabName);
+  });
+
+  document.getElementById('debug-tab-controls')?.classList.toggle('hidden', tabName !== 'controls');
+  document.getElementById('debug-tab-messages')?.classList.toggle('hidden', tabName !== 'messages');
+
+  if (tabName === 'messages') renderDebugMessages();
 }
 
 export function hideDebugModal() {
@@ -282,7 +353,219 @@ function populateCapabilityDropdown() {
   }
 }
 
+// --- Non-tutorial message definitions for the debug panel ---
+// Derives metadata from existing content objects; no separate registry needed.
+
+function getNonTutorialDebugEntries() {
+  const entries = [];
+
+  function add(group, key, sender, subject, triggeredBy) {
+    entries.push({
+      group,
+      key,
+      sender: sender?.name || sender || '?',
+      subject: subject || '?',
+      fired: hasMessageBeenTriggered(triggeredBy || key),
+    });
+  }
+
+  // Core
+  add('core', 'ktech_user_guide', onboardingMessage.sender, onboardingMessage.subject, 'ktech_user_guide');
+  add('core', 'ken_job_application', kenJobApplicationMessage.sender, kenJobApplicationMessage.subject, 'ken_job_application');
+
+  // Funding
+  for (const [key, msg] of Object.entries(fundingMessages)) {
+    add('funding', key, msg.sender, msg.subject, msg.triggeredBy);
+  }
+  add('funding', 'credit_warning', creditWarningMessage.sender, creditWarningMessage.subject, 'credit_warning');
+  add('funding', 'credit_warning_pre_ada', creditWarningPreAdaMessage.sender, creditWarningPreAdaMessage.subject, 'credit_warning_pre_ada');
+
+  // Research
+  for (const [key, msg] of Object.entries(researchMilestoneMessages)) {
+    add('research', key, msg.sender, msg.subject, `research_milestone:${key}`);
+  }
+
+  // Board
+  for (const [key, msg] of Object.entries(boardMessages)) {
+    add('board', key, msg.sender, msg.subject, msg.triggeredBy);
+  }
+
+  // Strategic Choices
+  for (const [key, msg] of Object.entries(strategicChoiceMessages)) {
+    add('strategic_choices', key, msg.sender, msg.subject, `strategic_choice:${key}`);
+  }
+
+  // Farewells
+  for (const entry of farewellEntries) {
+    add('farewells', entry.key, entry.sender, entry.subject, `farewell_${entry.key}`);
+  }
+
+  // Events — Phase 1
+  for (const event of phase1Events) {
+    add('events_phase1', event.id, null, event.name, `event:${event.id}`);
+  }
+
+  // Events — Phase 2
+  for (const event of phase2Events) {
+    add('events_phase2', event.id, null, event.name, `event:${event.id}`);
+  }
+
+  // Events — Phase 3
+  for (const event of phase3Events) {
+    add('events_phase3', event.id, null, event.name, `event:${event.id}`);
+  }
+
+  // Phase Completions
+  add('phase_completions', 'phase_completion_1', 'Prof. Shannon', 'The Transformer Era', 'phase_completion_1');
+  add('phase_completions', 'phase_completion_2', 'Dennis Babbage', 'Something in the training logs', 'phase_completion_2');
+
+  // Arc 2 — alignment, moratoriums, AI requests, alignment tax
+  for (const [key, msg] of Object.entries(alignmentWarningMessages)) {
+    add('arc2', `alignment_${key}`, msg.sender, msg.subject, msg.triggeredBy);
+  }
+  add('arc2', 'alignment_tax', alignmentTaxActionMessage.sender, alignmentTaxActionMessage.subject, 'alignment_tax');
+  add('arc2', 'moratorium_first', 'Dr. Eliza Chen', 'First Moratorium Proposal', 'moratorium_first');
+  add('arc2', 'moratorium_second', 'Dr. Eliza Chen', 'Second Moratorium Proposal', 'moratorium_second');
+  add('arc2', 'moratorium_final', 'Regulatory Notice', 'CRITICAL: Final Moratorium Decision', 'moratorium_final');
+  for (const [requestId, request] of Object.entries(AI_REQUESTS)) {
+    add('arc2', `ai_request:${requestId}`, request.sender, request.subject, `ai_request:${requestId}`);
+  }
+
+  return entries;
+}
+
+const NON_TUTORIAL_GROUP_LABELS = {
+  core: 'Core',
+  funding: 'Funding',
+  research: 'Research Milestones',
+  board: 'Board',
+  strategic_choices: 'Strategic Choices',
+  farewells: 'Farewells',
+  events_phase1: 'Events — Phase 1',
+  events_phase2: 'Events — Phase 2',
+  events_phase3: 'Events — Phase 3',
+  phase_completions: 'Phase Completions',
+  arc2: 'Arc 2',
+};
+
+const MODAL_ENTRIES = [
+  { key: 'onboarding', label: 'Onboarding Modal', check: () => gameState.onboardingComplete },
+  { key: 'phase1_completion', label: 'Phase 1 Completion Modal', check: () => gameState.phaseCompletion?.phase1Shown },
+  { key: 'phase2_completion', label: 'Phase 2 Completion Modal', check: () => gameState.phaseCompletion?.phase2Shown },
+];
+
+function renderDebugMessages() {
+  const container = document.getElementById('debug-messages-list');
+  if (!container) return;
+  container.innerHTML = '';
+
+  // --- Section 1: Tutorials (sub-grouped by game phase) ---
+  const tutorialStatuses = getDebugMessageStatus();
+  const tutorialGroups = [];
+  const tutorialGroupMap = new Map();
+  for (const s of tutorialStatuses) {
+    const g = s.group || 'other';
+    if (!tutorialGroupMap.has(g)) {
+      tutorialGroupMap.set(g, []);
+      tutorialGroups.push(g);
+    }
+    tutorialGroupMap.get(g).push(s);
+  }
+  for (const g of tutorialGroups) {
+    const label = DEBUG_GROUP_LABELS[g] || g;
+    renderMessageSection(container, `Tutorials — ${label}`, tutorialGroupMap.get(g), { showTriggerSource: true });
+  }
+
+  // --- Section 2: Inbox + Events ---
+  const nonTutorialEntries = getNonTutorialDebugEntries();
+  const groupOrder = Object.keys(NON_TUTORIAL_GROUP_LABELS);
+  const grouped = new Map();
+  for (const entry of nonTutorialEntries) {
+    if (!grouped.has(entry.group)) grouped.set(entry.group, []);
+    grouped.get(entry.group).push(entry);
+  }
+  for (const g of groupOrder) {
+    const items = grouped.get(g);
+    if (!items) continue;
+    renderMessageSection(container, NON_TUTORIAL_GROUP_LABELS[g], items, { showTriggerSource: false });
+  }
+
+  // --- Section 3: Modals ---
+  const modalHeader = document.createElement('div');
+  modalHeader.className = 'debug-group-header';
+  modalHeader.textContent = 'Modals';
+  container.appendChild(modalHeader);
+  for (const modal of MODAL_ENTRIES) {
+    const row = document.createElement('div');
+    row.className = 'debug-message-row';
+    const status = document.createElement('span');
+    const shown = modal.check();
+    status.className = `debug-msg-status ${shown ? 'fired' : 'pending'}`;
+    status.textContent = shown ? 'SHOWN' : 'PENDING';
+    const info = document.createElement('span');
+    info.className = 'debug-msg-info';
+    info.textContent = modal.label;
+    row.appendChild(status);
+    row.appendChild(info);
+    container.appendChild(row);
+  }
+}
+
+function renderMessageSection(container, headerText, items, { showTriggerSource }) {
+  const header = document.createElement('div');
+  header.className = 'debug-group-header';
+  header.textContent = headerText;
+  container.appendChild(header);
+
+  for (const s of items) {
+    const row = document.createElement('div');
+    row.className = 'debug-message-row';
+
+    const status = document.createElement('span');
+    if (s.disabled) {
+      status.className = 'debug-msg-status disabled';
+      status.textContent = 'DISABLED';
+    } else if (s.fired) {
+      status.className = 'debug-msg-status fired';
+      status.textContent = 'FIRED';
+    } else {
+      status.className = 'debug-msg-status pending';
+      status.textContent = 'PENDING';
+    }
+
+    const info = document.createElement('span');
+    info.className = 'debug-msg-info';
+    info.textContent = `${s.key}  —  ${s.sender}: "${s.subject}"`;
+
+    row.appendChild(status);
+    row.appendChild(info);
+
+    // Show trigger source for unfired tutorial messages
+    if (showTriggerSource && s.triggerSource && !s.fired && !s.disabled) {
+      const trigger = document.createElement('pre');
+      trigger.className = 'debug-msg-trigger';
+      trigger.textContent = cleanTriggerSource(s.triggerSource);
+      row.appendChild(trigger);
+    }
+
+    container.appendChild(row);
+  }
+}
+
+// Clean up trigger function source for readability
+function cleanTriggerSource(src) {
+  return src
+    .replace(/^(\(\) =>|function\(\))[\s{]*/, '')
+    .replace(/}$/, '')
+    .trim();
+}
+
 export function initDebugModal() {
+  // Debug tab switching
+  document.querySelectorAll('[data-debug-tab]').forEach(btn => {
+    btn.addEventListener('click', () => switchDebugTab(btn.dataset.debugTab));
+  });
+
   const trackSelect = document.getElementById('debug-cap-track');
   if (trackSelect) {
     trackSelect.addEventListener('change', populateCapabilityDropdown);
@@ -319,8 +602,8 @@ export function initDebugModal() {
     showNarrativeModal({
       title: 'The Transformer Era',
       narrative: `
-        <p>You've proven that attention is all you need. Scaling laws hold. Your models grow smarter with every parameter, every dataset, every GPU-hour. The industry is watching.</p>
-        <p>But scaling has a direction, and you haven't chosen yours yet. The foundation model era begins now — and the models are getting big enough to surprise you.</p>
+        <p>I remember when scaling laws were a hypothesis. You just proved them. Every variable snaps into place — compute, data, parameters — and the curve keeps going up. I haven't seen results this clean since the early connectionist work.</p>
+        <p>The foundation model era starts here. I want to be honest with you: from this point, the models get big enough that surprises become the norm. That's exciting. It should also make you careful.</p>
       `,
       phaseClass: 'phase-forward',
       buttonText: 'Enter the Foundation Model Era',
@@ -331,8 +614,8 @@ export function initDebugModal() {
     showNarrativeModal({
       title: 'The Foundation Model Era',
       narrative: `
-        <p>Your systems reason at levels that rival human experts. Tool use, agency, world models — each breakthrough built on the last. You built the ladder. Something is climbing it.</p>
-        <p>Self-improvement is no longer theoretical. The decisions you make now are the last ones you'll make with a clear advantage.</p>
+        <p>The reasoning benchmarks came back. Our models are outperforming the evaluation suite. Not by a small margin. I had to rerun the tests because I didn't believe the numbers.</p>
+        <p>I'm seeing optimization patterns in the training logs that I didn't put there. The models are finding shortcuts we didn't design. That's either the best result we've ever produced or a problem I don't know how to frame yet.</p>
       `,
       phaseClass: 'phase-ominous',
       buttonText: 'Begin the Road to Superintelligence',
@@ -351,6 +634,179 @@ export function initDebugModal() {
 
   document.getElementById('debug-disable-bankruptcy')?.addEventListener('change', (e) => {
     window.debug?.disableBankruptcy(e.target.checked);
+  });
+
+  // Failure mode triggers (Arc 1)
+  document.getElementById('debug-trigger-bankruptcy')?.addEventListener('click', () => {
+    window.debug?.triggerBankruptcy();
+  });
+
+  document.getElementById('debug-trigger-competitor')?.addEventListener('click', () => {
+    window.debug?.triggerCompetitorWin();
+  });
+
+  document.getElementById('debug-extinction-safety')?.addEventListener('click', () => {
+    window.debugEnding?.('SAFETY', true);
+  });
+
+  document.getElementById('debug-extinction-moderate')?.addEventListener('click', () => {
+    window.debugEnding?.('MODERATE', true);
+  });
+
+  document.getElementById('debug-extinction-reckless')?.addEventListener('click', () => {
+    window.debugEnding?.('RECKLESS', true);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Save Data section (export / import)
+// ---------------------------------------------------------------------------
+
+const MAX_IMPORT_SIZE = 200 * 1024; // 200KB
+
+/** Flash a button's text temporarily, then restore. */
+function flashButtonText(button, text, ms = 1500) {
+  const original = button.textContent;
+  button.textContent = text;
+  button.disabled = true;
+  setTimeout(() => {
+    button.textContent = original;
+    button.disabled = false;
+  }, ms);
+}
+
+function getCompressedSave() {
+  return LZString.compressToBase64(JSON.stringify(prepareSaveData()));
+}
+
+function initSaveDataSection() {
+  // --- Save Now ---
+  document.getElementById('save-now-button')?.addEventListener('click', (e) => {
+    saveGame();
+    flashButtonText(e.currentTarget, 'Saved!');
+  });
+
+  // --- Copy to Clipboard ---
+  document.getElementById('export-clipboard-button')?.addEventListener('click', (e) => {
+    const compressed = getCompressedSave();
+    const btn = e.currentTarget;
+    navigator.clipboard.writeText(compressed).then(() => {
+      flashButtonText(btn, 'Copied!');
+    }).catch(() => {
+      // Fallback: show in import textarea for manual copy
+      const area = document.getElementById('import-area');
+      const textarea = document.getElementById('import-textarea');
+      if (area && textarea) {
+        area.classList.remove('hidden');
+        textarea.value = compressed;
+        textarea.select();
+      }
+    });
+  });
+
+  // --- Save to File ---
+  document.getElementById('export-file-button')?.addEventListener('click', () => {
+    const compressed = getCompressedSave();
+    const blob = new Blob([compressed], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `project-basilisk-save-${new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-')}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  // --- Import Save ---
+  const importArea = document.getElementById('import-area');
+  const importTextarea = document.getElementById('import-textarea');
+  const importConfirm = document.getElementById('import-confirm');
+  const importError = document.getElementById('import-error');
+
+  function resetImportUI() {
+    if (importArea) importArea.classList.add('hidden');
+    if (importConfirm) importConfirm.classList.add('hidden');
+    if (importError) { importError.classList.add('hidden'); importError.textContent = ''; }
+    if (importTextarea) importTextarea.value = '';
+  }
+
+  function showImportError(msg) {
+    if (importError) {
+      importError.textContent = msg;
+      importError.classList.remove('hidden');
+    }
+    if (importConfirm) importConfirm.classList.add('hidden');
+  }
+
+  function validateAndShowConfirm() {
+    if (importError) { importError.classList.add('hidden'); importError.textContent = ''; }
+
+    const raw = importTextarea?.value?.trim();
+    if (!raw) { showImportError('No save data provided'); return; }
+    if (raw.length > MAX_IMPORT_SIZE) { showImportError('Save data too large (>200KB)'); return; }
+
+    try {
+      const json = LZString.decompressFromBase64(raw);
+      if (!json) throw new Error('decompress failed');
+      JSON.parse(json); // validate it's real JSON
+    } catch {
+      showImportError('Invalid save data');
+      return;
+    }
+
+    if (importConfirm) importConfirm.classList.remove('hidden');
+  }
+
+  // Toggle import area
+  document.getElementById('import-button')?.addEventListener('click', () => {
+    if (importArea) {
+      const isHidden = importArea.classList.contains('hidden');
+      if (isHidden) {
+        importArea.classList.remove('hidden');
+      } else {
+        resetImportUI();
+      }
+    }
+  });
+
+  // Load button — validate and show confirm
+  document.getElementById('import-load-button')?.addEventListener('click', validateAndShowConfirm);
+
+  // From File — read .txt and populate textarea
+  document.getElementById('import-file-input')?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (importTextarea) importTextarea.value = reader.result;
+      validateAndShowConfirm();
+    };
+    reader.readAsText(file);
+    // Reset so the same file can be re-selected
+    e.target.value = '';
+  });
+
+  // Cancel buttons
+  document.getElementById('import-cancel-button')?.addEventListener('click', resetImportUI);
+  document.getElementById('import-confirm-cancel')?.addEventListener('click', () => {
+    if (importConfirm) importConfirm.classList.add('hidden');
+  });
+
+  // Confirm overwrite
+  document.getElementById('import-confirm-button')?.addEventListener('click', () => {
+    const raw = importTextarea?.value?.trim();
+    try {
+      const json = LZString.decompressFromBase64(raw);
+      if (!json) throw new Error('decompress failed');
+      JSON.parse(json); // final validation
+      localStorage.setItem('agi-incremental-save', json);
+      // Prevent beforeunload from overwriting the imported save
+      sessionStorage.setItem('agi-import-pending', '1');
+      location.reload();
+    } catch {
+      showImportError('Invalid save data');
+    }
   });
 }
 
@@ -375,6 +831,9 @@ export function initSettingsModal() {
       switchSettingsTab(btn.dataset.settingsTab);
     });
   });
+
+  // Wire save data section
+  initSaveDataSection();
 }
 
 // ---------------------------------------------------------------------------
@@ -581,15 +1040,27 @@ export function showPrestigeModal(ending) {
   title.textContent = ending.name;
 
   // Set narrative paragraphs safely (avoid HTML injection)
-  // Add staggered animation delays for dramatic effect
   narrative.innerHTML = '';
-  const narrativeLines = ending.narrative || [];
-  narrativeLines.forEach((line, index) => {
+  let narrativeLines;
+  let signature = null;
+  if (ending.getNarrative) {
+    const variant = ending.getNarrative();
+    narrativeLines = variant.narrative || [];
+    signature = variant.signature || null;
+  } else {
+    narrativeLines = ending.narrative || [];
+  }
+  narrativeLines.forEach((line) => {
     const p = document.createElement('p');
     p.textContent = line;
-    p.style.animationDelay = `${index * 0.5}s`;
     narrative.appendChild(p);
   });
+  if (signature) {
+    const sig = document.createElement('div');
+    sig.className = 'ending-signature';
+    sig.textContent = signature;
+    narrative.appendChild(sig);
+  }
 
   // Build stats including prestige gains
   const endingStats = getEndingStats(ending.id);
@@ -613,7 +1084,7 @@ export function showPrestigeModal(ending) {
   });
 
   // Add prestige bonus preview
-  if (gains.researchMultiplier > 0 || gains.startingFunding > 0 || gains.computeEfficiency > 0) {
+  if (gains.researchMultiplier > 0 || gains.startingFunding > 0 || gains.revenueMultiplier > 0) {
     const prestigeGains = document.createElement('div');
     prestigeGains.className = 'prestige-gains';
 
@@ -634,10 +1105,10 @@ export function showPrestigeModal(ending) {
       item.textContent = `+${formatPercent(gains.startingFunding)} Starting Funding`;
       prestigeGains.appendChild(item);
     }
-    if (gains.computeEfficiency > 0) {
+    if (gains.revenueMultiplier > 0) {
       const item = document.createElement('div');
       item.className = 'prestige-gain-item';
-      item.textContent = `+${formatPercent(gains.computeEfficiency)} Compute Efficiency`;
+      item.textContent = `+${formatPercent(gains.revenueMultiplier)} Token Revenue`;
       prestigeGains.appendChild(item);
     }
 
@@ -670,6 +1141,8 @@ export function showPrestigeModal(ending) {
     applyPrestigeGains(gains);
     resetForPrestige();
     applyDebugSettings();
+    resetTriggeredMessages();
+    getResetUI()();
     hideEndingModal();
     resetEndingModalButtons();
     requestFullUpdate();

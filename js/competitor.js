@@ -5,9 +5,10 @@ import { gameState, saveGame } from './game-state.js';
 import { notify } from './ui.js';
 import { isCapabilityUnlocked, getAllTrackCapabilities } from './capabilities.js';
 import { triggerEnding } from './endings.js';
-import { addNewsItem } from './news-feed.js';
+import { addNewsItem, triggerNewsForEvent } from './news-feed.js';
 import { COMPETITOR } from '../data/balance.js';
 import { isCompetitorPausedByMoratorium } from './moratoriums.js';
+import { isFarewellStalling } from './farewells.js';
 import { newsContent, competitorBreakthroughs } from './content/news-content.js';
 
 // Track which breakthroughs have been announced
@@ -75,10 +76,17 @@ export function updateCompetitor(deltaTime) {
 
   // Progress to AGI — use arc-specific base rate
   // Frozen during moratorium if competitor accepted the pause
-  const baseRate = gameState.arc === 2 ? COMPETITOR.ARC_2_BASE_RATE : COMPETITOR.ARC_1_BASE_RATE;
-  if (!isCompetitorPausedByMoratorium()) {
+  let agiRate = gameState.arc === 2 ? COMPETITOR.ARC_2_BASE_RATE : COMPETITOR.ARC_1_BASE_RATE;
+
+  // Halve rival rate during farewell sequence when they're close to AGI
+  const fw = gameState.farewells;
+  if (fw?.sequenceStarted && gameState.competitor.progressToAGI >= 90) {
+    agiRate *= 0.5;
+  }
+
+  if (!isCompetitorPausedByMoratorium() && !isFarewellStalling()) {
     gameState.competitor.progressToAGI = Math.min(100,
-      gameState.competitor.progressToAGI + (baseRate * deltaTime)
+      gameState.competitor.progressToAGI + (agiRate * deltaTime)
     );
   }
 
@@ -89,8 +97,8 @@ export function updateCompetitor(deltaTime) {
     addNewsItem('BREAKING: Sources say rival lab weeks from AGI breakthrough', 'competitor');
   }
 
-  // Check for competitor win
-  if (gameState.competitor.progressToAGI >= 100) {
+  // Check for competitor win — skip if player already reached AGI (ending in progress)
+  if (gameState.competitor.progressToAGI >= 100 && !gameState.endingTriggered) {
     triggerEnding(gameState.arc === 1 ? 'competitor_wins_arc1' : 'competitor_wins_arc2');
   }
 
@@ -125,6 +133,9 @@ export function updateCompetitor(deltaTime) {
 
   // Check for competitor breakthrough announcements
   checkCompetitorBreakthroughs();
+
+  // Check for competitor safety incident news
+  checkCompetitorIncidents();
 }
 
 // Calculate player's capability level based on unlocked track capabilities
@@ -156,6 +167,21 @@ function checkCompetitorBreakthroughs() {
       gameState.competitor.announcedBreakthroughs = Array.from(announcedBreakthroughs);
 
       saveGame();
+    }
+  }
+}
+
+// Check for competitor safety incident news (Phase 4 escalation)
+// Triggered by max(player, competitor) AGI progress at 50/60/70/80/90%
+function checkCompetitorIncidents() {
+  const playerProgress = gameState.agiProgress || 0;
+  const competitorProgress = gameState.competitor?.progressToAGI || 0;
+  const maxProgress = Math.max(playerProgress, competitorProgress);
+
+  const thresholds = [50, 60, 70, 80, 90];
+  for (const threshold of thresholds) {
+    if (maxProgress >= threshold) {
+      triggerNewsForEvent('competitor_incident', threshold);
     }
   }
 }

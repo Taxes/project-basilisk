@@ -232,14 +232,6 @@ export function applyChoiceEffects(effects) {
     }
   }
 
-  // Initialize event multipliers if needed
-  if (!gameState.eventMultipliers) {
-    gameState.eventMultipliers = {
-      researchRate: 1.0,
-      computeRate: 1.0,
-    };
-  }
-
   // Apply research rate multiplier
   if (effects.researchRateMultiplier) {
     gameState.eventMultipliers.researchRate *= effects.researchRateMultiplier;

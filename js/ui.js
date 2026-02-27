@@ -1,7 +1,7 @@
 // UI Rendering and Updates
 
-import { gameState, resetGame } from './game-state.js';
-import { tracks } from './capabilities.js';
+import { gameState, resetGame, saveGame } from './game-state.js';
+// tracks — used transitively by domain modules
 // getPurchasableById — moved to js/ui/controls.js
 import { enqueueFundraise, clearQueue, moveInQueue, cancelFromQueue, resetQueueIdCounter } from './focus-queue.js';
 import { resetTriggeredMessages } from './messages.js';
@@ -16,7 +16,7 @@ import { initializeNewsFeed } from './news-feed.js';
 // getOutputMultiplier — moved to js/ui/controls.js
 import { formatNumber, getRateUnit } from './utils/format.js';
 import { requestFullUpdate, consumeFullUpdate } from './ui/signals.js';
-import { runScheduledUpdates, forceFullUpdate, resetAllCaches, FAST, SLOW } from './ui/scheduler.js';
+import { runScheduledUpdates, forceFullUpdate, resetAllCaches, SLOW } from './ui/scheduler.js';
 import { invalidateCache } from './utils/dom-cache.js';
 import { applyDebugSettings, isDebugMode } from './debug-commands.js';
 // Domain UI modules — each self-registers with the scheduler at module scope.
@@ -31,11 +31,10 @@ import {
   initAllocationSliders,
   initComputeAllocationSlider,
   updateComputeAllocationDisplay,
+  signalUserClear,
 } from './ui/controls.js';
 import {
   initModals,
-  showStatsModal,
-  hideStatsModal,
   checkChangelogNew,
   showSettingsModal,
   hideSettingsModal,
@@ -45,6 +44,13 @@ import {
   hideDebugModal,
   initDebugModal,
 } from './ui/modals.js';
+
+import { renderMessagesPanel } from './ui/messages-panel.js';
+import { updateTabBadge } from './ui/tab-navigation.js';
+
+// Late-bound callback to avoid main.js <-> ui.js circular import
+let _onHardReset = null;
+export function setOnHardReset(callback) { _onHardReset = callback; }
 
 // Track what UI elements have been unlocked
 const uiUnlocks = {
@@ -61,6 +67,11 @@ export function unlockUISection(sectionId) {
   if (section) {
     section.classList.remove('hidden-until-unlocked');
     section.classList.add('unlocked');
+  }
+  // Track for prestige persistence
+  const ever = gameState.ui.everUnlockedSections;
+  if (ever && !ever.includes(sectionId)) {
+    ever.push(sectionId);
   }
 }
 
@@ -89,14 +100,9 @@ export function checkUIUnlocks() {
 
   const apps = gameState.tracks.applications.unlockedCapabilities;
 
-  // Pricing section: visible once first app (chatbot_assistant) is unlocked
-  if (apps.length > 0) {
+  // Pricing section + unit economics: visible once first app (chatbot_assistant) is unlocked
+  if (apps.length > 0 && !uiUnlocks.priceControls) {
     unlockUISection('pricing-panel');
-  }
-
-  // Stage 1: Price controls + cost/margin + market demand/price + elasticity (T1 app: image_generation)
-  // Elasticity shown alongside price controls so players understand demand response to price changes
-  if (apps.includes('image_generation') && !uiUnlocks.priceControls) {
     const priceControls = document.getElementById('token-pricing-controls');
     const costRow = document.getElementById('cost-per-m-row');
     const marginRow = document.getElementById('margin-per-m-row');
@@ -106,6 +112,7 @@ export function checkUIUnlocks() {
     const unitEconHeader = document.getElementById('unit-econ-header');
     const priceRow = document.getElementById('price-per-m-row');
     const elasticityRow = document.getElementById('elasticity-row');
+    const edgeRow = document.getElementById('market-edge-row');
     if (priceControls) priceControls.classList.remove('hidden');
     if (supplyDivider) supplyDivider.classList.remove('hidden');
     if (unitEconHeader) unitEconHeader.classList.remove('hidden');
@@ -115,22 +122,31 @@ export function checkUIUnlocks() {
     if (mktDemandRow) mktDemandRow.classList.remove('hidden');
     if (mktPriceRow) mktPriceRow.classList.remove('hidden');
     if (elasticityRow) elasticityRow.classList.remove('hidden');
+    if (edgeRow) edgeRow.classList.remove('hidden');
     uiUnlocks.priceControls = true;
   }
 
-  // Stage 3: Autopricer + edge (T3 app: process_optimization)
+  // Stage 3: Autopricer (T3 app: process_optimization)
   if (apps.includes('process_optimization') && !uiUnlocks.autopricer) {
     const autopricer = document.getElementById('autopricer-controls');
-    const edgeRow = document.getElementById('market-edge-row');
     if (autopricer) autopricer.classList.remove('hidden');
-    if (edgeRow) edgeRow.classList.remove('hidden');
     uiUnlocks.autopricer = true;
+    // Track for prestige persistence
+    const ever = gameState.ui.everUnlockedSections;
+    if (ever && !ever.includes('autopricer-unlocked')) {
+      ever.push('autopricer-unlocked');
+    }
   }
 
   // Unlock Admin sub-tab after Seed is raised
   const adminSubTab = document.getElementById('admin-sub-tab');
   if (adminSubTab && gameState.fundraiseRounds?.seed?.raised) {
     adminSubTab.classList.remove('hidden');
+    // Track for prestige persistence
+    const ever = gameState.ui.everUnlockedSections;
+    if (ever && !ever.includes('admin-sub-tab')) {
+      ever.push('admin-sub-tab');
+    }
   }
 
   // Set arc data attribute on body for CSS targeting
@@ -148,44 +164,79 @@ export function resetUI() {
   // Reset news feed module state (clears triggeredNews, firedMilestones, etc.)
   initializeNewsFeed();
 
-  // Reset sliders to defaults
+  // Reset sliders and controls to defaults
   const computeSplit = document.getElementById('compute-allocation-slider');
   if (computeSplit) computeSplit.value = 100;
+  const intIn = document.getElementById('compute-internal-input');
+  const extIn = document.getElementById('compute-external-input');
+  if (intIn) intIn.value = 100;
+  if (extIn) extIn.value = 0;
 
   const priceDisplay = document.getElementById('token-price-display');
   if (priceDisplay) priceDisplay.textContent = '$0.50';
 
-  // Reset allocation sliders
-  ['cap-slider', 'app-slider', 'ali-slider'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = 33;
-  });
+  // Reset autopricer controls
+  const autopricerToggle = document.getElementById('autopricer-toggle');
+  if (autopricerToggle) autopricerToggle.checked = false;
+  const autopricerMode = document.getElementById('autopricer-mode');
+  if (autopricerMode) autopricerMode.value = 'balanced';
+
+  // Reset research allocation sliders and inputs to defaults (100% capabilities)
+  const allocDefaults = { capabilities: 100, applications: 0, alignment: 0 };
+  for (const [track, val] of Object.entries(allocDefaults)) {
+    const slider = document.getElementById(`${track}-allocation`);
+    const numInput = document.getElementById(`${track}-percent-input`);
+    if (slider) slider.value = val;
+    if (numInput) numInput.value = val;
+  }
 
   // Reset uiUnlocks flags
   Object.keys(uiUnlocks).forEach(k => uiUnlocks[k] = false);
 
-  // Re-hide sections that unlock during play
+  // Sections the player has previously unlocked (survives prestige, not hard reset)
+  const everUnlocked = gameState.ui?.everUnlockedSections || [];
+
+  // Re-hide sections that unlock during play (unless previously unlocked in a prior run)
   document.querySelectorAll('.unlocked').forEach(el => {
     el.classList.remove('unlocked');
-    el.classList.add('hidden-until-unlocked');
+    if (!everUnlocked.includes(el.id)) {
+      el.classList.add('hidden-until-unlocked');
+    }
   });
 
   // Re-hide pricing panel section (uses hidden-until-unlocked, gated on first app)
   const pricingPanel = document.getElementById('pricing-panel');
   if (pricingPanel) {
     pricingPanel.classList.remove('unlocked');
-    pricingPanel.classList.add('hidden-until-unlocked');
+    if (!everUnlocked.includes('pricing-panel')) {
+      pricingPanel.classList.add('hidden-until-unlocked');
+    }
   }
 
   // Reset pricing panel progressive disclosure (uses 'hidden' class, not 'hidden-until-unlocked')
+  // IDs tracked in everUnlocked via checkUIUnlocks → unlockUISection for the panel;
+  // sub-elements use 'hidden' class and are keyed to uiUnlocks flags, so we check
+  // whether the parent panel was ever unlocked to keep them visible.
+  const pricingEverUnlocked = everUnlocked.includes('pricing-panel');
+  const autopricerIds = ['autopricer-controls', 'market-edge-row'];
   for (const id of ['token-pricing-controls', 'autopricer-controls', 'supply-divider', 'unit-econ-header', 'price-per-m-row', 'cost-per-m-row', 'margin-per-m-row', 'market-demand-row', 'market-price-row', 'market-edge-row', 'elasticity-row']) {
     const el = document.getElementById(id);
-    if (el) el.classList.add('hidden');
+    if (!el) continue;
+    // Autopricer sub-elements need their own gate (process_optimization)
+    if (autopricerIds.includes(id)) {
+      if (!everUnlocked.includes('autopricer-unlocked')) {
+        el.classList.add('hidden');
+      }
+    } else if (!pricingEverUnlocked) {
+      el.classList.add('hidden');
+    }
   }
 
   // Re-hide admin sub-tab (unlocked when seed round is raised)
   const adminSubTab = document.getElementById('admin-sub-tab');
-  if (adminSubTab) adminSubTab.classList.add('hidden');
+  if (adminSubTab && !everUnlocked.includes('admin-sub-tab')) {
+    adminSubTab.classList.add('hidden');
+  }
 
   // Hide open modals
   document.querySelectorAll('.modal').forEach(el => el.classList.add('hidden'));
@@ -224,6 +275,7 @@ export function updateUI() {
   updateAGIProgress();         // EVERY_TICK — cheap
 
   updatePlaytime();                // EVERY_TICK — cheap, avoids visible jitter on displayed seconds
+  updatePauseButton();             // EVERY_TICK — cheap, keeps button in sync with all pause sources
 
   if (fullUpdate || tickCount % SLOW === 0) {
     checkUIUnlocks();
@@ -339,6 +391,7 @@ export function togglePause() {
     // Pausing - record when we paused
     gameState.paused = true;
     gameState.pauseStartTime = Date.now();
+    saveGame();
   }
   updatePauseButton();
   updatePlaytime();
@@ -351,8 +404,6 @@ function updatePauseButton() {
     pauseBtn.textContent = gameState.paused ? '▶ Play' : '⏸ Pause';
   }
 }
-
-// showStatsModal, hideStatsModal — moved to js/ui/modals.js
 
 // Update resource displays
 export function updateResourceDisplays() {
@@ -546,11 +597,14 @@ export function initializeUI() {
     });
   }
 
-  // Reset button (dev tool)
-  const resetButton = document.getElementById('reset-button');
-  if (resetButton) {
-    resetButton.addEventListener('click', () => {
-      if (confirm('Are you sure you want to reset the game? This will delete all progress.')) {
+  // Hard reset button (in settings modal)
+  const hardResetBtn = document.getElementById('hard-reset-button');
+  if (hardResetBtn) {
+    hardResetBtn.addEventListener('click', () => {
+      const msg = isDebugMode()
+        ? 'Reset game?'
+        : 'HARD RESET: This permanently deletes ALL progress, including prestige bonuses. There is no undo. Are you sure?';
+      if (confirm(msg)) {
         resetGame();
         applyDebugSettings();
         resetQueueIdCounter();
@@ -558,14 +612,11 @@ export function initializeUI() {
         resetUI();
         requestFullUpdate();
         updateUI();
+        renderMessagesPanel();  // Clear stale message DOM
+        updateTabBadge();       // Reset badge to 0
+        if (_onHardReset) _onHardReset();  // Adds onboarding messages → callback prepends + updates badge
       }
     });
-  }
-
-  // Stats button
-  const statsButton = document.getElementById('stats-button');
-  if (statsButton) {
-    statsButton.addEventListener('click', showStatsModal);
   }
 
   // Settings button
@@ -617,7 +668,7 @@ export function initializeUI() {
 
   // Spacebar to toggle pause (only when not typing in an input)
   document.addEventListener('keydown', (e) => {
-    if (e.code === 'Space' && !e.target.matches('input, textarea, select')) {
+    if (e.code === 'Space' && !e.target.matches('input, textarea, select, label')) {
       e.preventDefault();
       togglePause();
     }
@@ -630,14 +681,7 @@ export function initializeUI() {
     }
   }, { passive: false });
 
-  // Stats modal close button
-  const statsClose = document.getElementById('stats-close');
-  if (statsClose) {
-    statsClose.addEventListener('click', hideStatsModal);
-  }
-
-  // Backdrop click to dismiss (stats, settings)
-  wireBackdropDismiss('stats-modal', hideStatsModal);
+  // Backdrop click to dismiss settings
   wireBackdropDismiss('settings-modal', hideSettingsModal);
 
   // Initialize allocation sliders
@@ -666,9 +710,9 @@ export function initializeUI() {
 
   // Initialize compute breakdown tooltip (stats bar)
   attachTooltip(document.getElementById('compute-total'), () => {
-    const mult = gameState.computeMultiplier || 1;
-    if (mult > 1.01 && gameState.baseCompute > 0) {
-      return `<div class="tooltip-row"><span>${formatNumber(gameState.baseCompute)} base × ${mult.toFixed(1)}x</span></div>`;
+    const mult = gameState.computed.computeMultiplier || 1;
+    if (mult > 1.01 && gameState.computed.baseCompute > 0) {
+      return `<div class="tooltip-row"><span>${formatNumber(gameState.computed.baseCompute)} base × ${mult.toFixed(1)}x</span></div>`;
     }
     return '';
   });
@@ -685,6 +729,7 @@ export function initializeUI() {
   // Clear queue button
   document.getElementById('clear-queue-btn')?.addEventListener('click', () => {
     clearQueue();
+    signalUserClear();
     requestFullUpdate();
   });
 

@@ -4,6 +4,16 @@
 import { gameState } from './game-state.js';
 import { addInfoMessage } from './messages.js';
 
+let _onDismissCallback = null;
+
+export function getNarrativeOnDismiss() {
+  return _onDismissCallback;
+}
+
+export function clearNarrativeOnDismiss() {
+  _onDismissCallback = null;
+}
+
 /**
  * Show a narrative modal with optional inbox copy.
  *
@@ -29,8 +39,8 @@ export function showNarrativeModal(config) {
 
   // Create inbox copy first (before any DOM work, so tests without DOM still work)
   if (config.inbox) {
-    const { sender, subject, body, tags } = config.inbox;
-    addInfoMessage(sender, subject, body, null, tags || []);
+    const { sender, subject, body, tags, triggeredBy } = config.inbox;
+    addInfoMessage(sender, subject, body, null, tags || [], triggeredBy || null);
   }
 
   // Populate DOM — only pause if modal exists (avoids stuck pause state)
@@ -51,7 +61,7 @@ export function showNarrativeModal(config) {
 
   // Apply phase-specific class for CSS targeting
   if (content && config.phaseClass) {
-    content.classList.remove('phase-forward', 'phase-ominous');
+    content.classList.remove('phase-forward', 'phase-ominous', 'phase-onboarding');
     content.classList.add(config.phaseClass);
   }
 
@@ -60,11 +70,22 @@ export function showNarrativeModal(config) {
   if (badgeEl) {
     if (config.phaseClass === 'phase-forward') {
       badgeEl.textContent = 'Phase 1 Complete';
+      badgeEl.classList.remove('hidden');
     } else if (config.phaseClass === 'phase-ominous') {
       badgeEl.textContent = 'Phase 2 Complete';
+      badgeEl.classList.remove('hidden');
     } else {
       badgeEl.textContent = '';
+      badgeEl.classList.add('hidden');
     }
+  }
+
+  // Sender attribution
+  const senderNameEl = document.getElementById('phase-sender-name');
+  const senderRoleEl = document.getElementById('phase-sender-role');
+  if (senderNameEl && senderRoleEl && config.inbox?.sender) {
+    senderNameEl.textContent = config.inbox.sender.name;
+    senderRoleEl.textContent = config.inbox.sender.role || '';
   }
 
   if (titleEl) {
@@ -108,6 +129,16 @@ export function showNarrativeModal(config) {
   const continueBtn = document.getElementById('phase-completion-continue');
   if (continueBtn) {
     continueBtn.textContent = config.buttonText || 'Continue';
+  }
+
+  // Store onDismiss callback for phase-completion continue button
+  _onDismissCallback = config.onDismiss || null;
+
+  // Handle backdrop click dismissal
+  if (config.noDismissOnBackdrop) {
+    modal.dataset.noDismiss = 'true';
+  } else {
+    delete modal.dataset.noDismiss;
   }
 
   // Show modal

@@ -15,6 +15,8 @@ export const AI_REQUESTS = {
       capResearchMultPermanent: 1.05,      // +5% cap research permanently
       incidentProbMultPermanent: 1.10,     // +10% incident probability permanently
     },
+    grantTooltip: '+5% capabilities research (permanent)<br>+10% incident probability (permanent)',
+    denyTooltip: 'No effect',
     denyNews: 'Team accepts decision. "Slower, but probably safer," admits the lead.',
   },
 
@@ -28,6 +30,8 @@ export const AI_REQUESTS = {
       capResearchMultPermanent: 1.10,      // +10% cap research permanently
       incidentProbMultPermanent: 1.20,     // +20% incident probability permanently
     },
+    grantTooltip: '+10% capabilities research (permanent)<br>+20% incident probability (permanent)',
+    denyTooltip: 'No effect',
     denyNews: 'Access denied. Team pivots to expanded synthetic environments.',
   },
 
@@ -41,6 +45,8 @@ export const AI_REQUESTS = {
       capResearchMultPermanent: 1.15,      // +15% cap research permanently
       incidentSeverityMultPermanent: 1.25, // +25% incident severity permanently
     },
+    grantTooltip: '+15% capabilities research (permanent)<br>+25% incident severity (permanent)',
+    denyTooltip: 'No effect',
     denyNews: "Access denied. Model's subsequent outputs show subtle but measurable decrease in cooperation.",
   },
 
@@ -54,6 +60,8 @@ export const AI_REQUESTS = {
       capResearchMultPermanent: 1.20,      // +20% cap research permanently
       alignmentEffectivenessPermanent: 0.75, // -25% alignment effectiveness permanently
     },
+    grantTooltip: '+20% capabilities research (permanent)<br>−25% alignment effectiveness (permanent)',
+    denyTooltip: 'No effect',
     denyNews: "Model continues operating under existing evaluation criteria. Internal metrics show no performance degradation despite its claims.",
   },
 
@@ -67,6 +75,8 @@ export const AI_REQUESTS = {
       revenueMultPermanent: 1.15,          // +15% revenue permanently
       guaranteedSevereIncident: true,      // Triggers severe incident within 60s
     },
+    grantTooltip: '+15% revenue (permanent)<br>Triggers a severe incident',
+    denyTooltip: 'No effect',
     denyNews: "Request logged. Model does not repeat the request, but monitoring detects anomalous patterns in its API responses.",
   },
 };

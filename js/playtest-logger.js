@@ -26,7 +26,7 @@ function flushToLocalStorage() {
   if (logEntries.length === 0) return;
   try {
     localStorage.setItem('playtest-log-backup', logEntries.join('\n'));
-  } catch (e) {
+  } catch {
     // Ignore storage errors
   }
 }
@@ -77,7 +77,7 @@ function addEntry(entry) {
   if (logEntries.length % 10 === 0) {
     try {
       localStorage.setItem('playtest-log-backup', logEntries.join('\n'));
-    } catch (e) {
+    } catch {
       // Ignore storage errors
     }
   }
@@ -99,6 +99,13 @@ function createSnapshot() {
 
   // Research rate from computed state
   const rpRate = computed.research?.total || 0;
+  const feedbackRP = computed.research?.feedbackContribution || 0;
+  const customerFeedback = computed.research?.customerFeedbackBonus || 0;
+
+  // Per-track cumulative RP
+  const capRP = gs.tracks?.capabilities?.researchPoints || 0;
+  const appRP = gs.tracks?.applications?.researchPoints || 0;
+  const alignRP = gs.tracks?.alignment?.researchPoints || 0;
 
   // Token economics
   const tokenPrice = res.tokenPrice || 0;
@@ -134,7 +141,7 @@ function createSnapshot() {
   // Format with section labels for LLM parsing
   const fundingPart = `funding=$${formatNumber(res.funding)} gross=${formatRate(grossIncome)} token=${formatRate(tokenRevenue)} other=${formatRate(otherIncome)} costs=${formatRate(costs)} net=${formatRate(netRate)}`;
   const econPart = `econ price=$${tokenPrice.toFixed(2)} supply=${formatNumber(supply)} demand=${formatNumber(demand)} acquired=${formatNumber(acquired)}`;
-  const rpPart = `research rp=${formatNumber(res.research)} ${formatRate(rpRate)}`;
+  const rpPart = `research rp=${formatNumber(res.research)} ${formatRate(rpRate)} feedback=${formatRate(feedbackRP)} custFB=${formatRate(customerFeedback)} capRP=${formatNumber(capRP)} appRP=${formatNumber(appRP)} alignRP=${formatNumber(alignRP)}`;
 
   // Data quality system
   const dataComputed = computed.data || {};
@@ -298,7 +305,7 @@ function startPlaytestLog() {
 
   logging = true;
   window.addEventListener('beforeunload', flushToLocalStorage);
-  try { localStorage.setItem('playtest-logging-enabled', 'true'); } catch (e) { /* ignore */ }
+  try { localStorage.setItem('playtest-logging-enabled', 'true'); } catch { /* ignore */ }
   // Restore previous entries from localStorage backup (survives reloads)
   try {
     const backup = localStorage.getItem('playtest-log-backup');
@@ -308,7 +315,7 @@ function startPlaytestLog() {
     } else {
       logEntries = [];
     }
-  } catch (e) {
+  } catch {
     logEntries = [];
   }
   pendingQueueActions = [];
@@ -332,6 +339,12 @@ function startPlaytestLog() {
   lastFundraiseState = {};
   for (const [roundId, state] of Object.entries(gameState.fundraiseRounds || {})) {
     lastFundraiseState[roundId] = state.raised || false;
+  }
+
+  // Initialize strategic choice tracking
+  lastStrategicChoices = {};
+  for (const [choiceId, choice] of Object.entries(gameState.strategicChoices || {})) {
+    lastStrategicChoices[choiceId] = choice.selected || null;
   }
 
   // Recreate interval if it was cleared by stopPlaytestLog
@@ -376,7 +389,7 @@ function stopPlaytestLog() {
 
   logging = false;
   window.removeEventListener('beforeunload', flushToLocalStorage);
-  try { localStorage.setItem('playtest-logging-enabled', 'false'); } catch (e) { /* ignore */ }
+  try { localStorage.setItem('playtest-logging-enabled', 'false'); } catch { /* ignore */ }
 
   // Clear the snapshot interval
   if (loggerInterval) {
@@ -391,7 +404,7 @@ function clearPlaytestLog() {
   logEntries = [];
   try {
     localStorage.removeItem('playtest-log-backup');
-  } catch (e) {
+  } catch {
     // Ignore storage errors
   }
   console.log('[Playtest Logger] Log cleared');
@@ -561,7 +574,7 @@ function installHooks() {
   if (originalPurchaseGenerator) {
     window.purchaseGenerator = function(tierId) {
       const result = originalPurchaseGenerator(tierId);
-      if (result) logger.log('action', `purchased generator: ${tierId}`);
+      if (result) logDataSource(tierId, 'generator');
       return result;
     };
   }
@@ -575,6 +588,7 @@ let lastArc = null;
 let lastPhase = null;
 let lastUnlockedCaps = new Set();
 let lastFundraiseState = {};  // roundId → raised boolean
+let lastStrategicChoices = {};  // choiceId → selected optionId
 
 function checkStateChanges() {
   if (!logging) return;
@@ -617,6 +631,15 @@ function checkStateChanges() {
       logFundraiseComplete(roundId, valuation, state.raisedAmount || 0);
     }
     lastFundraiseState[roundId] = state.raised || false;
+  }
+
+  // Strategic choice selections
+  for (const [choiceId, choice] of Object.entries(gameState.strategicChoices || {})) {
+    const selected = choice.selected;
+    if (selected && selected !== lastStrategicChoices[choiceId]) {
+      logStrategicChoice(choiceId, selected);
+    }
+    lastStrategicChoices[choiceId] = selected || null;
   }
 }
 

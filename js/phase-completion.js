@@ -3,8 +3,9 @@
 import { gameState, saveGame } from './game-state.js';
 import { isCapabilityUnlocked } from './capabilities.js';
 import { triggerNewsForEvent } from './news-feed.js';
-import { showNarrativeModal } from './narrative-modal.js';
+import { showNarrativeModal, getNarrativeOnDismiss, clearNarrativeOnDismiss } from './narrative-modal.js';
 import { senders } from './content/message-content.js';
+import { milestone } from './analytics.js';
 
 // No module-level flags — use gameState.phase as the gate instead.
 // Module-level flags persisted across game resets, breaking phase transitions.
@@ -18,12 +19,10 @@ export function checkPhaseCompletion() {
 
     // Progress to Phase 2
     gameState.phase = 2;
+    milestone('phase_transition', { from_phase: 1, to_phase: 2 }, 'phase_transition_2');
     triggerNewsForEvent('phase_transition', 'phase2');
 
     // Persist that we've shown the completion
-    if (!gameState.phaseCompletion) {
-      gameState.phaseCompletion = {};
-    }
     gameState.phaseCompletion.phase1Shown = true;
     saveGame();
     return;
@@ -35,12 +34,10 @@ export function checkPhaseCompletion() {
 
     // Progress to Phase 3
     gameState.phase = 3;
+    milestone('phase_transition', { from_phase: 2, to_phase: 3 }, 'phase_transition_3');
     triggerNewsForEvent('phase_transition', 'phase3');
 
     // Persist that we've shown the completion
-    if (!gameState.phaseCompletion) {
-      gameState.phaseCompletion = {};
-    }
     gameState.phaseCompletion.phase2Shown = true;
     saveGame();
   }
@@ -49,8 +46,8 @@ export function checkPhaseCompletion() {
 // Show Phase 1 completion modal
 function showPhase1Completion() {
   const narrative = `
-    <p>You've proven that attention is all you need. Scaling laws hold. Your models grow smarter with every parameter, every dataset, every GPU-hour. The industry is watching.</p>
-    <p>But scaling has a direction, and you haven't chosen yours yet. The foundation model era begins now — and the models are getting big enough to surprise you.</p>
+    <p>I remember when scaling laws were a hypothesis. You just proved them. Every variable snaps into place — compute, data, parameters — and the curve keeps going up. I haven't seen results this clean since the early connectionist work.</p>
+    <p>The foundation model era starts here. I want to be honest with you: from this point, the models get big enough that surprises become the norm. That's exciting. It should also make you careful.</p>
   `;
 
   showNarrativeModal({
@@ -60,11 +57,14 @@ function showPhase1Completion() {
     inbox: {
       sender: senders.shannon,
       subject: 'The Transformer Era',
-      body: 'You\'ve proven that attention is all you need. Scaling laws hold. '
-        + 'Your models grow smarter with every parameter, every dataset, every GPU-hour. The industry is watching. '
-        + 'But scaling has a direction, and you haven\'t chosen yours yet. '
-        + 'The foundation model era begins now — and the models are getting big enough to surprise you.',
+      body: 'I remember when scaling laws were a hypothesis. You just proved them. '
+        + 'Every variable snaps into place — compute, data, parameters — and the curve keeps going up. '
+        + 'I haven\'t seen results this clean since the early connectionist work.\n\n'
+        + 'The foundation model era starts here. I want to be honest with you: '
+        + 'from this point, the models get big enough that surprises become the norm. '
+        + 'That\'s exciting. It should also make you careful.',
       tags: ['narrative', 'phase'],
+      triggeredBy: 'phase_completion_1',
     },
     buttonText: 'Enter the Foundation Model Era',
   });
@@ -73,8 +73,8 @@ function showPhase1Completion() {
 // Show Phase 2 completion modal
 function showPhase2Completion() {
   const narrative = `
-    <p>Your systems reason at levels that rival human experts. Tool use, agency, world models — each breakthrough built on the last. You built the ladder. Something is climbing it.</p>
-    <p>Self-improvement is no longer theoretical. The decisions you make now are the last ones you'll make with a clear advantage.</p>
+    <p>The reasoning benchmarks came back. Our models are outperforming the evaluation suite. Not by a small margin. I had to rerun the tests because I didn't believe the numbers.</p>
+    <p>I'm seeing optimization patterns in the training logs that I didn't put there. The models are finding shortcuts we didn't design. That's either the best result we've ever produced or a problem I don't know how to frame yet.</p>
   `;
 
   showNarrativeModal({
@@ -82,14 +82,15 @@ function showPhase2Completion() {
     narrative,
     phaseClass: 'phase-ominous',
     inbox: {
-      sender: senders.shannon,
-      subject: 'The Road to Superintelligence',
-      body: 'Your systems reason at levels that rival human experts. '
-        + 'Tool use, agency, world models — each breakthrough built on the last. '
-        + 'You built the ladder. Something is climbing it. '
-        + 'Self-improvement is no longer theoretical. '
-        + 'The decisions you make now are the last ones you\'ll make with a clear advantage.',
+      sender: senders.babbage,
+      subject: 'Something in the training logs',
+      body: 'The reasoning benchmarks came back. Our models are outperforming the evaluation suite. '
+        + 'Not by a small margin. I had to rerun the tests because I didn\'t believe the numbers.\n\n'
+        + 'I\'m seeing optimization patterns in the training logs that I didn\'t put there. '
+        + 'The models are finding shortcuts we didn\'t design. '
+        + 'That\'s either the best result we\'ve ever produced or a problem I don\'t know how to frame yet.',
       tags: ['narrative', 'phase'],
+      triggeredBy: 'phase_completion_2',
     },
     buttonText: 'Begin the Road to Superintelligence',
   });
@@ -111,6 +112,13 @@ export function hidePhaseCompletionModal() {
   if (gameState.pauseReason === 'phase_completion') {
     gameState.paused = false;
     gameState.pauseReason = null;
+  }
+
+  // Call onDismiss callback if set (e.g. onboarding modal)
+  const onDismiss = getNarrativeOnDismiss();
+  if (onDismiss) {
+    clearNarrativeOnDismiss();
+    onDismiss();
   }
 }
 

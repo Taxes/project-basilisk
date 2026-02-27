@@ -9,7 +9,7 @@
 //   reset() clears the fingerprint so the next render does a full rebuild.
 
 import { gameState } from '../game-state.js';
-import { BALANCE, FUNDING, FUNDRAISE_ROUNDS, LINE_OF_CREDIT } from '../../data/balance.js';
+import { BALANCE, FUNDING, FUNDRAISE_ROUNDS } from '../../data/balance.js';
 import { getPurchasableById, PERSONNEL_IDS, COMPUTE_IDS, ADMIN_IDS } from '../content/purchasables.js';
 import { getFundraiseMultiplier, calculateFundraisePreview } from '../focus-queue.js';
 import { getGrantStatus, getCreditStatus } from '../economics.js';
@@ -19,7 +19,6 @@ import { formatFunding, formatFundingParts, formatNumber, formatPercent, formatD
 import { $ } from '../utils/dom-cache.js';
 import { el } from '../utils/dom.js';
 import { registerUpdate, EVERY_TICK, FAST } from './scheduler.js';
-import { requestFullUpdate } from './signals.js';
 import { attachTooltip } from './stats-tooltip.js';
 
 // ---------------------------------------------------------------------------
@@ -31,6 +30,32 @@ let _renderedFundraiseFingerprint = '';
 // Based on token revenue magnitude with hysteresis to prevent flickering
 let _ledgerDivisor = 1;   // 1 = $, 1000 = K, 1e6 = M
 let _ledgerSuffix = '';   // '', 'K', 'M'
+
+// ---------------------------------------------------------------------------
+// Ledger row grace period — delay hiding rows for 5s to prevent jitter
+// ---------------------------------------------------------------------------
+const LEDGER_HIDE_DELAY = 5000; // ms
+const _rowZeroSince = new Map(); // rowId → timestamp when value first hit 0
+
+/** Show or hide a ledger row with a 5s grace period + fade. */
+function setLedgerRowVisible(rowEl, visible) {
+  if (!rowEl) return;
+  const id = rowEl.id;
+  if (visible) {
+    _rowZeroSince.delete(id);
+    rowEl.classList.remove('hidden', 'ledger-row-fading');
+  } else {
+    if (!_rowZeroSince.has(id)) {
+      _rowZeroSince.set(id, Date.now());
+    }
+    if (Date.now() - _rowZeroSince.get(id) >= LEDGER_HIDE_DELAY) {
+      rowEl.classList.add('hidden');
+      rowEl.classList.remove('ledger-row-fading');
+    } else {
+      rowEl.classList.add('ledger-row-fading');
+    }
+  }
+}
 
 function updateLedgerScale() {
   const rev = gameState.computed?.revenue;
@@ -72,6 +97,7 @@ function formatLedgerDollar(value) {
 
 export function reset() {
   _renderedFundraiseFingerprint = '';
+  _rowZeroSince.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -125,20 +151,6 @@ function setSubtotal(elementId, value) {
   el.textContent = formatLedgerValue(value);
   const baseClass = el.classList.contains('ledger-value') ? 'ledger-value' : 'ledger-subtotal';
   el.className = baseClass + ' ' + (value >= 0 ? 'positive' : 'negative');
-}
-
-/** Format grant time remaining. */
-function formatGrantTimeRemaining() {
-  const grants = getGrantStatus();
-  const active = grants.filter(g => g.active && g.remaining > 0);
-  if (active.length === 0) return '';
-  const shortest = active.reduce((a, b) => a.remaining < b.remaining ? a : b);
-  return `(${formatDuration(shortest.remaining)} left)`;
-}
-
-/** Calculate data running cost per second from computed cost state. */
-function calculateDataRunningCost() {
-  return gameState.computed?.costs?.data?.total || 0;
 }
 
 /** Format disbursement time remaining. */
@@ -235,7 +247,7 @@ export function updateFundingDisplay() {
   const netIncome = rev.netIncome || 0;
 
   const disbursementRate = rev.otherIncome?.disbursements || 0;
-  const grantIncome = rev.otherIncome?.grants || 0;
+  const _grantIncome = rev.otherIncome?.grants || 0;
   const otherIncome = rev.otherIncome?.total || 0;
 
   const capexHiring = rev.capex?.hiring || 0;
@@ -329,14 +341,8 @@ export function updateFundingDisplay() {
 
   const dataRow = $('data-cost-row');
   const dataCostEl = $('data-running-cost');
-  if (dataRow) {
-    if (dataCost > 0) {
-      dataRow.classList.remove('hidden');
-      if (dataCostEl) dataCostEl.textContent = formatLedgerValue(-dataCost);
-    } else {
-      dataRow.classList.add('hidden');
-    }
-  }
+  setLedgerRowVisible(dataRow, dataCost > 0);
+  if (dataCost > 0 && dataCostEl) dataCostEl.textContent = formatLedgerValue(-dataCost);
   setSubtotal('opex-subtotal', -opexTotal);
 
   // --- Operating Profit ---
@@ -346,53 +352,33 @@ export function updateFundingDisplay() {
   const investorRow = $('investor-share-row');
   const investorEl = $('investor-share');
   const equityPctEl = $('equity-pct');
-  if (investorRow) {
-    const equitySold = state.totalEquitySold || 0;
-    if (equitySold > 0) {
-      investorRow.classList.remove('hidden');
-      if (investorEl) investorEl.textContent = formatLedgerValue(-investorShare);
-      if (equityPctEl) equityPctEl.textContent = `(${(equitySold * 100).toFixed(0)}%)`;
-    } else {
-      investorRow.classList.add('hidden');
-    }
+  const equitySold = state.totalEquitySold || 0;
+  setLedgerRowVisible(investorRow, equitySold > 0);
+  if (equitySold > 0) {
+    if (investorEl) investorEl.textContent = formatLedgerValue(-Math.abs(investorShare));
+    if (equityPctEl) equityPctEl.textContent = `(${(equitySold * 100).toFixed(0)}%)`;
   }
 
   // Interest
   const interestRow = $('interest-row');
   const interestCostEl = $('interest-cost');
-  if (interestRow) {
-    if (interestCost > 0) {
-      interestRow.classList.remove('hidden');
-      if (interestCostEl) interestCostEl.textContent = formatLedgerValue(-interestCost);
-    } else {
-      interestRow.classList.add('hidden');
-    }
-  }
+  setLedgerRowVisible(interestRow, interestCost > 0);
+  if (interestCost > 0 && interestCostEl) interestCostEl.textContent = formatLedgerValue(-interestCost);
 
   // --- Net Income ---
   setSubtotal('net-income', netIncome);
 
   // --- Other Income ---
   const otherIncomeGroup = $('other-income-group');
-  if (otherIncomeGroup) {
-    if (otherIncome > 0) {
-      otherIncomeGroup.classList.remove('hidden');
-    } else {
-      otherIncomeGroup.classList.add('hidden');
-    }
-  }
+  setLedgerRowVisible(otherIncomeGroup, otherIncome > 0);
 
   const disbursementRow = $('disbursement-row');
   const disbursementEl = $('disbursement-rate');
   const disbursementTimeEl = $('disbursement-time');
-  if (disbursementRow) {
-    if (disbursementRate > 0) {
-      disbursementRow.classList.remove('hidden');
-      if (disbursementEl) disbursementEl.textContent = formatLedgerValue(disbursementRate);
-      if (disbursementTimeEl) disbursementTimeEl.textContent = formatDisbursementTimeRemaining();
-    } else {
-      disbursementRow.classList.add('hidden');
-    }
+  setLedgerRowVisible(disbursementRow, disbursementRate > 0);
+  if (disbursementRate > 0) {
+    if (disbursementEl) disbursementEl.textContent = formatLedgerValue(disbursementRate);
+    if (disbursementTimeEl) disbursementTimeEl.textContent = formatDisbursementTimeRemaining();
   }
 
   // Individual grant rows
@@ -401,62 +387,39 @@ export function updateFundingDisplay() {
     const rowId = g.id === 'seed' ? 'seed-grant-row' : 'research-grant-row';
     const row = $(rowId);
     if (!row) continue;
-    if (g.active && g.remaining > 0) {
-      row.classList.remove('hidden');
+    const grantVisible = g.active && g.remaining > 0;
+    setLedgerRowVisible(row, grantVisible);
+    if (grantVisible) {
       const rateEl = $(g.id === 'seed' ? 'seed-grant-rate' : 'research-grant-rate');
       const timeEl = $(g.id === 'seed' ? 'seed-grant-time' : 'research-grant-time');
       if (rateEl) rateEl.textContent = formatLedgerValue(g.rate);
       if (timeEl) timeEl.textContent = `(${formatDuration(g.remaining)} left)`;
-    } else {
-      row.classList.add('hidden');
     }
   }
-  // CEO discretionary grants
+  // CEO discretionary grants — show row whenever grants activity is selected,
+  // even when rate is 0 (CEO busy with queue items). Avoids fade/reappear on pause.
   const ceoGrantRow = $('ceo-grant-row');
   const ceoGrantRateEl = $('ceo-grant-rate');
   const ceoGrantRate = rev.otherIncome?.ceoGrants || 0;
-  if (ceoGrantRow) {
-    if (ceoGrantRate > 0) {
-      ceoGrantRow.classList.remove('hidden');
-      if (ceoGrantRateEl) ceoGrantRateEl.textContent = formatLedgerValue(ceoGrantRate);
-    } else {
-      ceoGrantRow.classList.add('hidden');
-    }
-  }
+  const ceoGrantsSelected = gameState.computed?.ceoFocus?.selected === 'grants';
+  setLedgerRowVisible(ceoGrantRow, ceoGrantsSelected);
+  if (ceoGrantRateEl) ceoGrantRateEl.textContent = ceoGrantsSelected ? formatLedgerValue(ceoGrantRate) : '';
 
   setSubtotal('other-income-subtotal', otherIncome);
 
   // --- CapEx ---
   const capexGroup = $('capex-group');
-  if (capexGroup) {
-    if (capexTotal > 0) {
-      capexGroup.classList.remove('hidden');
-    } else {
-      capexGroup.classList.add('hidden');
-    }
-  }
+  setLedgerRowVisible(capexGroup, capexTotal > 0);
 
   const capexHiringRow = $('capex-hiring-row');
   const capexHiringEl = $('capex-hiring-cost');
-  if (capexHiringRow) {
-    if (capexHiring > 0) {
-      capexHiringRow.classList.remove('hidden');
-      if (capexHiringEl) capexHiringEl.textContent = formatLedgerValue(-capexHiring);
-    } else {
-      capexHiringRow.classList.add('hidden');
-    }
-  }
+  setLedgerRowVisible(capexHiringRow, capexHiring > 0);
+  if (capexHiring > 0 && capexHiringEl) capexHiringEl.textContent = formatLedgerValue(-capexHiring);
 
   const capexInfraRow = $('capex-infra-row');
   const capexInfraEl = $('capex-infra-cost');
-  if (capexInfraRow) {
-    if (capexInfra > 0) {
-      capexInfraRow.classList.remove('hidden');
-      if (capexInfraEl) capexInfraEl.textContent = formatLedgerValue(-capexInfra);
-    } else {
-      capexInfraRow.classList.add('hidden');
-    }
-  }
+  setLedgerRowVisible(capexInfraRow, capexInfra > 0);
+  if (capexInfra > 0 && capexInfraEl) capexInfraEl.textContent = formatLedgerValue(-capexInfra);
   setSubtotal('capex-subtotal', -capexTotal);
 
   // --- Free Cash Flow ---
@@ -487,6 +450,19 @@ function buildLedgerRowTooltip(rowType) {
     const price = state.resources.tokenPrice || 0;
     const tokens = Math.min(state.resources.tokensPerSecond || 0, state.resources.demand || 0);
     html = `<div class="tooltip-row"><span>Price \u00d7 Tokens</span><span>$${price.toFixed(2)}/M \u00d7 ${formatNumber(tokens)}${getRateUnit()}</span></div>`;
+    const rev = state.computed?.revenue;
+    const cultureBonus = rev?.cultureBonus || 0;
+    const ppBonus = rev?.ppBonus || 0;
+    const prestigeMult = rev?.prestigeMultiplier ?? 1;
+    if (cultureBonus > 0.005) {
+      html += `<div class="tooltip-row"><span>Culture Bonus</span><span>+${formatPercent(cultureBonus)}</span></div>`;
+    }
+    if (ppBonus > 0.005) {
+      html += `<div class="tooltip-row"><span>Public Positioning</span><span>+${formatPercent(ppBonus)}</span></div>`;
+    }
+    if (Math.abs(prestigeMult - 1) > 0.005) {
+      html += `<div class="tooltip-row"><span>Prestige Bonus</span><span>\u00d7${prestigeMult.toFixed(2)}</span></div>`;
+    }
   } else if (rowType === 'disbursement') {
     const disbursements = state.disbursements || [];
     for (const d of disbursements) {
@@ -623,6 +599,10 @@ function buildPricingTooltip(rowType) {
     const elast = state.resources.effectiveElasticity || 1;
     const pctImpact = Math.round(elast * 10);
     return `<div class="tooltip-row">Price sensitivity of demand. At ${elast.toFixed(1)}, a 10% price increase reduces demand by roughly ${pctImpact}%. Affected by competition and company culture.</div>`;
+  } else if (rowType === 'market-expansion') {
+    return '<div class="tooltip-row">Compounding demand multiplier from AI Market Expansion. Grows each tick, increasing total addressable demand.</div>';
+  } else if (rowType === 'price-drift') {
+    return '<div class="tooltip-row">Actual price drifts toward target at up to 1.5%/s. Use +/\u2212 to set a new target.</div>';
   }
   return '';
 }
@@ -635,13 +615,13 @@ function buildAcquiredDemandTooltip() {
   const supply = state.resources.tokensPerSecond || 0;
   const delta = state.resources.acquiredDemandDelta || 0;
 
-  // Determine cap: min(demandAtPrice, supply * graceFactor)
+  // Use stored cap from game loop; fall back to recalculation for tooltip-only edge cases
   const unlockedApps = state.tracks?.applications?.unlockedCapabilities || [];
   const graceFactor = unlockedApps.includes('ai_market_expansion')
     ? BALANCE.LATE_GAME_GRACE_FACTOR
     : BALANCE.ACQUIRED_DEMAND_GRACE_FACTOR;
   const supplyCap = supply * graceFactor;
-  const potentialDemand = Math.min(demandAtPrice, supplyCap);
+  const potentialDemand = state.resources.acquiredDemandCap ?? Math.min(demandAtPrice, supplyCap);
   const fillPct = potentialDemand > 0 ? Math.round(acquired / potentialDemand * 100) : 0;
 
   // Status
@@ -695,6 +675,8 @@ export function initPricingTooltips() {
     { el: $('market-demand-row'), type: 'market-demand' },
     { el: $('market-edge-row'), type: 'market-edge' },
     { el: $('elasticity-row'), type: 'elasticity' },
+    { el: $('market-expansion-row'), type: 'market-expansion' },
+    { el: $('price-drift-indicator'), type: 'price-drift' },
   ];
 
   for (const row of rows) {
@@ -753,6 +735,9 @@ export function initTokenPricing() {
   // Throttle: ignore clicks within 100ms to prevent hardware double-click mice
   let _lastPriceClickTime = 0;
 
+  attachTooltip(priceDown, () => 'Decrease price by 5%');
+  attachTooltip(priceUp, () => 'Increase price by 5%');
+
   if (priceDown) {
     priceDown.addEventListener('click', () => {
       const now = Date.now();
@@ -781,9 +766,15 @@ export function initAutopricer() {
 
   if (!toggle || !modeSelect) return;
 
+  // Sync UI to saved state on load
+  toggle.checked = !!gameState.resources.autopricerEnabled;
+  if (gameState.resources.autopricerMode) {
+    modeSelect.value = gameState.resources.autopricerMode;
+  }
+
   toggle.addEventListener('change', (e) => {
     gameState.resources.autopricerEnabled = e.target.checked;
-    // When autopricer is active, +/- buttons are ignored (checked in click handlers)
+    // Manual +/- buttons still work when autopricer is active (intentional override)
   });
 
   modeSelect.addEventListener('change', (e) => {
@@ -792,9 +783,9 @@ export function initAutopricer() {
 
   // Help tooltip
   attachTooltip($('autopricer-help'), () =>
-    `<b>Growth</b> — Prices low to maximize demand<br>` +
-    `<b>Balanced</b> — Targets moderate surplus above supply<br>` +
-    `<b>Extraction</b> — Prices at supply ceiling for max revenue`
+    `<b>Growth</b> — Target 150% demand:supply ratio (build customer base)<br>` +
+    `<b>Balanced</b> — Target 120% demand:supply ratio (slight excess demand)<br>` +
+    `<b>Extraction</b> — Target 100% demand:supply ratio (maximize price)`
   );
 }
 
@@ -810,7 +801,10 @@ export function updateTokenEconomicsDisplay() {
   const revenue = state.computed?.revenue?.gross || 0;
 
   if (demandDisplay) {
-    demandDisplay.textContent = formatNumber(state.resources.demand);
+    const demand = state.resources.demand;
+    const supply = state.resources.tokensPerSecond;
+    demandDisplay.textContent = formatNumber(demand);
+    demandDisplay.className = 'pricing-stat-value ' + (demand >= supply ? 'positive' : 'negative');
   }
 
   // Demand at target price preview (read from computed state — uses correct elasticity at target)
@@ -820,6 +814,7 @@ export function updateTokenEconomicsDisplay() {
     if (demandAtTarget != null) {
       const target = state.resources.targetPrice ?? state.resources.tokenPrice;
       demandAtTargetEl.textContent = '(\u2192 ' + formatNumber(demandAtTarget) + ' @ $' + target.toFixed(2) + ')';
+      demandAtTargetEl.className = 'dim ' + (demandAtTarget >= state.resources.tokensPerSecond ? 'positive' : 'negative');
       demandAtTargetEl.style.visibility = 'visible';
     } else {
       demandAtTargetEl.style.visibility = 'hidden';
@@ -845,7 +840,11 @@ export function updateTokenEconomicsDisplay() {
   // Acquired demand display
   const acquiredDisplay = $('acquired-demand-display');
   if (acquiredDisplay) {
-    acquiredDisplay.textContent = formatNumber(state.resources.acquiredDemand || 0);
+    const acquired = state.resources.acquiredDemand || 0;
+    const cap = state.resources.acquiredDemandCap;
+    const isCapped = cap != null && cap > 0 && acquired >= cap * 0.99;
+    acquiredDisplay.innerHTML = formatNumber(acquired) +
+      (isCapped ? ' <span class="dim" style="font-size:0.85em">(capped)</span>' : '');
   }
 
   // Unit economics (per M tokens)
@@ -944,11 +943,10 @@ export function updateTokenEconomicsDisplay() {
 function getIRInclusivePreview(round, roundId) {
   const currentMult = getFundraiseMultiplier(roundId);
   const annualRevenue = gameState.computed?.revenue?.annual || 0;
-  const irMultipleBonus = gameState.computed?.ceoFocus?.irMultipleBonus || 0;
+  const irMultFraction = gameState.computed?.ceoFocus?.irMultFraction || 0;
   const irBaseBonus = gameState.computed?.ceoFocus?.irFundraiseBonus || 0;
-  const effectiveMult = currentMult + irMultipleBonus;
-  const { raiseAmount, effectiveEquity } = calculateFundraisePreview(round, annualRevenue, effectiveMult, undefined, irBaseBonus);
-  return { currentMult, effectiveMult, annualRevenue, irMultipleBonus, irBaseBonus, raiseAmount, effectiveEquity };
+  const { raiseAmount, effectiveEquity, irMultRevenue } = calculateFundraisePreview(round, annualRevenue, currentMult, undefined, irBaseBonus, irMultFraction);
+  return { currentMult, annualRevenue, irMultFraction, irBaseBonus, irMultRevenue, raiseAmount, effectiveEquity };
 }
 
 /** Update fundraise rounds display (fingerprinted incremental DOM) */
@@ -1022,9 +1020,7 @@ export function updateFundraiseDisplay() {
 
       const nameSpan = el('span', { className: 'fundraise-name', text: round.name });
       const valuation = preview.effectiveEquity > 0 ? preview.raiseAmount / preview.effectiveEquity : 0;
-      const multText = preview.irMultipleBonus > 0.5
-        ? `${preview.currentMult.toFixed(0)}+${preview.irMultipleBonus.toFixed(0)}x`
-        : `${preview.effectiveMult.toFixed(0)}x`;
+      const multText = `${preview.currentMult.toFixed(0)}x`;
       const infoSpan = el('span', {
         className: 'fundraise-info',
         text: `${multText} \u2014 ~${formatFunding(preview.raiseAmount)} for ${formatPercent(preview.effectiveEquity, 1)} (${formatFunding(valuation)} val)`
@@ -1034,15 +1030,31 @@ export function updateFundraiseDisplay() {
         const startMult = rs?.startingMultiplier || round.startingMultiplier;
         const p = getIRInclusivePreview(round, rid);
         let html = `<div class="tooltip-row"><span>Base</span><span>${formatFunding(round.base || 0)}</span></div>`;
-        if (p.irBaseBonus > 0) {
-          html += `<div class="tooltip-row"><span>IR bonus</span><span>+${formatFunding(p.irBaseBonus)}</span></div>`;
-        }
-        const revComponent = p.annualRevenue * p.effectiveMult * round.equityPercent;
+        const revComponent = p.annualRevenue * p.currentMult * round.equityPercent;
         html += `<div class="tooltip-row"><span>Revenue component</span><span>+${formatFunding(revComponent)}</span></div>`;
-        if (p.irMultipleBonus > 0.5) {
-          html += `<div class="tooltip-row dim"><span>Multiple: ${p.currentMult.toFixed(0)}x base + ${p.irMultipleBonus.toFixed(0)}x IR</span></div>`;
+        const uncapped = (round.base || 0) + revComponent;
+        if (round.maxRaise && uncapped > round.maxRaise) {
+          html += `<div class="tooltip-row"><span>Cap</span><span>${formatFunding(round.maxRaise)}</span></div>`;
         }
-        html += `<div class="tooltip-row dim"><span>Decays 50% every ${formatDuration(round.halfLife || 1800)}</span></div>`;
+        const totalIrExtra = p.irBaseBonus + (p.irMultRevenue || 0);
+        if (totalIrExtra > 0) {
+          if (p.irBaseBonus > 0) {
+            html += `<div class="tooltip-row"><span>IR fixed bonus</span><span>+${formatFunding(p.irBaseBonus)}</span></div>`;
+          }
+          if (p.irMultRevenue > 0) {
+            html += `<div class="tooltip-row"><span>IR revenue bonus (+${Math.round(p.irMultFraction * 100)}% mult)</span><span>+${formatFunding(p.irMultRevenue)}</span></div>`;
+          }
+          if (round.maxRaise) {
+            const overshootCap = round.maxRaise * (1 + BALANCE.IR_MAX_OVERSHOOT);
+            const totalRaise = Math.min(overshootCap, (round.maxRaise < uncapped ? round.maxRaise : uncapped) + totalIrExtra);
+            if (totalRaise >= overshootCap * 0.95) {
+              html += `<div class="tooltip-row dim"><span>IR overshoot cap</span><span>${formatFunding(overshootCap)}</span></div>`;
+            }
+          }
+        }
+        if (round.floorMultiplier == null || round.floorMultiplier < round.startingMultiplier) {
+          html += `<div class="tooltip-row dim"><span>Decays 50% every ${formatDuration(round.halfLife || 1800)}</span></div>`;
+        }
         html += `<div class="tooltip-row dim"><span>Started at ${Math.round(startMult)}x</span></div>`;
         return html;
       });
@@ -1119,9 +1131,7 @@ export function updateFundraiseDisplay() {
       if (infoSpan) {
         const preview = getIRInclusivePreview(round, roundId);
         const valuation = preview.effectiveEquity > 0 ? preview.raiseAmount / preview.effectiveEquity : 0;
-        const multText = preview.irMultipleBonus > 0.5
-          ? `${preview.currentMult.toFixed(0)}+${preview.irMultipleBonus.toFixed(0)}x`
-          : `${preview.effectiveMult.toFixed(0)}x`;
+        const multText = `${preview.currentMult.toFixed(0)}x`;
         infoSpan.textContent = `${multText} \u2014 ~${formatFunding(preview.raiseAmount)} for ${formatPercent(preview.effectiveEquity, 1)} (${formatFunding(valuation)} val)`;
       }
     }

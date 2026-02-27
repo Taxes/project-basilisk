@@ -1,9 +1,36 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-YGQV4WN86V"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+      gtag('config', 'G-YGQV4WN86V');
+    }
+
+    window.onerror = function(msg, file, line, col) {
+      gtag('event', 'js_error', { event_label: file + ':' + line + ' - ' + msg });
+    };
+    window.onunhandledrejection = function(e) {
+      gtag('event', 'js_error', { event_label: 'promise - ' + (e.reason || 'unknown') });
+    };
+  </script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Project Basilisk</title>
+  <meta name="description" content="An incremental game about building AGI. The numbers go up. Then the questions get harder.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Project Basilisk">
+  <meta property="og:description" content="An incremental game about building AGI. The numbers go up. Then the questions get harder.">
+  <meta property="og:image" content="https://taxes.github.io/ai-game/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Project Basilisk">
+  <meta name="twitter:description" content="An incremental game about building AGI. The numbers go up. Then the questions get harder.">
+  <meta name="twitter:image" content="https://taxes.github.io/ai-game/og-image.png">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -11,6 +38,10 @@
   <link rel="stylesheet" href="css/components.css">
 </head>
 <body>
+  <div id="mobile-notice" class="mobile-notice" style="display:none">
+    <span>> Best experienced on desktop</span>
+    <button id="mobile-notice-dismiss" class="mobile-notice-close" aria-label="Dismiss">&times;</button>
+  </div>
   <div id="game-container">
 
     <!-- Header -->
@@ -26,16 +57,14 @@
           <span class="dim">│</span>
           <span id="playtime" class="dim">0:00</span>
           <span id="pause-indicator" class="hidden">⏸ PAUSED</span>
-          <span id="speed-control" class="speed-control">
-            <button id="speed-down" class="speed-btn" title="Slower">−</button>
+          <span id="speed-control" class="speed-control hidden">
+            <button id="speed-down" class="speed-btn" aria-label="Slower">−</button>
             <span id="speed-display" class="dim">1x</span>
-            <button id="speed-up" class="speed-btn" title="Faster">+</button>
+            <button id="speed-up" class="speed-btn" aria-label="Faster">+</button>
           </span>
           <button id="pause-button">⏸ Pause</button>
-          <button id="stats-button">Stats</button>
           <button id="settings-button">Settings</button>
           <button id="debug-button" style="display:none">Debug</button>
-          <button id="reset-button">Reset</button>
         </div>
       </div>
     </header>
@@ -83,12 +112,12 @@
 
         <!-- Focus Queue -->
         <div id="queue-panel" class="panel">
-          <h3 id="queue-title">FOCUS QUEUE</h3>
+          <div id="queue-header">
+            <h3 id="queue-title">FOCUS QUEUE</h3>
+            <button id="clear-queue-btn" class="btn-small hidden">Clear</button>
+          </div>
           <div id="queue-items"></div>
           <div id="queue-empty-msg" class="muted">Queue empty</div>
-          <div id="queue-controls">
-            <button id="clear-queue-btn" class="btn-small">Clear Queue</button>
-          </div>
         </div>
 
         <!-- CEO Focus -->
@@ -195,11 +224,11 @@
                   <div id="pricing-content">
                     <div class="pricing-header">
                       <div id="token-pricing-controls" class="token-pricing hidden">
-                        <button id="token-price-down" class="price-btn" title="Decrease price by 5%">−</button>
+                        <button id="token-price-down" class="price-btn" aria-label="Decrease price by 5%">−</button>
                         <span>$</span>
                         <span id="token-price-display">0.50</span>
                         <span class="dim">/M</span>
-                        <button id="token-price-up" class="price-btn" title="Increase price by 5%">+</button>
+                        <button id="token-price-up" class="price-btn" aria-label="Increase price by 5%">+</button>
                         <span id="price-drift-indicator" class="price-drift hidden"></span>
                       </div>
                       <div id="autopricer-controls" class="hidden">
@@ -395,7 +424,7 @@
                             <span id="research-personnel-base" class="ledger-value">+0/s</span>
                           </div>
                         </div>
-                        <div class="ledger-group hidden" id="research-compute-boost-group">
+                        <div class="ledger-group" id="research-compute-boost-group">
                           <div class="ledger-row">
                             <span class="ledger-label">Compute Boost</span>
                             <span id="research-compute-boost" class="ledger-value">&times;1.00</span>
@@ -426,7 +455,7 @@
                             <span class="track-rate-modifier hidden" id="track-mod-cap"></span>
                             <span class="track-rate-value" id="track-rate-cap"></span>
                           </div>
-                          <div class="track-rate-row" data-track="applications">
+                          <div class="track-rate-row hidden-until-unlocked" data-track="applications" id="track-rate-app-row">
                             <span class="track-rate-label track-label-app">Applications</span>
                             <span class="track-rate-alloc" id="track-alloc-app"></span>
                             <span class="track-rate-modifier hidden" id="track-mod-app"></span>
@@ -596,23 +625,32 @@
           <div id="messages-panel" class="messages-panel">
             <!-- Left: Message List -->
             <div class="messages-list-panel">
-              <div class="messages-section" data-section="actions">
+              <div class="messages-section" data-section="new">
                 <div class="messages-section-header">
                   <span class="section-toggle">▼</span>
-                  <span class="section-title">Actions</span>
-                  <span class="section-count" id="actions-count">(0)</span>
+                  <span class="section-title">New</span>
+                  <span class="section-count" id="new-count">(0)</span>
+                  <button id="dismiss-all-btn" class="dismiss-all-btn hidden">Dismiss all</button>
                 </div>
-                <div class="messages-section-items" id="actions-list"></div>
+                <div class="messages-section-items" id="new-list"></div>
               </div>
-              <div class="messages-section" data-section="informational">
+              <div class="messages-section" data-section="reference">
                 <div class="messages-section-header">
                   <span class="section-toggle">▼</span>
-                  <span class="section-title">Informational</span>
-                  <span class="section-count" id="info-count">(0)</span>
+                  <span class="section-title">Reference</span>
+                  <span class="section-count" id="reference-count">(0)</span>
                 </div>
-                <div class="messages-section-items" id="info-list"></div>
+                <div class="messages-section-items" id="reference-list"></div>
               </div>
-              <div class="messages-section" data-section="news">
+              <div class="messages-section collapsed" data-section="archive">
+                <div class="messages-section-header">
+                  <span class="section-toggle">▼</span>
+                  <span class="section-title">Archive</span>
+                  <span class="section-count" id="archive-count">(0)</span>
+                </div>
+                <div class="messages-section-items" id="archive-list"></div>
+              </div>
+              <div class="messages-section collapsed" data-section="news">
                 <div class="messages-section-header">
                   <span class="section-toggle">▼</span>
                   <span class="section-title">News</span>
@@ -634,8 +672,10 @@
                   </div>
                   <div class="message-subject" id="detail-subject"></div>
                 </div>
-                <div class="message-body" id="detail-body"></div>
-                <div class="message-signature dim" id="detail-signature"></div>
+                <div class="message-scroll-area">
+                  <div class="message-body" id="detail-body"></div>
+                  <div class="message-signature dim" id="detail-signature"></div>
+                </div>
                 <div class="message-choices" id="detail-choices"></div>
               </div>
             </div>
@@ -668,23 +708,15 @@
     </div>
 
     <!-- Stats Modal -->
-    <div id="stats-modal" class="modal hidden">
-      <div class="modal-content stats-content">
-        <button id="stats-close" class="modal-close" aria-label="Close">&times;</button>
-        <h2>Statistics</h2>
-        <div id="stats-grid" class="stats-grid">
-          <!-- Dynamically populated -->
-        </div>
-      </div>
-    </div>
-
-    <!-- Settings Modal (with tabbed changelog) -->
+    <!-- Settings Modal (with tabbed changelog, stats) -->
     <div id="settings-modal" class="modal hidden">
       <div class="modal-content settings-modal-content">
         <button id="settings-close" class="modal-close" aria-label="Close">&times;</button>
         <div class="settings-tabs">
           <button class="settings-tab active" data-settings-tab="settings">Settings</button>
+          <button class="settings-tab" data-settings-tab="stats">Stats</button>
           <button class="settings-tab" data-settings-tab="changelog">Changelog</button>
+          <button class="settings-tab" data-settings-tab="about">About</button>
         </div>
         <div id="settings-tab-settings" class="settings-tab-content">
           <div class="settings-grid">
@@ -702,10 +734,70 @@
               </div>
             </div>
           </div>
+          <div class="settings-controls-section">
+            <div class="settings-section-header">Controls</div>
+            <div class="settings-hotkey-list">
+              <div class="settings-hotkey"><kbd>Space</kbd> Pause / Unpause</div>
+              <div class="settings-hotkey"><kbd>Ctrl</kbd>+<kbd>click</kbd> Buy / furlough ×5</div>
+              <div class="settings-hotkey"><kbd>Shift</kbd>+<kbd>click</kbd> Buy / furlough ×10</div>
+              <div class="settings-hotkey"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>click</kbd> Buy / furlough ×50</div>
+              <div class="settings-hotkey"><kbd>Right-click</kbd> Priority queue (build next)</div>
+            </div>
+            <div class="settings-section-header">Tips</div>
+            <div class="settings-hotkey-list">
+              <div class="settings-hotkey">Hover over stats and ledger rows for breakdowns</div>
+            </div>
+          </div>
+          <div class="settings-save-section">
+            <div class="settings-section-header">Save Data</div>
+            <div class="save-actions">
+              <button id="save-now-button" class="btn-settings">Save Now</button>
+              <button id="export-clipboard-button" class="btn-settings">Copy to Clipboard</button>
+              <button id="export-file-button" class="btn-settings">Save to File</button>
+              <button id="import-button" class="btn-settings">Import Save</button>
+            </div>
+            <div id="import-area" class="import-area hidden">
+              <textarea id="import-textarea" placeholder="Paste exported save here..." rows="3"></textarea>
+              <div class="import-controls">
+                <button id="import-load-button" class="btn-settings">Load</button>
+                <label id="import-file-label" class="btn-settings import-file-label">
+                  From File
+                  <input type="file" id="import-file-input" accept=".txt" hidden>
+                </label>
+                <button id="import-cancel-button" class="btn-settings">Cancel</button>
+              </div>
+              <div id="import-confirm" class="import-confirm hidden">
+                <span class="import-warning">This will overwrite your current save. No undo.</span>
+                <button id="import-confirm-button" class="btn-danger">Confirm Overwrite</button>
+                <button id="import-confirm-cancel" class="btn-settings">Cancel</button>
+              </div>
+              <div id="import-error" class="import-error hidden"></div>
+            </div>
+          </div>
+          <div class="settings-danger-zone">
+            <button id="hard-reset-button" class="btn-danger">Reset All Progress</button>
+          </div>
+        </div>
+        <div id="settings-tab-stats" class="settings-tab-content hidden">
+          <div id="stats-grid" class="stats-grid">
+            <!-- Dynamically populated -->
+          </div>
         </div>
         <div id="settings-tab-changelog" class="settings-tab-content hidden">
           <div id="changelog-content"></div>
           <div class="changelog-footer dim" id="settings-version"></div>
+        </div>
+        <div id="settings-tab-about" class="settings-tab-content hidden">
+          <div class="about-section">
+            <div class="about-title">Project Basilisk</div>
+            <div class="about-version" id="about-version"></div>
+            <div class="about-credit">Developed by Ken</div>
+            <div class="about-feedback">
+              <div class="settings-section-header">Feedback</div>
+              <p class="about-feedback-text">Found a bug? Have thoughts on the game? I'd love to hear from you.</p>
+              <a href="mailto:ken@projectbasilisk.com" class="about-feedback-link">ken@projectbasilisk.com</a>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -715,6 +807,11 @@
       <div class="modal-content debug-modal-content">
         <button id="debug-close" class="modal-close" aria-label="Close">&times;</button>
         <h2>Debug Panel</h2>
+        <div class="settings-tabs">
+          <button class="settings-tab active" data-debug-tab="controls">Controls</button>
+          <button class="settings-tab" data-debug-tab="messages">Messages</button>
+        </div>
+        <div id="debug-tab-controls" class="settings-tab-content">
         <div class="debug-panel">
           <!-- Resources -->
           <div class="debug-group">
@@ -776,6 +873,23 @@
               </label>
             </div>
           </div>
+          <!-- Failure Modes (Arc 1) -->
+          <div class="debug-group">
+            <div class="debug-group-header">Failure Modes (Arc 1)</div>
+            <div class="debug-row">
+              <button id="debug-trigger-bankruptcy" class="btn-small">Bankruptcy</button>
+              <button id="debug-trigger-competitor" class="btn-small">Competitor Wins</button>
+            </div>
+            <div class="debug-row">
+              <button id="debug-extinction-safety" class="btn-small">Extinction (Safety)</button>
+              <button id="debug-extinction-moderate" class="btn-small">Extinction (Moderate)</button>
+              <button id="debug-extinction-reckless" class="btn-small">Extinction (Reckless)</button>
+            </div>
+          </div>
+        </div>
+        </div>
+        <div id="debug-tab-messages" class="settings-tab-content hidden">
+          <div id="debug-messages-list" class="debug-messages-list"></div>
         </div>
       </div>
     </div>
@@ -786,12 +900,32 @@
         <div id="phase-completion-badge" class="phase-badge"></div>
         <h2 id="phase-completion-title"></h2>
         <div id="phase-completion-narrative" class="phase-narrative"></div>
+        <div class="phase-sender">
+          <span id="phase-sender-name"></span>
+          <span id="phase-sender-role"></span>
+        </div>
         <div id="phase-completion-stats" class="phase-stats"></div>
         <div id="phase-completion-choices" class="phase-choices"></div>
         <div class="phase-completion-actions">
           <button id="phase-completion-continue" class="big-button">
             Continue
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Farewell Modal (Phase 4 character goodbyes) -->
+    <div id="farewell-modal" class="modal hidden">
+      <div class="modal-content farewell-content">
+        <div class="farewell-subject" id="farewell-subject"></div>
+        <div class="farewell-sender">
+          <span id="farewell-sender-name"></span>
+          <span id="farewell-sender-role"></span>
+        </div>
+        <div id="farewell-narrative" class="farewell-narrative"></div>
+        <div class="farewell-signature" id="farewell-signature"></div>
+        <div class="farewell-actions">
+          <button id="farewell-dismiss" class="big-button">Continue</button>
         </div>
       </div>
     </div>
@@ -808,11 +942,26 @@
           <button id="ending-new-game" class="big-button">Start New Game</button>
           <button id="ending-continue" class="choice-button">Continue Playing</button>
         </div>
+        <div class="ending-feedback">
+          <a href="mailto:ken@projectbasilisk.com">Share your thoughts — ken@projectbasilisk.com</a>
+        </div>
       </div>
     </div>
 
   </div>
 
   <script type="module" src="js/main.js"></script>
+  <script>
+    (function() {
+      if (window.innerWidth >= 768 || localStorage.getItem('mobile-notice-dismissed')) return;
+      var notice = document.getElementById('mobile-notice');
+      if (notice) notice.style.display = '';
+      var btn = document.getElementById('mobile-notice-dismiss');
+      if (btn) btn.addEventListener('click', function() {
+        notice.style.display = 'none';
+        localStorage.setItem('mobile-notice-dismissed', '1');
+      });
+    })();
+  </script>
 </body>
 </html>

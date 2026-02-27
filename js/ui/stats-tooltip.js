@@ -17,6 +17,7 @@ let tooltipEl = null;
 // Active tooltip state — tracks what's currently shown so tick can refresh it
 let activeBuilder = null;   // function that returns HTML
 let activeTarget = null;    // element the tooltip is anchored to
+let activeTargetRect = null; // anchor position when tooltip was shown (shift detection)
 let hideTimeout = null;     // delay before hiding (for sticky hover bridge)
 let isOverTooltip = false;  // mouse is on the tooltip itself
 
@@ -91,7 +92,7 @@ function buildFundingTooltip() {
   const revenue = state.computed?.revenue || {};
 
   // Income sources
-  const tokenRevenue = revenue.gross || 0;
+  const _tokenRevenue = revenue.gross || 0;
   const equityShare = state.totalEquitySold || 0;
   const netRevenue = revenue.net || 0;
 
@@ -240,6 +241,8 @@ function showTooltipFor(targetEl, builderFn, position) {
   const tooltip = ensureTooltip();
   activeBuilder = builderFn;
   activeTarget = targetEl;
+  const r = targetEl.getBoundingClientRect();
+  activeTargetRect = { top: r.top, left: r.left };
   tooltip.innerHTML = html;
   tooltip.classList.remove('hidden');
   positionTooltip(targetEl, position);
@@ -262,6 +265,7 @@ function hideTooltip() {
   isOverTooltip = false;
   activeBuilder = null;
   activeTarget = null;
+  activeTargetRect = null;
   if (tooltipEl) {
     tooltipEl.classList.add('hidden');
   }
@@ -270,7 +274,15 @@ function hideTooltip() {
 /** Tick-driven refresh: re-render content if tooltip is visible. */
 function updateTooltip() {
   if (!tooltipEl || tooltipEl.classList.contains('hidden')) return;
-  if (!activeBuilder) return;
+  if (!activeBuilder || !activeTarget) return;
+  // Hide if anchor was removed from DOM or shifted position (card rebuild/reflow)
+  if (!activeTarget.isConnected) { hideTooltip(); return; }
+  if (activeTargetRect) {
+    const r = activeTarget.getBoundingClientRect();
+    if (Math.abs(r.top - activeTargetRect.top) > 2 || Math.abs(r.left - activeTargetRect.left) > 2) {
+      hideTooltip(); return;
+    }
+  }
   const html = activeBuilder();
   if (!html) { hideTooltip(); return; }
   tooltipEl.innerHTML = html;
@@ -304,8 +316,36 @@ export function attachTooltip(el, builderFn, opts) {
   });
 }
 
+/** Build AGI progress tooltip HTML. */
+function buildAGITooltip() {
+  const progress = gameState.agiProgress || 0;
+  const cp = gameState.competitor?.progressToAGI || 0;
+  const seriesARaised = gameState.fundraiseRounds?.series_a?.raised === true;
+
+  let html = '<div class="tooltip-header"><span>AGI Progress</span>';
+  html += `<span class="tooltip-value">${progress.toFixed(1)}%</span></div>`;
+  html += '<div class="tooltip-section">';
+  html += '<div>Your lab\'s progress toward artificial general intelligence. Driven by research breakthroughs — each capability you unlock pushes the needle forward.</div>';
+  html += '</div>';
+
+  if (seriesARaised) {
+    html += '<div class="tooltip-section">';
+    html += '<div class="tooltip-section-header">Rival Lab</div>';
+    html += `<div class="tooltip-row"><span>Their progress</span><span>${cp.toFixed(1)}%</span></div>`;
+    html += '<div class="dim" style="margin-top:4px">A competing lab racing to AGI independently. If they get there first, you lose control of the outcome.</div>';
+    html += '</div>';
+  }
+
+  return html;
+}
+
 /** Initialize stats bar tooltips. */
 export function initStatsTooltips() {
   const fundingGroup = document.querySelector('#stats-bar .stats-group:first-child');
   attachTooltip(fundingGroup, buildFundingTooltip);
+
+  // AGI progress group — find by the agi-progress-label element
+  const agiLabel = document.getElementById('agi-progress-label');
+  const agiGroup = agiLabel?.closest('.stats-group');
+  if (agiGroup) attachTooltip(agiGroup, buildAGITooltip);
 }

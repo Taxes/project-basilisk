@@ -9,17 +9,15 @@ import { newsContent } from './content/news-content.js';
 import { alignmentTaxActionMessage } from './content/message-content.js';
 import { gameState } from './game-state.js';
 import { ALIGNMENT, BALANCE } from '../data/balance.js';
-import { addNewsMessage, hasMessageBeenTriggered, markMessageTriggered, addActionMessage } from './messages.js';
+import { addNewsMessage, addActionMessage } from './messages.js';
 import { getAlignmentRatio } from './resources.js';
+import { formatFunding } from './utils/format.js';
 
 const MAX_NEWS_ITEMS = 20;
 let newsFeed = [];
 
 // Track progress milestones that have fired
 let firedProgressMilestones = new Set();
-
-// Track funding milestones that have fired
-let firedFundingMilestones = new Set();
 
 // Track alignment thresholds that have fired
 let firedAlignmentThresholds = new Set();
@@ -31,7 +29,7 @@ let firedAlignmentDebtTiers = new Set();
 let triggeredNews = new Set();
 
 // Add a news item to the feed
-export function addNewsItem(text, type = 'flavor', triggeredBy = null) {
+export function addNewsItem(text, type = 'flavor', triggeredBy = null, body = null) {
   // Dedup: skip if most recent item has identical text
   if (newsFeed.length > 0 && newsFeed[newsFeed.length - 1].text === String(text)) {
     return;
@@ -51,7 +49,7 @@ export function addNewsItem(text, type = 'flavor', triggeredBy = null) {
   }
 
   // Also add to new message system as a news message
-  addNewsMessage(String(text), [type], triggeredBy);
+  addNewsMessage(String(text), [type], triggeredBy, body);
 
   // Trigger UI update
   renderNewsFeed();
@@ -88,7 +86,7 @@ export function triggerNewsForEvent(eventType, eventId) {
   }
 
   triggeredNews.add(newsKey);
-  addNewsItem(newsItem.text, newsItem.type, newsKey);
+  addNewsItem(newsItem.text, newsItem.type, newsKey, newsItem.body || null);
 }
 
 // Check for progress milestone news
@@ -105,18 +103,23 @@ export function checkProgressMilestones(progress) {
   }
 }
 
-// Check for funding milestone news
-export function checkFundingMilestones(funding) {
-  const milestones = Object.keys(newsContent.funding_milestone || {})
-    .map(Number)
-    .sort((a, b) => a - b);
+// Trigger funding milestone news on fundraise completion
+// Called from focus-queue.js with actual raise details
+export function triggerFundingMilestone(roundId, raiseAmount, effectiveEquity, multiplier) {
+  const newsKey = `funding_milestone:${roundId}`;
+  if (triggeredNews.has(newsKey)) return;
 
-  for (const milestone of milestones) {
-    if (funding >= milestone && !firedFundingMilestones.has(milestone)) {
-      firedFundingMilestones.add(milestone);
-      triggerNewsForEvent('funding_milestone', milestone);
-    }
-  }
+  const content = newsContent.funding_milestone?.[roundId];
+  if (!content) return;
+
+  const equityPct = (effectiveEquity * 100).toFixed(1);
+  triggeredNews.add(newsKey);
+  addNewsItem(
+    content.text,
+    content.type,
+    newsKey,
+    `${formatFunding(raiseAmount, { precision: 1 })} raised for ${equityPct}% equity at ${multiplier.toFixed(0)}x valuation.`,
+  );
 }
 
 // Check for ambient alignment news triggers
@@ -240,7 +243,6 @@ export function initializeNewsFeed() {
   newsFeed = [];
   triggeredNews = new Set();
   firedProgressMilestones = new Set();
-  firedFundingMilestones = new Set();
   firedAlignmentThresholds = new Set();
   firedAlignmentDebtTiers = new Set();
 
@@ -253,7 +255,6 @@ export function initializeNewsFeed() {
       // Restore milestone sets from news keys (e.g. "progress_milestone:10")
       const [category, id] = msg.triggeredBy.split(':');
       if (category === 'progress_milestone') firedProgressMilestones.add(Number(id));
-      else if (category === 'funding_milestone') firedFundingMilestones.add(Number(id));
       else if (category === 'alignment_ambient') firedAlignmentThresholds.add(id);
       else if (category === 'alignment_debt') firedAlignmentDebtTiers.add(id);
     }
@@ -268,7 +269,7 @@ if (typeof window !== 'undefined') {
   window.getNewsFeedItems = getNewsFeedItems;
   window.triggerNewsForEvent = triggerNewsForEvent;
   window.checkProgressMilestones = checkProgressMilestones;
-  window.checkFundingMilestones = checkFundingMilestones;
+  window.triggerFundingMilestone = triggerFundingMilestone;
   window.checkAlignmentNews = checkAlignmentNews;
   window.checkAlignmentDebt = checkAlignmentDebt;
   window.checkAlignmentTaxEvent = checkAlignmentTaxEvent;

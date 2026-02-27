@@ -1,6 +1,9 @@
 // Game State Management and Persistence
 
 import { BALANCE, FUNDING, TRACKS } from '../data/balance.js';
+import { senders } from './content/message-content.js';
+import { getMessageContent } from './message-content-index.js';
+import { resetAnalytics } from './analytics.js';
 
 // Initialize default game state
 export function createDefaultGameState() {
@@ -15,7 +18,8 @@ export function createDefaultGameState() {
     phase: 1,
     timeElapsed: 0,
     lastTick: Date.now(),
-    paused: false,
+    paused: true,
+    onboardingComplete: false,
     gameSpeed: 1,
 
     // Arc System
@@ -48,7 +52,7 @@ export function createDefaultGameState() {
     arc1Upgrades: {
       researchMultiplier: 1.0,
       startingFunding: 1.0,
-      computeEfficiency: 1.0,
+      revenueMultiplier: 1.0,
     },
     arc2Upgrades: {
       safetyResearchSpeed: 1.0,
@@ -197,6 +201,9 @@ export function createDefaultGameState() {
       currentTrack: "capabilities",
       notificationQueue: [],
       seenItems: [],   // IDs of purchasable items the player has seen (serialized Set)
+      discoveredFlavor: [],  // IDs of buyables whose flavor text has been revealed
+      seenCards: [],         // IDs of cards the player has moused over (first-unlock highlight)
+      everUnlockedSections: [], // Section IDs unlocked at least once (survives prestige)
     },
 
     // Event tracking
@@ -313,6 +320,17 @@ export function createDefaultGameState() {
       capex: { hiring: 0, infrastructure: 0 },  // Populated by processQueue + processAutomationBuilds
     },
 
+    // Farewell Modals (Phase 4 character goodbyes)
+    farewells: {
+      sequenceStarted: false,
+      delivered: [],
+      dismissed: [],
+      lastDismissedTime: null,
+      currentlyShowing: null,
+      sequenceComplete: false,
+      stalling: false,
+    },
+
     // Personality Tracking (Arc 2) - Samples behavior to compute ending archetype
     personalityTracking: {
       samples: 0,
@@ -322,6 +340,58 @@ export function createDefaultGameState() {
     personality: { passiveActive: 0, pluralistOptimizer: 0 },
     // Internal tick counter for sampling (sample every 60 ticks = 2 sec)
     _personalityTickCounter: 0,
+
+    // Ending state
+    endingTriggered: null,       // Ending ID when triggered, null otherwise
+    endingVariant: null,         // Ending variant string
+    endingTime: null,            // Date.now() when ending triggered
+
+    // Bankruptcy
+    bankrupted: false,
+
+    // Phase transition tracking
+    phaseCompletion: {},         // { phase1Shown: bool, phase2Shown: bool }
+
+    // Moratorium system
+    moratoriums: {
+      triggered: [],
+      active: null,
+      endTime: 0,
+      competitorPaused: false,
+    },
+
+    // Changelog tracking
+    lastSeenVersion: null,
+
+    // Event multipliers (timed effects from messages/events)
+    eventMultipliers: {
+      researchRate: 1.0,
+      computeRate: 1.0,
+      revenue: 1.0,
+      alignmentResearch: 1.0,
+      fundingRate: 1.0,
+      capabilitiesPaused: false,
+      capabilitiesPauseEndTime: 0,
+    },
+
+    // Timed alignment tax effects (game timeElapsed timestamps, null = inactive)
+    alignmentTaxRevenueBoostEnd: null,
+    alignmentTaxRevenuePenaltyEnd: null,
+
+    // Capability research pause (game timeElapsed timestamp, 0 = inactive)
+    capResearchPauseEnd: 0,
+
+    // Seeded RNG for deterministic per-game jitter (generated on first use)
+    gameRngSeed: null,
+
+    // Scheduled tutorial message times (game timeElapsed timestamps)
+    shannonCheckinTime: null,
+    kenEmailTime: null,
+    chenIntroTime: null,
+
+    // Debug flags (persist across save/load)
+    debugPreventEnding: false,
+    debugDisableBankruptcy: false,
 
   };
 }
@@ -399,10 +469,47 @@ function setupPurchasesProperty(state) {
 }
 setupPurchasesProperty(gameState);
 
+// Prepare a save-optimized copy of gameState.
+// Strips computed values, normalizes senders, and strips read message content.
+export function prepareSaveData() {
+  const data = JSON.parse(JSON.stringify(gameState));
+
+  // Reset computed namespace — always recalculated on load
+  data.computed = {
+    research: null, costs: null, revenue: null,
+    compute: null, data: null, purchases: null,
+    capex: { hiring: 0, infrastructure: 0 },
+  };
+
+  // Optimize messages for save size
+  if (data.messages) {
+    data.messages = data.messages.map(m => {
+      // Normalize sender objects to ID strings (resolved on load)
+      if (m.sender && typeof m.sender === 'object' && m.sender.id) {
+        m.sender = m.sender.id;
+      }
+
+      // Strip large content from read messages.
+      // Keep tags (inbox routing) and triggeredBy (dedup on load).
+      const isRead = m.read && (m.type !== 'action' || m.actionTaken);
+      if (isRead) {
+        delete m.body;
+        delete m.signature;
+        delete m.choices;
+      }
+      return m;
+    });
+  }
+
+  return data;
+}
+
 // Save game to localStorage
 export function saveGame() {
+  // Skip if an import is pending — beforeunload would overwrite the imported data
+  if (sessionStorage.getItem('agi-import-pending')) return;
   try {
-    const saveData = JSON.stringify(gameState);
+    const saveData = JSON.stringify(prepareSaveData());
     localStorage.setItem('agi-incremental-save', saveData);
   } catch (error) {
     console.error('Failed to save game:', error);
@@ -419,6 +526,17 @@ export function loadGame() {
       gameState = { ...createDefaultGameState(), ...loaded };
       gameState.lastTick = Date.now();
       gameState.gameSpeed = 1; // Never restore debug speed from save
+      // Never restore transient runtime flags from save — _backgroundMode is
+      // written during visibilitychange/pagehide which fire on every refresh,
+      // so the last save before unload always has _backgroundMode = true.
+      delete gameState._backgroundMode;
+      delete gameState._fastForwarding;
+      delete gameState._fastForwardEpoch;
+      delete gameState._fastForwardEvents;
+      // Clean stale properties from old saves
+      delete gameState.scheduledSevereIncident; // Dead code, never read
+      delete gameState.baseCompute;             // Moved to computed
+      delete gameState.computeMultiplier;       // Moved to computed
       // Reset pause timestamp so playtime tracking works after reload
       if (gameState.paused) {
         gameState.pauseStartTime = Date.now();
@@ -562,6 +680,12 @@ export function loadGame() {
         }
       }
 
+      // Save migration: timed message delays were stored in ms instead of seconds (#698)
+      // Reset to null so triggers recompute with correct units
+      if (gameState.kenEmailTime > 10000) gameState.kenEmailTime = null;
+      if (gameState.shannonCheckinTime > 10000) gameState.shannonCheckinTime = null;
+      if (gameState.chenIntroTime > 10000) gameState.chenIntroTime = null;
+
       // Save migration: data sub-object (replaced dataQuality/dataStrategy)
       if (!loaded.data) {
         gameState.data = createDefaultGameState().data;
@@ -647,6 +771,18 @@ export function loadGame() {
       // Clean up removed fields
       delete gameState.data.unlockedTiers;
 
+      // Resolve sender ID strings back to full sender objects (save size optimization)
+      if (gameState.messages) {
+        for (const m of gameState.messages) {
+          if (typeof m.sender === 'string') {
+            m.sender = senders[m.sender] || { id: m.sender, name: m.sender, role: null };
+          }
+        }
+      }
+
+      // Rehydration is deferred to rehydrateMessages() so tutorial content
+      // can be registered first (avoids circular-dependency timing issue).
+
       // Save migration: computed namespace (always reset on load - populated by game loop)
       gameState.computed = createDefaultGameState().computed;
 
@@ -684,6 +820,11 @@ export function loadGame() {
         gameState._personalityTickCounter = 0;
       }
 
+      // Save migration: farewells (added in farewell modal system)
+      if (loaded.farewells === undefined) {
+        gameState.farewells = createDefaultGameState().farewells;
+      }
+
       // Save migration: act → phase rename
       if (loaded.act !== undefined) {
         gameState.phase = loaded.act;
@@ -705,6 +846,51 @@ export function loadGame() {
         gameState.ui.seenItems = [];
       }
 
+      // Save migration: discoveredFlavor (added in flavor visibility feature)
+      if (!loaded.ui?.discoveredFlavor) {
+        if (!gameState.ui) gameState.ui = createDefaultGameState().ui;
+        gameState.ui.discoveredFlavor = [];
+      }
+
+      // Save migration: seenCards (added in first-unlock highlight feature)
+      if (!loaded.ui?.seenCards) {
+        if (!gameState.ui) gameState.ui = createDefaultGameState().ui;
+        gameState.ui.seenCards = [];
+      }
+
+      // Save migration: auto-mark bought/completed items as seen
+      // Prevents false "new" highlights on old saves (#750)
+      {
+        const seen = gameState.ui.seenCards;
+        const seenSet = new Set(seen);
+        for (const id of Object.keys(gameState.purchasables || {})) {
+          if (gameState.purchasables[id].count > 0 && !seenSet.has(id)) {
+            seen.push(id);
+            seenSet.add(id);
+          }
+        }
+        for (const trackKey of ['capabilities', 'applications', 'alignment']) {
+          const unlocked = gameState.tracks?.[trackKey]?.unlockedCapabilities || [];
+          for (const id of unlocked) {
+            if (!seenSet.has(id)) {
+              seen.push(id);
+              seenSet.add(id);
+            }
+          }
+        }
+      }
+
+      // Save migration: everUnlockedSections (prestige UI persistence)
+      if (!loaded.ui?.everUnlockedSections) {
+        if (!gameState.ui) gameState.ui = createDefaultGameState().ui;
+        gameState.ui.everUnlockedSections = [];
+      }
+
+      // Save migration: computeEfficiency → revenueMultiplier rename
+      if (gameState.arc1Upgrades?.computeEfficiency !== undefined) {
+        gameState.arc1Upgrades.revenueMultiplier = gameState.arc1Upgrades.computeEfficiency;
+        delete gameState.arc1Upgrades.computeEfficiency;
+      }
       // NOTE: restoreQueueIdCounter() must be called after loadGame()
       // to sync the focus queue ID counter. Done in main.js to avoid
       // circular import (game-state <- focus-queue -> game-state).
@@ -726,6 +912,44 @@ export function loadGame() {
   return false;
 }
 
+// Save migration: backfill triggeredBy for messages from older saves
+const SUBJECT_TO_TRIGGERED_BY = {
+  'The Transformer Era': 'phase_completion_1',
+  'Something in the training logs': 'phase_completion_2',
+};
+
+/**
+ * Rehydrate stripped message bodies from the content index.
+ * Must be called AFTER initTutorialContent() so tutorial entries exist.
+ */
+export function rehydrateMessages() {
+  if (!gameState.messages) return;
+  let rehydrated = 0;
+  let missed = 0;
+  for (const m of gameState.messages) {
+    // Backfill triggeredBy for messages from older saves that lacked it
+    if (!m.triggeredBy && m.subject && SUBJECT_TO_TRIGGERED_BY[m.subject]) {
+      m.triggeredBy = SUBJECT_TO_TRIGGERED_BY[m.subject];
+    }
+
+    if (!m.body && m.triggeredBy) {
+      const content = getMessageContent(m.triggeredBy, m.contentParams);
+      if (content) {
+        m.body = content.body;
+        if (content.signature !== undefined) m.signature = content.signature;
+        if (content.choices && !m.actionTaken) m.choices = content.choices;
+        rehydrated++;
+      } else if (m.type !== 'news') {
+        console.warn(`[messages] Could not rehydrate body for triggeredBy="${m.triggeredBy}"`);
+        missed++;
+      }
+    }
+  }
+  if (rehydrated > 0 || missed > 0) {
+    console.log(`[messages] Rehydrated ${rehydrated} message bodies (${missed} unresolved)`);
+  }
+}
+
 // Reset game state
 export function resetGame() {
   // Archive playtest log before clearing
@@ -736,7 +960,7 @@ export function resetGame() {
     }
     localStorage.removeItem('playtest-log-backup');
     localStorage.removeItem('playtest-logging-enabled');
-  } catch (e) {
+  } catch {
     // Ignore storage errors
   }
   if (typeof window !== 'undefined' && window.clearPlaytestLog) {
@@ -744,6 +968,7 @@ export function resetGame() {
   }
 
   gameState = createDefaultGameState();
+  resetAnalytics();
   setupPurchasesProperty(gameState);
   localStorage.removeItem('agi-incremental-save');
   // Update window.gameState to point to the new state object

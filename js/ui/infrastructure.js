@@ -28,10 +28,16 @@ import { enqueuePurchase, enqueueFurlough } from '../focus-queue.js';
 import {
   getOutputMultiplier,
 } from '../content/upgrades.js';
+
+function recordFlavorDiscovery(purchasableId) {
+  const discovered = gameState.ui.discoveredFlavor;
+  if (!discovered.includes(purchasableId)) {
+    discovered.push(purchasableId);
+  }
+}
 import { BALANCE } from '../../data/balance.js';
 import { formatFunding, formatNumber, getRateUnit, formatDuration } from '../utils/format.js';
 import { $ } from '../utils/dom-cache.js';
-import { el } from '../utils/dom.js';
 import { registerUpdate, FAST, SLOW } from './scheduler.js';
 import { requestFullUpdate } from './signals.js';
 import { showTooltipFor, scheduleHide, attachTooltip } from './stats-tooltip.js';
@@ -50,7 +56,29 @@ import {
 } from '../automation-state.js';
 import { getCount } from '../purchasable-state.js';
 import { getAmplificationBonusText } from '../resources.js';
-import { initTabNotifications, markTabSeen } from './tab-notifications.js';
+import { initTabNotifications } from './tab-notifications.js';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// Check if a purchasable's prerequisite requirement is met,
+// independent of max-purchase or queue state.
+function isRequirementMet(purchasable) {
+  const req = purchasable.requires;
+  if (!req) return true;
+  if (req.capability) {
+    const track = gameState.tracks[req.track || 'capabilities'];
+    if (!track.unlockedCapabilities.includes(req.capability)) return false;
+  }
+  if (req.purchasable) {
+    if (getCount(req.purchasable) === 0) return false;
+  }
+  if (req.fundraise) {
+    if (!gameState.fundraiseRounds?.[req.fundraise]?.raised) return false;
+  }
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // Click throttles
@@ -182,8 +210,8 @@ function rebuildPurchaseList() {
 
   if (fingerprint === _renderedPurchaseFingerprint) return;
 
-  // Structural change — full rebuild
-  purchasesList.innerHTML = '';
+  // Structural change — full rebuild into fragment, then atomic swap
+  const frag = document.createDocumentFragment();
 
   if (activeTab === 'admin') {
     // Split into UPGRADES (one-time) and TEAMS (repeatable with salary)
@@ -203,9 +231,9 @@ function rebuildPurchaseList() {
       const teamHeader = document.createElement('div');
       teamHeader.className = 'admin-section-header';
       teamHeader.textContent = 'TEAMS';
-      purchasesList.appendChild(teamHeader);
+      frag.appendChild(teamHeader);
       for (const p of teams) {
-        purchasesList.appendChild(createPurchaseCard(p));
+        frag.appendChild(createPurchaseCard(p));
       }
     }
 
@@ -213,9 +241,9 @@ function rebuildPurchaseList() {
       const upgradeHeader = document.createElement('div');
       upgradeHeader.className = 'admin-section-header';
       upgradeHeader.textContent = 'UPGRADES';
-      purchasesList.appendChild(upgradeHeader);
+      frag.appendChild(upgradeHeader);
       for (const p of upgrades) {
-        purchasesList.appendChild(createPurchaseCard(p));
+        frag.appendChild(createPurchaseCard(p));
       }
     }
 
@@ -246,15 +274,24 @@ function rebuildPurchaseList() {
         if (p.description) {
           const descEl = document.createElement('div');
           descEl.className = 'completed-card-desc';
+          if (p.flavorText) descEl.classList.add('has-flavor');
           descEl.textContent = p.description;
           item.appendChild(descEl);
-        }
 
-        if (p.flavorText) {
-          const flavorEl = document.createElement('div');
-          flavorEl.className = 'completed-card-flavor';
-          flavorEl.textContent = p.flavorText;
-          item.appendChild(flavorEl);
+          if (p.flavorText) {
+            const flavorText = p.flavorText;
+            const pId = p.id;
+            attachTooltip(descEl, () => {
+              recordFlavorDiscovery(pId);
+              return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
+            }, { delay: 400 });
+          }
+        } else if (p.flavorText) {
+          // No description but has flavor — show as description text directly
+          const descEl = document.createElement('div');
+          descEl.className = 'completed-card-desc';
+          descEl.textContent = p.flavorText;
+          item.appendChild(descEl);
         }
 
         list.appendChild(item);
@@ -262,21 +299,29 @@ function rebuildPurchaseList() {
 
       completedSection.appendChild(header);
       completedSection.appendChild(list);
-      purchasesList.appendChild(completedSection);
+      frag.appendChild(completedSection);
     }
 
     if (upgrades.length === 0 && teams.length === 0 && completedAdminItems.length === 0) {
-      purchasesList.innerHTML = '<p class="dim">Nothing available yet — research to unlock.</p>';
+      const emptyMsg = document.createElement('p');
+      emptyMsg.className = 'dim';
+      emptyMsg.textContent = 'Nothing available yet — research to unlock.';
+      frag.appendChild(emptyMsg);
     }
   } else {
     for (const p of visibleItems) {
-      purchasesList.appendChild(createPurchaseCard(p));
+      frag.appendChild(createPurchaseCard(p));
     }
 
     if (visibleItems.length === 0) {
-      purchasesList.innerHTML = '<p class="dim">Nothing available yet — research to unlock.</p>';
+      const emptyMsg = document.createElement('p');
+      emptyMsg.className = 'dim';
+      emptyMsg.textContent = 'Nothing available yet — research to unlock.';
+      frag.appendChild(emptyMsg);
     }
   }
+
+  purchasesList.replaceChildren(frag);
 
   _renderedPurchaseFingerprint = fingerprint;
 }
@@ -399,6 +444,19 @@ function buildStatsParts(purchasable, count) {
     } else {
       parts.push({ text: `×1.2 ${teamLabel} team salaries`, tooltipBuilder: null });
     }
+  }
+
+  // Focus management effects (Executive Team, Chief of Staff)
+  if (purchasable.effects.focusSlots || purchasable.effects.focusEfficiencyMultiplier) {
+    const focusParts = [];
+    if (purchasable.effects.focusSlots) focusParts.push(`+${purchasable.effects.focusSlots} focus slot`);
+    if (purchasable.effects.focusEfficiencyMultiplier) focusParts.push(`×${purchasable.effects.focusEfficiencyMultiplier} focus efficiency`);
+    parts.push({ text: focusParts.join(' · '), tooltipBuilder: null });
+  }
+
+  // COO ops bonuses (hardcoded in ceo-focus.js, not in effects object)
+  if (purchasable.id === 'coo') {
+    parts.push({ text: '+5% ops cost floor · +5% ops cap', tooltipBuilder: null });
   }
 
   // Efficiency: $/RP for personnel, $/TFLOPS for compute (uses running cost, not purchase cost)
@@ -579,10 +637,10 @@ function updatePurchaseAffordability() {
       btn.disabled = !queueable;
     }
 
-    // Hide requirement hint once requirement is met
+    // Hide requirement hint once requirement is met (not when maxed/queued)
     const reqEl = card._reqEl || card.querySelector('.purchase-requires');
     if (reqEl) {
-      reqEl.classList.toggle('hidden', queueable);
+      reqEl.classList.toggle('hidden', isRequirementMet(p));
     }
 
     // Update stats line (running costs change with count)
@@ -631,6 +689,21 @@ function createPurchaseCard(purchasable) {
   const card = document.createElement('div');
   card.className = 'compact-purchase-card';
   card.dataset.purchaseId = purchasable.id;
+
+  // First-unlock highlight: show if card hasn't been seen before
+  const seenCards = gameState.ui.seenCards;
+  if (!seenCards.includes(purchasable.id)) {
+    card.classList.add('new-card-highlight');
+    card.addEventListener('mouseenter', () => {
+      if (!seenCards.includes(purchasable.id)) {
+        seenCards.push(purchasable.id);
+      }
+      card.classList.add('new-card-highlight-fade');
+      card.addEventListener('transitionend', () => {
+        card.classList.remove('new-card-highlight', 'new-card-highlight-fade');
+      }, { once: true });
+    }, { once: true });
+  }
 
   const count = getCount(purchasable.id);
   const cost = getPurchaseCost(purchasable);
@@ -768,6 +841,9 @@ function createPurchaseCard(purchasable) {
   const desc = document.createElement('div');
   desc.className = 'purchase-description';
   desc.textContent = purchasable.description || '';
+  if (purchasable.flavorText) {
+    desc.classList.add('has-flavor');
+  }
 
   const costInfo = document.createElement('span');
   costInfo.className = 'purchase-cost-info';
@@ -800,7 +876,7 @@ function createPurchaseCard(purchasable) {
   let reqEl = null;
   if (purchasable.requires) {
     reqEl = document.createElement('div');
-    reqEl.className = `purchase-requires dim${queueable ? ' hidden' : ''}`;
+    reqEl.className = `purchase-requires dim${isRequirementMet(purchasable) ? ' hidden' : ''}`;
     if (purchasable.requires.capability) {
       const reqName = purchasable.requires.capability.replace(/_/g, ' ');
       reqEl.textContent = `[requires: ${reqName}]`;
@@ -811,12 +887,14 @@ function createPurchaseCard(purchasable) {
     if (reqEl.textContent) card.appendChild(reqEl);
   }
 
-  // === Flavor text (conditional) ===
+  // === Flavor text (tooltip on description hover) ===
   if (purchasable.flavorText) {
-    const flavorEl = document.createElement('div');
-    flavorEl.className = 'purchase-flavor dim';
-    flavorEl.textContent = purchasable.flavorText;
-    card.appendChild(flavorEl);
+    const flavorText = purchasable.flavorText;
+    const pId = purchasable.id;
+    attachTooltip(desc, () => {
+      recordFlavorDiscovery(pId);
+      return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
+    }, { delay: 400 });
   }
 
   // === Row 5: Automation panel (if unlocked) ===
@@ -862,13 +940,15 @@ export function initInfraTabs() {
   // Sub-tab switching: toggle .subtab-content visibility
   opsColumn.querySelectorAll('.sub-tab').forEach(btn => {
     btn.addEventListener('click', () => {
+      // Skip rebuild if already on this tab
+      if (btn.classList.contains('active')) return;
+
       // Update tab button active states
       opsColumn.querySelectorAll('.sub-tab').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
 
       // Show/hide subtab content divs
       const activeCategory = btn.dataset.category;
-      markTabSeen(activeCategory);
       for (const [category, contentId] of Object.entries(SUBTAB_CONTENT)) {
         const contentEl = document.getElementById(contentId);
         if (contentEl) {

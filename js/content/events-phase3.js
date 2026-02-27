@@ -292,7 +292,7 @@ export const phase3Events = [
 
     trigger: {
       type: "time_elapsed",
-      value: 7200, // 2 hours of gameplay
+      value: 7200, // 2 hours of gameplay — TODO #696: add seeded ±10% jitter when Arc 2 ships
       requiresPhase: 3,
     },
 

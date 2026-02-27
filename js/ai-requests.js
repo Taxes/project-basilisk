@@ -43,11 +43,13 @@ function fireAIRequest(requestId, request) {
       id: 'grant',
       label: 'Grant request',
       effects: formatGrantEffects(request.grantEffects),
+      tooltip: request.grantTooltip,
     },
     {
       id: 'deny',
       label: 'Deny request',
       effects: 'No mechanical effect',
+      tooltip: request.denyTooltip,
     },
   ];
 
@@ -129,8 +131,7 @@ export function handleAIRequestChoice(requestId, choice) {
       gameState.revenueMultFromAutonomy = (gameState.revenueMultFromAutonomy || 1.0) * effects.revenueMultPermanent;
     }
     if (effects.guaranteedSevereIncident) {
-      // Schedule severe incident for 60s from now
-      gameState.scheduledSevereIncident = gameState.timeElapsed + 60000;
+      // Dead code removed — scheduledSevereIncident was set but never read
     }
 
     addNewsMessage(`AI request granted: ${request.subject.replace('Request: ', '')}`, ['ai_request', 'granted']);

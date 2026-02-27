@@ -1,40 +1,46 @@
 // Main Game Initialization and Loop
 
-import { gameState, loadGame, saveGame, resetGame } from './game-state.js';
+import { gameState, loadGame, rehydrateMessages, saveGame } from './game-state.js';
 import { updateResources, updateForecasts } from './resources.js';
 import { initializeEvents, checkResourceThresholdEvents, checkTimeBasedEvents } from './events.js';
-import { updateUI, initializeUI } from './ui.js';
+import { updateUI, initializeUI, setOnHardReset } from './ui.js';
 import { showEndingModal } from './ui/modals.js';
 import { initializePhaseCompletion, checkPhaseCompletion } from './phase-completion.js';
 import { initializeCompetitor, updateCompetitor } from './competitor.js';
-import { checkEndings, triggerEnding } from './endings.js';
-import { checkIncidents } from './incidents.js';
-import { resetForPrestige, transitionToArc2 } from './prestige.js';
+import { checkEndings } from './endings.js';
+// checkIncidents disabled: incidents need UX rework (#333)
+// resetForPrestige/transitionToArc2: not yet used in Arc 1
 import { initializeNewsFeed, updateNewsFeed, checkAlignmentNews, checkAlignmentDebt, checkAlignmentTaxEvent } from './news-feed.js';
 import { checkAIRequests } from './ai-requests.js';
 import { checkConsequenceEvents } from './consequence-events.js';
 import { updateAlignmentTaxEffects } from './alignment-tax-handler.js';
-import { triggerExtinctionSequence } from './extinction-sequence.js';
+// triggerExtinctionSequence: not yet used in Arc 1
 import { BALANCE } from '../data/balance.js';
 import { checkChoiceUnlocks } from './strategic-choices.js';
-import { checkTutorialTriggers } from './tutorial-messages.js';
+import { checkTutorialTriggers, initTutorialContent } from './tutorial-messages.js';
 import { checkFundraiseGates } from './capabilities.js';
-import { strategicChoiceDefinitions } from '../data/strategic-choices.js';
+// strategicChoiceDefinitions: accessed via test-api.js
 import { updateSubMetrics } from './safety-metrics.js';
-import { processQueue, applyPassiveDrift, initFocusQueueExports, restoreQueueIdCounter, resetQueueIdCounter, processDisbursements } from './focus-queue.js';
+import { processQueue, applyPassiveDrift, initFocusQueueExports, restoreQueueIdCounter, processDisbursements } from './focus-queue.js';
+import { processCEOFocus } from './ceo-focus.js';
 import { processGrants, processCredit, initEconomicsExports } from './economics.js';
 import { processPoolGrowth } from './talent-pool.js';
 import { processAutomation } from './automation.js';
 import { processDataQuality } from './data-quality.js';
+import { milestone } from './analytics.js';
 import { checkMoratoriumTriggers, processMoratorium, initializeMoratoriums } from './moratoriums.js';
 import { samplePersonalitySignals, calculatePersonalityAxes } from './personality.js';
 import { applyDebugSettings } from './debug-commands.js';
-import { VERSION } from './version.js';
+// VERSION: accessed via test-api.js
 import { initPlaytestLogger } from './playtest-logger.js';
 import { requestFullUpdate } from './ui/signals.js';
-import { initializeMessages, checkMessageDeadlines, setOnNewMessageCallback, addInfoMessage, restoreMessageIdCounter } from './messages.js';
-import { initializeTabNavigation, updateTabBadge } from './ui/tab-navigation.js';
-import { initializeMessagesPanel, updatePauseOverlay, renderMessagesPanel } from './ui/messages-panel.js';
+import { initializeMessages, checkMessageDeadlines, setOnNewMessageCallback, addInfoMessage, restoreMessageIdCounter, hasMessageBeenTriggered, markMessageTriggered } from './messages.js';
+import { initializeTabNavigation, updateTabBadge, switchTab } from './ui/tab-navigation.js';
+import { initializeMessagesPanel, updatePauseOverlay, prependNewMessage } from './ui/messages-panel.js';
+import { updateFavicon } from './favicon.js';
+import { initializeFarewells, checkFarewells } from './farewells.js';
+import { showNarrativeModal } from './narrative-modal.js';
+import { onboardingMessage } from './content/message-content.js';
 
 // Import content
 import { phase1Events } from './content/events-phase1.js';
@@ -43,7 +49,7 @@ import { phase3Events } from './content/events-phase3.js';
 
 // Side-effect import: expose internal functions to window for playtester harness
 import './test-api.js';
-import './debug-commands.js';
+
 
 // Track last deadline check time
 let lastDeadlineCheck = 0;
@@ -157,6 +163,9 @@ function gameTick(deltaTime) {
     }
   }
 
+  // 1z. Check farewell sequence (must run before checkEndings)
+  checkFarewells();
+
   // 2. Check for events
   checkResourceThresholdEvents();
   checkTimeBasedEvents();
@@ -178,6 +187,9 @@ function gameTick(deltaTime) {
   if (endingId && !gameState.endingTriggered) {
     showEndingModal(endingId);
   }
+
+  // 6. Update favicon color based on AGI progress
+  updateFavicon(gameState.agiProgress || 0);
 
 }
 
@@ -208,8 +220,46 @@ function startGameLoop() {
     gameTick(scaledDelta);
   }, BALANCE.TICK_RATE);
 
-  // Save on page close as safety net
+  // Save on page close/refresh as safety net
   window.addEventListener('beforeunload', () => saveGame());
+  window.addEventListener('pagehide', () => saveGame());
+}
+
+// Handle first-time onboarding modal + inbox message
+export function handleOnboarding() {
+  // Send KTech reference message once per playthrough
+  if (!hasMessageBeenTriggered('ktech_user_guide')) {
+    const { sender, subject, body, tags } = onboardingMessage;
+    addInfoMessage(sender, subject, body, null, tags, 'ktech_user_guide');
+    markMessageTriggered('ktech_user_guide');
+  }
+
+  if (!gameState.onboardingComplete) {
+    // First time — show modal, stay paused
+    showNarrativeModal({
+      title: 'KTech Lab Operations Dashboard',
+      narrative: `
+        <p>Thanks for trying KTech's Lab Operations Dashboard!</p>
+        <p>I set up your instance as "Project Basilisk" (cool name, by the way - does it mean anything?). Prof. Shannon told me you were starting a lab and strongly suggested I get you on board. His exact words were "set it up for them," so I did. Don't worry about the licensing fees; consider this a beta arrangement.</p>
+        <p>Two main screens: <strong>Dashboard</strong> is where you run your lab - funding, personnel, compute, all of it. <strong>Messages</strong> is your inbox. I built some priority-detection algorithms that I'm pretty proud of, so important stuff should float to the top.</p>
+        <p>I'd start with Messages. Prof. Shannon likes to send a welcome letter to his mentees (he's done it for as long as I've known him), and I'll send a proper user guide over there once you're settled in.</p>
+        <p>If anything breaks, just let me know. You're technically my first real user, so. Feedback welcome :)</p>
+        <p>– Ken</p>
+      `,
+      phaseClass: 'phase-onboarding',
+      buttonText: 'Begin Operations',
+      noDismissOnBackdrop: true,
+      onDismiss: () => {
+        gameState.onboardingComplete = true;
+        switchTab('messages');
+        milestone('game_started');
+      },
+    });
+  } else {
+    // Returning player — stay paused so player can orient
+    gameState.paused = true;
+    gameState.pauseStartTime = Date.now();
+  }
 }
 
 // Initialize game
@@ -221,6 +271,8 @@ function initializeGame() {
 
   // Load saved game or start fresh
   const loaded = loadGame();
+  // Clear import guard now that load is complete (safe to save again)
+  sessionStorage.removeItem('agi-import-pending');
   if (loaded) {
     // Restore focus queue ID counter so new items don't collide with saved IDs
     restoreQueueIdCounter();
@@ -234,14 +286,31 @@ function initializeGame() {
   // Restore persisted debug settings (separate from game save)
   applyDebugSettings();
 
-  // Initialize message system
+  // Initialize message system (must happen before rehydration so tutorial
+  // content is registered in the content index)
   initializeMessages();
+  initTutorialContent();
+
+  // Rehydrate stripped message bodies now that all content is registered
+  rehydrateMessages();
 
   // Set up message notification callback
   setOnNewMessageCallback((msg) => {
     updateTabBadge();
+    prependNewMessage(msg);
     if (msg.priority === 'critical') {
       updatePauseOverlay();
+    }
+    // Flash the Messages tab for non-news messages
+    if (msg.type !== 'news') {
+      const tab = document.querySelector('.header-tab[data-tab="messages"]');
+      if (tab) {
+        tab.classList.remove('flash');
+        // Force reflow so re-adding the class restarts the animation
+        void tab.offsetWidth;
+        tab.classList.add('flash');
+        tab.addEventListener('animationend', () => tab.classList.remove('flash'), { once: true });
+      }
     }
   });
 
@@ -252,6 +321,7 @@ function initializeGame() {
 
   // Initialize UI
   initializeUI();
+  setOnHardReset(() => handleOnboarding());
 
   // Initialize phase completion system
   initializePhaseCompletion();
@@ -274,9 +344,21 @@ function initializeGame() {
   // Initialize messages panel
   initializeMessagesPanel();
 
+  // Initialize farewell modal system
+  initializeFarewells();
+
+  // Seed computed state so first UI render has data (e.g. CEO Focus panel)
+  processCEOFocus(0);
+
   // Initial UI update
   updateUI();
   updateTabBadge();
+
+  // Set favicon to match current AGI progress
+  updateFavicon(gameState.agiProgress || 0);
+
+  // Handle onboarding (must be after UI init so modal DOM exists)
+  handleOnboarding();
 
   // Start game loop
   startGameLoop();
@@ -289,6 +371,7 @@ function initializeGame() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       gameState._backgroundMode = true;
+      saveGame();
     } else {
       gameState._backgroundMode = false;
       requestFullUpdate();  // snap all displays to current state

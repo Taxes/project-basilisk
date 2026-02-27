@@ -33,24 +33,13 @@ const MORATORIUMS = {
   },
 };
 
-// Initialize moratorium state
-export function initializeMoratoriums() {
-  if (!gameState.moratoriums) {
-    gameState.moratoriums = {
-      triggered: [],      // Moratorium IDs that have been triggered
-      active: null,       // Currently active moratorium ID, or null
-      endTime: 0,         // Game time when active moratorium ends
-      competitorPaused: false,
-    };
-  }
-}
+// No-op, kept for import compatibility — defaults now in createDefaultGameState()
+export function initializeMoratoriums() {}
 
 // Check if a moratorium should trigger (called each tick)
 export function checkMoratoriumTriggers() {
   // Only in Arc 2
   if (gameState.arc < 2) return;
-
-  initializeMoratoriums();
 
   const capRP = gameState.tracks?.capabilities?.researchPoints || 0;
   const triggered = gameState.moratoriums.triggered;
@@ -68,7 +57,7 @@ export function checkMoratoriumTriggers() {
 }
 
 // Trigger the moratorium action message
-function triggerMoratoriumMessage(moratoriumId, def) {
+function triggerMoratoriumMessage(moratoriumId, _def) {
   const isFinal = moratoriumId === 'final';
   const competitorProgress = gameState.competitor?.progressToAGI || 0;
   const competitorWillPause = isFinal &&
@@ -84,6 +73,7 @@ function triggerMoratoriumMessage(moratoriumId, def) {
 
   // Send action message
   const msg = getMoratoriumMessage(moratoriumId, competitorWillPause);
+  const durationMonths = Math.round(MORATORIUMS[moratoriumId].duration / 30);
   addActionMessage(
     msg.sender,
     msg.subject,
@@ -92,7 +82,8 @@ function triggerMoratoriumMessage(moratoriumId, def) {
     msg.choices,
     msg.priority,
     msg.tags,
-    `moratorium_${moratoriumId}`
+    `moratorium_${moratoriumId}`,
+    { moratoriumId, durationMonths, competitorWillPause: competitorWillPause || false }
   );
 }
 
@@ -111,8 +102,6 @@ function getMoratoriumMessage(moratoriumId, competitorWillPause) {
 
 // Apply moratorium effect (called from message-effects.js)
 export function applyMoratoriumEffect(moratoriumId, action) {
-  initializeMoratoriums();
-
   if (action === 'accept') {
     const def = MORATORIUMS[moratoriumId];
     gameState.moratoriums.active = moratoriumId;
@@ -130,10 +119,8 @@ export function applyMoratoriumEffect(moratoriumId, action) {
 }
 
 // Process active moratorium (called each tick)
-export function processMoratorium(deltaTime) {
+export function processMoratorium(_deltaTime) {
   if (gameState.arc < 2) return;
-
-  initializeMoratoriums();
 
   const active = gameState.moratoriums.active;
   if (!active) return;
@@ -159,19 +146,16 @@ function endMoratorium() {
 
 // Check if capabilities research is paused by moratorium
 export function isMoratoriumActive() {
-  initializeMoratoriums();
   return gameState.moratoriums?.active !== null;
 }
 
 // Check if competitor is paused by moratorium
 export function isCompetitorPausedByMoratorium() {
-  initializeMoratoriums();
   return gameState.moratoriums?.competitorPaused === true;
 }
 
 // Get moratorium status for UI/debugging
 export function getMoratoriumStatus() {
-  initializeMoratoriums();
   const m = gameState.moratoriums;
   return {
     active: m.active,

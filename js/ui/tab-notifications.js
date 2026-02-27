@@ -6,7 +6,6 @@
 import { gameState } from '../game-state.js';
 import { getAllPurchasables, PERSONNEL_IDS, COMPUTE_IDS } from '../content/purchasables.js';
 import { getCount } from '../purchasable-state.js';
-import { POOL_IDS } from '../talent-pool.js';
 import { BALANCE } from '../../data/balance.js';
 import { $ } from '../utils/dom-cache.js';
 import { registerUpdate, SLOW } from './scheduler.js';
@@ -15,9 +14,6 @@ import { attachTooltip } from './stats-tooltip.js';
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-
-/** seenItems as a Set (hydrated from gameState.ui.seenItems array). */
-let seenItems = new Set();
 
 /** Active notifications grouped by tab: { finance: [{priority, text}], ... } */
 const activeNotifications = {
@@ -30,7 +26,7 @@ const activeNotifications = {
 
 /** Consecutive negative-demand-delta check count (for mispricing flicker guard). */
 let negativeDemandStreak = 0;
-let positiveDemandStreak = 0;
+let _positiveDemandStreak = 0;
 
 // ---------------------------------------------------------------------------
 // Notification checks
@@ -65,9 +61,9 @@ const CHECKS = [
       const delta = gameState.resources.acquiredDemandDelta || 0;
       if (delta < 0) {
         negativeDemandStreak++;
-        positiveDemandStreak = 0;
+        _positiveDemandStreak = 0;
       } else {
-        positiveDemandStreak++;
+        _positiveDemandStreak++;
         negativeDemandStreak = 0;
       }
       // Only fire after 3+ consecutive negative checks (~3s at SLOW)
@@ -84,7 +80,7 @@ const CHECKS = [
     priority: 25,
     check() {
       const supply = gameState.resources.tokensPerSecond || 0;
-      const demand = gameState.resources.acquiredDemand || 0;
+      const demand = gameState.resources.demand || 0;
       if (supply > 0 && demand > supply * 2) {
         return 'Demand suggests room to raise prices';
       }
@@ -221,11 +217,12 @@ function getVisibleIdsForTab(category) {
     .map(p => p.id);
 }
 
-/** Check if any visible item on this tab hasn't been seen yet. */
+/** Check if any visible item on this tab hasn't been seen (hovered) yet. */
 function checkNewContent(category) {
   const visible = getVisibleIdsForTab(category);
+  const seenCards = gameState.ui?.seenCards || [];
   for (const id of visible) {
-    if (!seenItems.has(id)) return 'New option available';
+    if (!seenCards.includes(id)) return 'New option available';
   }
   return null;
 }
@@ -239,15 +236,8 @@ const dots = {};
 
 /** Run all checks, update dot visibility, store active notifications. */
 export function updateTabNotifications() {
-  // Hydrate seenItems from gameState on every tick (cheap — just a reference check)
-  const arr = gameState.ui?.seenItems;
-  if (Array.isArray(arr) && !(arr._hydrated)) {
-    seenItems = new Set(arr);
-    arr._hydrated = true;
-  }
-
   // Get active sub-tab
-  const activeCategory = document.querySelector('.sub-tab.active')?.dataset.category || 'finance';
+  const _activeCategory = document.querySelector('.sub-tab.active')?.dataset.category || 'finance';
 
   // Clear previous results
   for (const tab of Object.keys(activeNotifications)) {
@@ -279,26 +269,6 @@ export function updateTabNotifications() {
 /** Get sorted notification list for a tab (used by tooltip builder). */
 export function getNotificationsForTab(tab) {
   return activeNotifications[tab] || [];
-}
-
-/**
- * Mark all currently visible items on this tab as seen.
- * Called when the player switches to a sub-tab.
- */
-export function markTabSeen(category) {
-  const visible = getVisibleIdsForTab(category);
-  let changed = false;
-  for (const id of visible) {
-    if (!seenItems.has(id)) {
-      seenItems.add(id);
-      changed = true;
-    }
-  }
-  if (changed) {
-    // Persist back to gameState
-    gameState.ui.seenItems = [...seenItems];
-    gameState.ui.seenItems._hydrated = true;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -333,15 +303,6 @@ export function initTabNotifications() {
     }
   }
 
-  // Hydrate seenItems from saved state
-  const arr = gameState.ui?.seenItems;
-  if (Array.isArray(arr)) {
-    seenItems = new Set(arr);
-  }
-
-  // Mark items on the initially active tab as seen
-  const activeCategory = document.querySelector('.sub-tab.active')?.dataset.category || 'finance';
-  markTabSeen(activeCategory);
 }
 
 // Register with scheduler (SLOW = ~1/sec — notifications don't need per-frame updates)

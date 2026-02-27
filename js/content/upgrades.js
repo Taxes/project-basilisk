@@ -67,7 +67,7 @@ export function getUpgradeState(purchasableId) {
 }
 
 // Check if an upgrade type is unlocked via research
-export function isUpgradeTypeUnlocked(upgradeType, level = 1) {
+export function isUpgradeTypeUnlocked(upgradeType, _level = 1) {
   const unlockedApps = gameState.tracks?.applications?.unlockedCapabilities || [];
 
   if (upgradeType === 'cost') {

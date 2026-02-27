@@ -119,7 +119,7 @@ function distributePoints(totalPoints, itemIds, canAutomate, deltaTime) {
   // Distribute points to each priority level in order
   let remainingPoints = totalPoints;
 
-  for (const [priority, items] of [...priorityGroups.entries()].sort((a, b) => a[0] - b[0])) {
+  for (const [_priority, items] of [...priorityGroups.entries()].sort((a, b) => a[0] - b[0])) {
     if (remainingPoints <= 0) break;
 
     // Split points evenly among items at same priority

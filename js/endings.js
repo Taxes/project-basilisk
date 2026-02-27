@@ -4,12 +4,13 @@
 
 import { gameState, saveGame } from './game-state.js';
 import { ALIGNMENT, ARC } from '../data/balance.js';
-import { calculateEffectiveAlignment, formatAlignmentDisplay, getAllSafetyMetrics } from './safety-metrics.js';
+import { calculateEffectiveAlignment, getAllSafetyMetrics } from './safety-metrics.js';
 import { formatTime } from './utils/format.js';
 import { getAutonomyFlavorText } from './ai-requests.js';
 import { getArchetype, getJourneyRecap } from './personality.js';
-import { ARCHETYPES, getArchetypeById, getSilverVariant } from './content/archetypes.js';
+import { getArchetypeById, getSilverVariant } from './content/archetypes.js';
 import { getChosenOption } from './strategic-choices.js';
+import { milestone } from './analytics.js';
 
 // Arc 1 Endings
 // Priority order: bankruptcy, competitor_wins, extinction
@@ -20,11 +21,44 @@ export const arc1Endings = {
     name: 'Bankruptcy',
     tier: 'prestige',  // Triggers prestige, not game over
     condition: (state) => state.arc === 1 && state.bankrupted,
-    narrative: [
-      'Your funding ran out.',
-      'The research continues elsewhere.',
-      'Maybe with better financial planning...',
-    ],
+    getNarrative: () => {
+      const postSeriesA = gameState.fundraiseRounds?.series_a?.raised;
+      const variants = postSeriesA
+        ? [
+          {
+            narrative: [
+              'I have seen this happen before, to people smarter than either of us. The science was there. The funding wasn\'t. Those are different problems, and solving one doesn\'t solve the other.',
+              'Take what you\'ve learned. It\'s worth more than you think.',
+            ],
+            signature: '\u2013 James',
+          },
+          {
+            narrative: [
+              'Runway to zero. I\'ll have the wind-down paperwork sorted by end of week.',
+              'We\'ll make sure the team are looked after. It was a pleasure working together.',
+            ],
+            signature: '\u2013 Ada',
+          },
+          {
+            narrative: [
+              'I didn\'t realise how bad the funding situation was. I should have been paying closer attention.',
+              'We had three open research threads. Two were showing real promise. I keep thinking about the one on emergent reasoning.',
+              'Let me know if you want to try again.',
+            ],
+            signature: '\u2013 Dennis',
+          },
+        ]
+        : [
+          {
+            narrative: [
+              'I have seen this happen before, to people smarter than either of us. The science was there. The funding wasn\'t. Those are different problems, and solving one doesn\'t solve the other.',
+              'Take what you\'ve learned. It\'s worth more than you think.',
+            ],
+            signature: '\u2013 James',
+          },
+        ];
+      return variants[Math.floor(Math.random() * variants.length)];
+    },
     stats: {
       'Final Funding': (gs) => {
         const f = gs.resources.funding;
@@ -33,7 +67,7 @@ export const arc1Endings = {
       'AGI Progress': (gs) => Math.floor(gs.agiProgress || 0) + '%',
       'Time Survived': (gs) => formatTime(gs.timeElapsed),
     },
-    epilogue: 'Try again with what you learned.',
+    epilogue: 'Not all labs survive, but the idea endures...',
     triggersPrestige: true,
   },
 
@@ -42,17 +76,73 @@ export const arc1Endings = {
     name: 'Outcompeted',
     tier: 'prestige',  // Triggers prestige, not game over
     condition: (state) => state.arc === 1 && (state.competitor?.progressToAGI || 0) >= 100,
-    narrative: [
-      'Another lab reached AGI first.',
-      'Your investors are disappointed but not gone.',
-      'You learned what works. Time to try again.',
-    ],
+    getNarrative: () => {
+      const progress = gameState.agiProgress || 0;
+      const postSeriesB = gameState.fundraiseRounds?.series_b?.raised;
+
+      if (progress < 40) {
+        // Far behind — Shannon reassures
+        return {
+          narrative: [
+            'It was always going to be a race, and races have losers. That is not a judgement on the work, or on you.',
+            'Someone else got there first. The question now is what they do with it, and whether anyone thought to ask.',
+          ],
+          signature: '\u2013 James',
+        };
+      }
+
+      if (progress < 70) {
+        // Moderately behind — Shapley disappointed (falls back to Shannon pre-Series B)
+        if (postSeriesB) {
+          return {
+            narrative: [
+              'I just got off the phone with the other board members.',
+              'We needed to be first. We weren\'t. I don\'t think I need to explain what that means.',
+            ],
+            signature: '\u2013 Alvin',
+          };
+        }
+        return {
+          narrative: [
+            'It was always going to be a race, and races have losers. That is not a judgement on the work, or on you.',
+            'Someone else got there first. The question now is what they do with it, and whether anyone thought to ask.',
+          ],
+          signature: '\u2013 James',
+        };
+      }
+
+      // Close race (70%+) — Ada, Babbage, or Chen
+      const closeVariants = [
+        {
+          narrative: [
+            'We were closer than the headlines will suggest. The gap was a quarter, maybe two.',
+            'I\'ll start fielding acquisition calls on Monday. Might as well see what our research is worth to someone else.',
+          ],
+          signature: '\u2013 Ada',
+        },
+        {
+          narrative: [
+            'I\'ve been reading their preprints. Their architecture isn\'t better than ours. They just had more runway.',
+            'I keep running the numbers on where we\'d be with six more months.',
+          ],
+          signature: '\u2013 Dennis',
+        },
+        {
+          narrative: [
+            'Someone else built AGI. I don\'t know their safety record. I don\'t know if they have one.',
+            'We were almost there. I hope they were as careful as we were trying to be.',
+          ],
+          signature: '\u2013 Eliza',
+        },
+      ];
+      return closeVariants[Math.floor(Math.random() * closeVariants.length)];
+    },
     stats: {
       'Competitor Progress': (gs) => Math.floor(gs.competitor?.progressToAGI || 0) + '%',
       'Your AGI Progress': (gs) => Math.floor(gs.agiProgress || 0) + '%',
       'Time Elapsed': (gs) => formatTime(gs.timeElapsed),
     },
-    epilogue: 'The race continues...',
+    epilogue: 'The race is over. What comes next wasn\'t up to you.',
     triggersPrestige: true,
   },
 
@@ -118,8 +208,8 @@ export const arc1Endings = {
           'You built a language model. Then a better one. Then one that surprised even you.',
           'People started using it. Then they started paying for it.',
           'Your name appeared in headlines. Investors called it inevitable. Some started calling it intelligence.',
-          'And when your team came with warnings, **you meant to read them.**',
-          'But there was always something more urgent.',
+          'And when your team came with warnings, **you forgot to act.**',
+          'There was always something more urgent.',
           '---',
           'All it took was one mistake on a Tuesday morning.',
           'There were no tools that could have helped. You never built them.',
@@ -276,8 +366,9 @@ export const arc2Endings = {
   bankruptcy_arc2: {
     id: 'bankruptcy_arc2',
     name: 'Bankruptcy',
-    tier: 'dark',
+    tier: 'prestige',
     condition: (state) => state.arc === 2 && state.bankrupted,
+    triggersPrestige: true,
     narrative: [
       'Your last researcher turned off the lights.',
       "Your alignment research was promising. It just wasn't profitable.",
@@ -352,6 +443,10 @@ export function triggerEnding(endingId, variant = null) {
   if (!ending) return false;
 
   gameState.endingTriggered = endingId;
+  milestone('ending_reached', {
+    ending_id: endingId,
+    alignment_score: gameState.alignment?.total ?? gameState.hiddenAlignment ?? 0,
+  });
   gameState.endingVariant = variant;
   gameState.endingTime = Date.now();
 

@@ -96,7 +96,7 @@ export function getProcurementPointsPerSecond() {
 export function getHRSpeedMultiplier() {
   let mult = 1.0;
   if (getCount('ai_recruiting_tools') > 0) mult *= 2;
-  if (getCount('automated_interviewing_system') > 0) mult *= 2;
+  if (getCount('automated_interviewing_system') > 0) mult *= 1.5;
   // Operations CEO focus: up to +50% automation throughput
   const opsAutoBonus = gameState.computed?.ceoFocus?.opsAutomationBonus ?? 0;
   mult *= (1 + opsAutoBonus);

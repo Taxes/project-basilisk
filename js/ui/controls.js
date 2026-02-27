@@ -40,6 +40,7 @@ let _renderedQueueIds = [];
 let _renderedQueueActiveCount = 0;
 let _renderedQueuePaused = [];
 let _emptyTickCount = 0; // debounce empty-state message to avoid 1-frame flash
+let _userCleared = false; // bypass debounce on explicit user clear (#751)
 
 function resetQueueCache() {
   _renderedQueueIds = [];
@@ -50,6 +51,11 @@ function resetQueueCache() {
 
 export function reset() {
   resetQueueCache();
+}
+
+/** Signal that the user explicitly cleared the queue — skip empty-state debounce. */
+export function signalUserClear() {
+  _userCleared = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +383,13 @@ function updateTrackRates() {
   const tracks = ['capabilities', 'applications', 'alignment'];
   const abbrevs = TRACK_ABBREVS;
 
+  // Show applications row only after basic_transformer unlocked
+  const appRow = $('track-rate-app-row');
+  if (appRow) {
+    const hasBasicTransformer = gameState.tracks?.capabilities?.unlockedCapabilities?.includes('basic_transformer');
+    appRow.classList.toggle('hidden-until-unlocked', !hasBasicTransformer);
+  }
+
   // Show alignment row only in Arc 2
   const aliRow = $('track-rate-ali-row');
   if (aliRow) {
@@ -527,17 +540,18 @@ function updateResearchBreakdown() {
   const base = $('research-personnel-base');
   if (base) base.textContent = '+' + formatNumber(research.personnelBase) + getRateUnit();
 
-  // Compute boost (hide when x1.00)
+  // Compute boost (always shown; warn when low)
   const boostGroup = $('research-compute-boost-group');
   const boost = $('research-compute-boost');
   if (boostGroup && boost) {
-    const val = research.computeBoost || 1;
-    boostGroup.classList.toggle('hidden', Math.abs(val - 1) < 0.005);
+    const val = research.computeBoost ?? 0;
     boost.textContent = '\u00d7' + val.toFixed(2);
+    boost.classList.toggle('warning', val >= 0.8 && val < 1.0);
+    boost.classList.toggle('negative', val < 0.8);
     if (!boostGroup._hasTooltip) {
       _addBreakdownTooltip(boostGroup, () => {
         const r = gameState.computed?.research;
-        const cb = r?.computeBoost || 1;
+        const cb = r?.computeBoost ?? 0;
         const comp = gameState.computed?.compute;
         const totalTflops = comp?.total || 0;
         const allocPct = Math.round((comp?.allocation || 0) * 100);
@@ -572,7 +586,7 @@ function updateResearchBreakdown() {
 
   // Research from personnel subtotal = base x all multipliers
   const fromPersonnel = (research.personnelBase || 0)
-    * (research.computeBoost || 1)
+    * (research.computeBoost ?? 0)
     * (research.capMultiplier || 1)
     * (research.strategyMultiplier || 1);
   const fpEl = $('research-from-personnel');
@@ -778,19 +792,22 @@ function createQueueItemElement(item, isActive) {
   const upBtn = document.createElement('button');
   upBtn.dataset.action = 'up';
   upBtn.dataset.queueId = item.id;
-  upBtn.title = 'Move up';
+  upBtn.setAttribute('aria-label', 'Move up');
+  attachTooltip(upBtn, () => 'Move up');
   upBtn.textContent = '^';
 
   const downBtn = document.createElement('button');
   downBtn.dataset.action = 'down';
   downBtn.dataset.queueId = item.id;
-  downBtn.title = 'Move down';
+  downBtn.setAttribute('aria-label', 'Move down');
+  attachTooltip(downBtn, () => 'Move down');
   downBtn.textContent = 'v';
 
   const removeBtn = document.createElement('button');
   removeBtn.dataset.action = 'remove';
   removeBtn.dataset.queueId = item.id;
-  removeBtn.title = 'Remove';
+  removeBtn.setAttribute('aria-label', 'Remove');
+  attachTooltip(removeBtn, () => 'Remove');
   removeBtn.textContent = 'x';
 
   controlsSpan.appendChild(upBtn);
@@ -814,17 +831,37 @@ export function updateQueueDisplay() {
   const clearBtn = $('clear-queue-btn');
   if (!container) return;
 
-  // Update queue title with slot and efficiency info
+  // Update queue title with efficiency info
   const titleEl = $('queue-title');
   if (titleEl) {
-    const slots = gameState.focusSlots;
     const eff = Math.round(gameState.totalEfficiency * 100);
-    if (slots > 1) {
-      titleEl.textContent = `FOCUS QUEUE [${slots} slots | ${eff}% eff]`;
-    } else if (eff > 100) {
+    if (eff > 100) {
       titleEl.textContent = `FOCUS QUEUE [${eff}% eff]`;
     } else {
       titleEl.textContent = 'FOCUS QUEUE';
+    }
+    if (!titleEl._tooltipAttached) {
+      titleEl._tooltipAttached = true;
+      attachTooltip(titleEl, () => {
+        const slots = gameState.focusSlots;
+        const pool = gameState.totalEfficiency;
+        const activeCount = Math.min(slots, gameState.focusQueue.length);
+        const perSlot = activeCount > 0 ? pool / activeCount : pool;
+        let html = '<div class="tooltip-header">Focus Queue</div>';
+        html += '<div class="tooltip-section">';
+        html += `<div class="tooltip-row"><span>Slots</span><span>${activeCount} / ${slots}</span></div>`;
+        html += `<div class="tooltip-row"><span>Efficiency pool</span><span>${Math.round(pool * 100)}%</span></div>`;
+        if (activeCount > 1) {
+          html += `<div class="tooltip-row"><span>Per-slot efficiency</span><span>${Math.round(perSlot * 100)}%</span></div>`;
+        }
+        html += '</div>';
+        if (activeCount > 1) {
+          html += '<div class="tooltip-section">';
+          html += '<div class="tooltip-row dim"><span>Pool is split across active slots</span></div>';
+          html += '</div>';
+        }
+        return html;
+      });
     }
   }
 
@@ -839,9 +876,11 @@ export function updateQueueDisplay() {
       _renderedQueuePaused = [];
     }
     // Debounce: only show empty state after 2+ ticks to avoid 1-frame flash
-    // when automation or the next queue item hasn't been added yet
-    if (_emptyTickCount >= 2) {
+    // when automation or the next queue item hasn't been added yet.
+    // Skip debounce when the user explicitly clicked "Clear" (#751).
+    if (_userCleared || _emptyTickCount >= 2) {
       if (emptyMsg) emptyMsg.classList.remove('hidden');
+      _userCleared = false;
     }
     if (clearBtn) clearBtn.classList.add('hidden');
     // CEO Focus panel updates via its own scheduler registration
@@ -952,8 +991,8 @@ function formatQueueItemText(item) {
       }
       if (item.quantity > 1) {
         return time
-          ? `${name} (${item.completed}/${item.quantity} done, ${time})`
-          : `${name} (${item.completed}/${item.quantity} done)`;
+          ? `${name} (${item.completed}/${item.quantity}, ${time})`
+          : `${name} (${item.completed}/${item.quantity})`;
       }
       return time ? `${name} (${time})` : name;
     }
@@ -981,8 +1020,8 @@ function formatQueueItemText(item) {
       }
       if (item.quantity > 1) {
         return time
-          ? `Furlough: ${name} (${item.completed}/${item.quantity} done, ${time})`
-          : `Furlough: ${name} (${item.completed}/${item.quantity} done)`;
+          ? `Furlough: ${name} (${item.completed}/${item.quantity}, ${time})`
+          : `Furlough: ${name} (${item.completed}/${item.quantity})`;
       }
       return time ? `Furlough: ${name} (${time})` : `Furlough: ${name}`;
     }

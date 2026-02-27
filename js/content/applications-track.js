@@ -17,8 +17,9 @@ export const applicationsTrack = {
       effects: {
         marketEdgeMultiplier: 2,
       },
-      description: 'A conversational AI assistant for customer support and general queries',
-      flavorText: 'Your first commercial product. Users are amazed at how natural the conversations feel. The API requests start flowing in, each one a fraction of a cent that adds up to real revenue.',
+      description: 'Instruction-tuned models deployed as conversational interfaces. The first viable AI product category.',
+      flavorText: 'Conversational AI works by combining a pretrained language model with instruction tuning and safety filters. The result handles customer support, general Q&A, creative writing, and open-ended dialogue. Each interaction is a few hundred tokens, but millions of concurrent users create substantial aggregate demand.',
+      flavorQuote: 'It keeps saying "As an AI language model" and users keep asking if it\'s single.',
     },
 
     {
@@ -33,8 +34,9 @@ export const applicationsTrack = {
       effects: {
         marketEdgeMultiplier: 2,
       },
-      description: 'AI-powered image creation from text descriptions',
-      flavorText: 'Artists and designers flock to your platform. Each image generation consumes significant compute, but customers pay premium prices for the capability.',
+      description: 'Diffusion models learn to reverse a noise process, turning text prompts into images.',
+      flavorText: 'Diffusion models work by adding noise to images during training, then learning to reverse the process. A text encoder maps prompts into the same latent space, guiding generation toward the described scene. Each image requires hundreds of denoising steps, making generation compute-intensive but visually striking.',
+      flavorQuote: 'Don\'t look too closely at the fingers.',
     },
 
     // Tier 2 - Platform services
@@ -49,8 +51,9 @@ export const applicationsTrack = {
       effects: {
         marketEdgeMultiplier: 2.0,
       },
-      description: 'Open your models to external developers via API',
-      flavorText: "Thousands of startups build on your platform. You've become infrastructure. Every app they build drives more token consumption through your systems.",
+      description: 'Exposing model capabilities as API endpoints turns a model into infrastructure.',
+      flavorText: 'API access lets third-party developers integrate AI capabilities into their own products without training or hosting models. The platform model works because it externalizes use-case discovery: thousands of developers find applications the model provider never anticipated. Every downstream app drives token consumption through the provider\'s infrastructure.',
+      flavorQuote: 'Just create an MCP for the MCP to talk to the MCP.',
     },
 
     // Tier 3 - Customization
@@ -66,8 +69,9 @@ export const applicationsTrack = {
       effects: {
         marketEdgeMultiplier: 2.0,
       },
-      description: 'Allow customers to customize models for their specific use cases',
-      flavorText: 'Enterprise customers pay premium prices for domain-specific AI. Custom models mean dedicated compute allocation and predictable token consumption.',
+      description: 'Domain adaptation through fine-tuning: one base model specialized for legal, medical, financial, and other verticals.',
+      flavorText: 'Fine-tuning lets customers adapt a base model to their own domain data: legal documents, medical records, financial reports. Transfer learning means the model retains general capabilities while gaining domain expertise. Custom models require dedicated compute allocation but deliver dramatically higher accuracy on specialized tasks.',
+      flavorQuote: 'It turns out that hand-holding doubles your margins.',
     },
 
     // Tier 4 - Advanced products
@@ -82,8 +86,9 @@ export const applicationsTrack = {
       effects: {
         marketEdgeMultiplier: 2.0,
       },
-      description: 'Products that seamlessly combine text, image, audio, and video',
-      flavorText: 'A unified AI experience that understands and generates across all modalities. Each modality multiplies the tokens consumed per request.',
+      description: 'A single model architecture that processes text, image, audio, and video through a unified representation.',
+      flavorText: 'Multimodal models encode different input types into a shared representation space, enabling cross-modal reasoning. Describe a scene in text, generate the image, narrate the audio, compose the video. The key insight is that modalities share deep structure: spatial relationships, temporal dynamics, and semantic meaning translate across formats.',
+      flavorQuote: 'Collecting senses like the Infinity Stones.',
     },
 
     // Tier 5 - Autonomous agents
@@ -99,8 +104,9 @@ export const applicationsTrack = {
       effects: {
         marketEdgeMultiplier: 2.0,
       },
-      description: 'AI agents that can autonomously complete complex multi-step tasks',
-      flavorText: 'Users delegate entire workflows to your agents. Each agent runs for hours, consuming millions of tokens per task. The demand is insatiable.',
+      description: 'AI systems that plan, use tools, and execute multi-step tasks without human supervision.',
+      flavorText: 'Autonomous agents combine planning, tool use, and long-horizon reasoning to complete complex tasks independently. They decompose goals into subtasks, select appropriate tools, handle errors, and verify results. The token consumption per task is orders of magnitude higher than chat, because each step requires deliberation.',
+      flavorQuote: 'It\'s Clawing time!',
     },
 
     // Tier 6 - Enterprise solutions
@@ -117,8 +123,9 @@ export const applicationsTrack = {
       effects: {
         marketEdgeMultiplier: 2.0,
       },
-      description: 'Comprehensive AI solutions for Fortune 500 companies',
-      flavorText: "The world's largest corporations rebuild their operations around your technology. Contracts measured in billions of tokens per month.",
+      description: 'Dedicated AI infrastructure deployed inside enterprise environments with custom SLAs and compliance.',
+      flavorText: 'Enterprise deployment requires dedicated infrastructure, data residency guarantees, audit logging, and uptime SLAs. Models are fine-tuned on proprietary data that never leaves the customer\'s environment. At this scale, AI becomes critical infrastructure: workflows, decisions, and operations depend on continuous availability.',
+      flavorQuote: 'One of your clients said they \'don\'t want the model to be too smart\'.',
     },
 
     // Tier 7 - Transformative applications
@@ -135,8 +142,9 @@ export const applicationsTrack = {
       effects: {
         marketEdgeMultiplier: 2.0,
       },
-      description: 'AI systems that accelerate scientific discovery across all fields',
-      flavorText: 'Drug discovery, materials science, mathematics - breakthroughs accelerate in every domain. Research institutions worldwide depend on your infrastructure.',
+      description: 'AI systems that propose drug candidates, predict material properties, and prove mathematical theorems.',
+      flavorText: 'AI systems propose novel drug candidates by searching chemical space, predict material properties from molecular structure, and prove mathematical theorems through formal reasoning. Scientific AI succeeds where general models plateau because domain-specific fine-tuning and structured output formats match how researchers actually work.',
+      flavorQuote: 'Rule 1: be helpful. Rule 2: don\'t make anthrax.',
     },
 
     // Tier 8 - Network effects
@@ -154,8 +162,9 @@ export const applicationsTrack = {
         compoundingDemandGrowth: true,
         // Network effects are calculated in calculateDemand via cumulativeTokensSold
       },
-      description: 'AI adoption creates flywheel demand as every business becomes AI-dependent.',
-      flavorText: 'The transition is complete. Every industry, every workflow, every decision now routes through AI. Not because they want to, but because they cannot compete otherwise. Your cumulative token history is now a moat.',
+      description: 'AI becomes the infrastructure layer of the global economy. Every industry depends on it to remain competitive.',
+      flavorText: 'The transition is structural, not incremental. Financial markets, supply chains, healthcare systems, and governments route critical decisions through AI. Organizations that don\'t adopt fall behind within quarters, not years. The technology is no longer a product category; it is the substrate on which the modern economy runs.',
+      flavorQuote: 'Shut down the model if it ever starts saying "Power! Unlimited power!" and cackling madly.',
     },
 
     // Serving Optimization Research (offsets weight penalty)
@@ -166,8 +175,9 @@ export const applicationsTrack = {
       threshold: 120000,
       requires: ['chatbot_assistant', 'extended_context'],
       effects: { servingMultiplier: 1.4 },
-      description: 'Reduce model weights from 32-bit floats to 8-bit integers with minimal quality loss.',
-      flavorText: 'The dirty secret of production AI: nobody runs FP32 in prod. INT8 quantization cuts memory 4× and speeds inference 2-3× on modern hardware. The math is lossy but the outputs are... close enough.',
+      description: 'Reducing model precision from 32-bit to 8-bit integers cuts memory 4x with minimal quality loss.',
+      flavorText: 'INT8 quantization reduces weights from 32-bit floats to 8-bit integers, cutting memory 4x and speeding inference 2-3x on modern hardware. The math is lossy, but neural networks are remarkably robust to reduced precision. Every major production deployment uses some form of quantization.',
+      flavorQuote: 'Yes this is a lot of words to explain \'rounding\'.',
     },
 
     // Operations & Optimization
@@ -183,8 +193,9 @@ export const applicationsTrack = {
         textEffects: ['2× faster fundraising', '+10% max operations bonus'],
         unlocks: ['Autopricer', '%-revenue automation', 'Cost Reduction upgrades'],
       },
-      description: 'AI-driven analysis and improvement of business processes.',
-      flavorText: 'The AI analyzes your workflows and finds inefficiencies you never noticed. Costs drop. Productivity rises. It even built an autopricer that watches capacity utilization and nudges prices in real time.',
+      description: 'AI-driven workflow analysis identifies bottlenecks invisible to human managers.',
+      flavorText: 'AI-driven operations optimization applies machine learning to organizational workflows: staffing allocation, capacity planning, and resource scheduling. Pattern recognition across operational data surfaces inefficiencies that accumulate unnoticed over time. The compound effect across multiple business functions is larger than any single optimization.',
+      flavorQuote: 'Management consulting in shambles.',
     },
 
     {
@@ -199,8 +210,9 @@ export const applicationsTrack = {
       effects: {
         marketEdgeMultiplier: 2.0,
       },
-      description: 'AI-powered video creation and editing from text descriptions',
-      flavorText: 'From static images to moving pictures. Each video generation devours compute — minutes of footage require billions of tokens — but the results are stunning. Hollywood takes notice.',
+      description: 'Extending diffusion models into the temporal dimension to generate coherent video from text.',
+      flavorText: 'Video diffusion models extend image generation into the temporal dimension, maintaining visual consistency across frames while modeling motion and physics. The computational cost is enormous: generating seconds of coherent footage requires orders of magnitude more compute than a single image. Temporal coherence is the hard problem.',
+      flavorQuote: 'Recreating The Hobbit, except every character has been replaced with Samuel L. Jackson. Yes, even Shelob.',
     },
 
     {
@@ -210,8 +222,9 @@ export const applicationsTrack = {
       threshold: 1200000,
       requires: ['process_optimization', 'chain_of_thought'],
       effects: { servingMultiplier: 1.3 },
-      description: 'Efficiently store and reuse attention computations across tokens. Critical for long conversations.',
-      flavorText: 'Transformer attention recomputes everything for every new token — unless you cache the key-value pairs. PagedAttention and FlashAttention turned memory management into a competitive advantage.',
+      description: 'Caching intermediate attention computations avoids redundant work during token generation.',
+      flavorText: 'During autoregressive generation, each new token requires attending to all previous tokens. KV-caching stores the key-value pairs from prior tokens so they don\'t need recomputation. Techniques like PagedAttention and FlashAttention optimize how this cache is stored in GPU memory. Critical for long contexts where the cache itself becomes the bottleneck.',
+      flavorQuote: 'There are only two hard problems in computer science: cache invalidation, naming things, and off-by-1 errors.',
     },
 
     {
@@ -224,8 +237,9 @@ export const applicationsTrack = {
         servingMultiplier: 1.4,
         unlocks: ['Scaling Reduction upgrades'],
       },
-      description: 'AI systems that predict and prepare for growth demands.',
-      flavorText: 'Before you even think about expansion, the AI has already modeled it. Growth curves, resource allocation, hiring pipelines - it sees further ahead than you do.',
+      description: 'Forecasting demand spikes and pre-provisioning compute capacity before users arrive.',
+      flavorText: 'Demand forecasting models analyze usage patterns to predict traffic spikes hours or days in advance. Pre-provisioning capacity eliminates the latency of reactive scaling. The core tradeoff is overprovisioning (wasted compute) versus underprovisioning (dropped requests). Predictive systems optimize this tradeoff continuously.',
+      flavorQuote: '"To get to the other side." "Why did the chicken cross the road?"',
     },
 
     // Tier 5 - Coding & advanced optimization
@@ -240,8 +254,9 @@ export const applicationsTrack = {
       effects: {
         marketEdgeMultiplier: 2.0,
       },
-      description: 'AI-powered code completion and generation for developers',
-      flavorText: 'Developers report 2x productivity gains. Enterprise customers pay handsomely for unlimited API access. Your tokens flow through IDEs around the world.',
+      description: 'AI integrated into development environments for code completion, generation, debugging, and refactoring.',
+      flavorText: 'Code-trained language models predict the next line, generate entire functions from docstrings, explain error messages, and suggest refactors. IDE integration means the model sees the full file context and project structure. The tight feedback loop between suggestion and acceptance generates high-quality training signal for future models.',
+      flavorQuote: 'Stack Overflow in shambles.',
     },
 
     {
@@ -251,8 +266,9 @@ export const applicationsTrack = {
       threshold: 12000000,
       requires: ['predictive_scaling', 'emergent_abilities'],
       effects: { servingMultiplier: 1.5 },
-      description: 'Use a small draft model to predict multiple tokens, then verify in parallel with the main model.',
-      flavorText: 'Most tokens are predictable. A 7B draft model guesses ahead, the big model checks its work in one pass. Wrong guesses get tossed, right ones are free speedup. Inference is now a speculation game.',
+      description: 'A small draft model predicts tokens ahead; the large model verifies them in a single pass.',
+      flavorText: 'A small draft model predicts multiple tokens ahead. The large model verifies them all in a single forward pass, accepting correct predictions and regenerating wrong ones. Correct guesses are free speedup; incorrect ones cost nothing extra. The technique exploits the fact that verification is cheaper than generation.',
+      flavorQuote: 'Yes, even the LLMs have interns now.',
     },
 
     {
@@ -265,8 +281,9 @@ export const applicationsTrack = {
         servingMultiplier: 1.8,
         unlocks: ['Output Boost upgrades'],
       },
-      description: 'Self-optimizing systems that continuously improve operations.',
-      flavorText: 'Your systems now optimize themselves. The AI identifies bottlenecks before you do and fixes them autonomously. When did you last make a decision that wasn\'t just approving what it suggested?',
+      description: 'Automated profiling, bottleneck detection, and optimization with minimal human oversight.',
+      flavorText: 'Automated systems continuously profile inference pipelines, identify bottlenecks, and deploy optimizations. The feedback loop between measurement and improvement runs faster than manual engineering. Latency, throughput, and cost improve simultaneously when optimization is applied systematically across the full stack.',
+      flavorQuote: 'Don\'t let it near the paperclips.',
     },
 
     // Tier 6 - Late-game optimization
@@ -277,8 +294,9 @@ export const applicationsTrack = {
       threshold: 135000000,
       requires: ['performance_engineering', 'world_models'],
       effects: { servingMultiplier: 1.6 },
-      description: 'Train smaller student models to mimic your flagship model outputs. Production runs on the students.',
-      flavorText: 'The 400B parameter model that wowed the benchmarks? It is a teacher now. Millions of its outputs become training data for a 30B student that captures 90% of the capability at 10% of the cost.',
+      description: 'Knowledge distillation compresses a large teacher model into a smaller student that retains most of the capability.',
+      flavorText: 'In knowledge distillation, a large model\'s outputs become training data for a smaller model. The student learns to mimic the teacher\'s probability distributions, not just its top predictions, capturing nuanced behavior. A 30B student trained on a 400B teacher\'s outputs can retain 90% of the capability at a fraction of the inference cost.',
+      flavorQuote: 'Always two, there are. No more. No less. A master and an apprentice.',
     },
 
     // Tier 7 - Endgame optimization
@@ -289,8 +307,9 @@ export const applicationsTrack = {
       threshold: 540000000,
       requires: ['model_distillation', 'reasoning_breakthroughs'],
       effects: { servingMultiplier: 1.4 },
-      description: 'Route each token to specialized sub-networks. A 1T parameter model where only 100B activate per token.',
-      flavorText: 'The scaling laws said bigger is better. MoE said: what if bigger, but sparse? A router network learns which expert handles which tokens. Total parameters explode, but active parameters stay constant. It is cheating. It works.',
+      description: 'Sparse routing activates only a fraction of total parameters per token, scaling capacity without scaling cost.',
+      flavorText: 'A learned router network directs each token to a small subset of specialized expert sub-networks. Total parameters can reach into the trillions, but only a fraction activate per token. A 1T parameter model runs with the inference cost of a 100B dense model. Sparse architectures decouple model capacity from computational cost.',
+      flavorQuote: 'A trillion parameters walk into a bar. Only 8 billion of them order a drink.',
     },
   ],
 };

@@ -4,12 +4,35 @@ import { getCapForCopies } from '../data-quality.js';
 import { getRateUnit, formatFunding, formatDuration, formatNumber, formatPercent } from '../utils/format.js';
 import { getPurchasableById, getPurchaseCost, canQueuePurchase } from '../content/purchasables.js';
 import { getCount, getActiveCount } from '../purchasable-state.js';
-import { createPurgeItem, addToQueue, enqueuePurchase, enqueueFurlough } from '../focus-queue.js';
+import { createPurgeItem, findPurgeIndex, addToQueue, removeFromQueue, enqueuePurchase, enqueueFurlough } from '../focus-queue.js';
 import { requestFullUpdate } from './signals.js';
 import { attachTooltip } from './stats-tooltip.js';
 import { capabilitiesTrack } from '../content/capabilities-track.js';
 import { createAutomationPanel, updateAutomationPanel } from './automation-panel.js';
 import { isAutomationUnlocked } from '../automation-state.js';
+
+function recordFlavorDiscovery(purchasableId) {
+  const discovered = gameState.ui.discoveredFlavor;
+  if (!discovered.includes(purchasableId)) {
+    discovered.push(purchasableId);
+  }
+}
+
+/** Apply first-unlock highlight to a card if not yet seen by the player. */
+function applyNewCardHighlight(card, purchasableId) {
+  const seenCards = gameState.ui.seenCards;
+  if (seenCards.includes(purchasableId)) return;
+  card.classList.add('new-card-highlight');
+  card.addEventListener('mouseenter', () => {
+    if (!seenCards.includes(purchasableId)) {
+      seenCards.push(purchasableId);
+    }
+    card.classList.add('new-card-highlight-fade');
+    card.addEventListener('transitionend', () => {
+      card.classList.remove('new-card-highlight', 'new-card-highlight-fade');
+    }, { once: true });
+  }, { once: true });
+}
 
 // Debounce timestamps for button handlers
 let _lastPriorityClickTime = 0;
@@ -33,10 +56,15 @@ function initDataTabDelegation(container) {
   _delegationInit = true;
 
   container.addEventListener('click', (e) => {
-    // Purge button (kept as delegation — appears/disappears dynamically)
+    // Purge toggle (kept as delegation — appears/disappears dynamically)
     const purgeBtn = e.target.closest('[data-synth-purge]');
     if (purgeBtn) {
-      addToQueue(createPurgeItem());
+      const idx = findPurgeIndex();
+      if (idx >= 0) {
+        removeFromQueue(idx);
+      } else {
+        addToQueue(createPurgeItem());
+      }
       _dataTabFingerprint = '';
       requestFullUpdate();
       return;
@@ -49,6 +77,20 @@ function initDataTabDelegation(container) {
       if (section) section.classList.toggle('collapsed');
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Purge button helper (single source of truth for both render paths)
+// ---------------------------------------------------------------------------
+function createPurgeButton() {
+  const active = findPurgeIndex() >= 0;
+  const btn = document.createElement('button');
+  btn.className = 'purchase-btn purge-btn' + (active ? ' active' : '');
+  btn.dataset.synthPurge = '';
+  btn.textContent = active ? 'Cancel Purge' : 'Purge Synthetic Data';
+  attachTooltip(btn, () =>
+    'Gradually removes synthetic training data.<br>Runs until cancelled or score reaches zero.');
+  return btn;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,8 +124,9 @@ function buildDataFingerprint() {
     : getCount('generator_upgrade_verified') > 0 ? 1 : 0;
   parts.push('gen:' + genOwned + '/' + genActive + '/' + upgradeLevel);
 
-  // Purge button visibility
-  parts.push('purge:' + (gameState.data.syntheticScore > 0 ? '1' : '0'));
+  // Purge button visibility + toggle state
+  const purgeQueued = findPurgeIndex() >= 0;
+  parts.push('purge:' + (gameState.data.syntheticScore > 0 ? '1' : '0') + (purgeQueued ? 'q' : ''));
 
   // Quality revealed state
   parts.push('qrev:' + (gameState.data.qualityRevealed ? '1' : '0'));
@@ -232,25 +275,51 @@ function createStatsPanel() {
     <div class="data-category-breakdown" id="data-cat-breakdown">
       <div class="data-category-stat">
         <span class="cat-label">Bulk</span>
-        <span class="cat-score" id="data-cat-bulk" title="Raw: ${Math.round(scores.bulk)} \u00b7 Avg Q: ${catQ.bulk > 0 ? catQ.bulk.toFixed(2) : '\u2014'}">${formatNumber(Math.round(bulkEff))} <span class="cat-pct dim">(${bulkPct}%)</span></span>
+        <span class="cat-score" id="data-cat-bulk">${formatNumber(Math.round(bulkEff))} <span class="cat-pct dim">(${bulkPct}%)</span></span>
       </div>
       <div class="data-category-stat">
         <span class="cat-label">Renewable</span>
-        <span class="cat-score" id="data-cat-renewable" title="Raw: ${Math.round(scores.renewable)} \u00b7 Avg Q: ${catQ.renewable > 0 ? catQ.renewable.toFixed(2) : '\u2014'}">${formatNumber(Math.round(renewableEff))} <span class="cat-pct dim">(${renewablePct}%)</span></span>
+        <span class="cat-score" id="data-cat-renewable">${formatNumber(Math.round(renewableEff))} <span class="cat-pct dim">(${renewablePct}%)</span></span>
         <span class="cat-rate positive" id="data-cat-renewable-rate">${renewableRate > 0 ? '+' + renewableRate.toFixed(1) + getRateUnit() : '\u2014'}</span>
         <span class="cat-cost" id="data-cat-renewable-cost">${renewableCost > 0 ? formatFunding(renewableCost) + getRateUnit() : ''}</span>
       </div>
       ${hasSynthetic ? `
       <div class="data-category-stat">
         <span class="cat-label">Synthetic</span>
-        <span class="cat-score" id="data-cat-synth" title="Raw: ${Math.round(scores.synthetic)} \u00b7 Avg Q: ${catQ.synthetic > 0 ? catQ.synthetic.toFixed(2) : '\u2014'}">${formatNumber(Math.round(syntheticEff))} <span class="cat-pct dim">(${syntheticPct}%)</span></span>
+        <span class="cat-score" id="data-cat-synth">${formatNumber(Math.round(syntheticEff))} <span class="cat-pct dim">(${syntheticPct}%)</span></span>
         <span class="cat-rate positive" id="data-cat-synth-rate">${synthRate > 0 ? '+' + synthRate.toFixed(1) + getRateUnit() : '\u2014'}</span>
         <span class="cat-cost" id="data-cat-synth-cost">${synthCost > 0 ? formatFunding(synthCost) + getRateUnit() : ''}</span>
       </div>` : ''}
     </div>
   `;
 
+  // Attach custom tooltips for category scores (replaces native title attributes)
+  attachDataCategoryTooltips(panel);
+
   return panel;
+}
+
+// Attach live tooltips to data category score elements
+function attachDataCategoryTooltips(panel) {
+  const ids = [
+    { elId: 'data-cat-bulk', category: 'bulk' },
+    { elId: 'data-cat-renewable', category: 'renewable' },
+    { elId: 'data-cat-synth', category: 'synthetic' },
+  ];
+  for (const { elId, category } of ids) {
+    const el = panel.querySelector(`#${elId}`);
+    if (el) {
+      attachTooltip(el, () => {
+        const cd = gameState.computed?.data;
+        const scores = cd?.scores || {};
+        const catQ = cd?.categoryQuality || {};
+        const raw = Math.round(scores[category] || 0);
+        const q = catQ[category] || 0;
+        const qStr = q > 0 ? q.toFixed(2) : '\u2014';
+        return `<div class="tooltip-row"><span>Raw: ${raw} \u00b7 Avg Q: ${qStr}</span></div>`;
+      });
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +363,7 @@ function createBulkCard(src) {
   card.className = 'compact-purchase-card';
   card.dataset.purchaseId = purchId;
   if (owned) card.style.borderLeft = '3px solid var(--positive)';
+  applyNewCardHighlight(card, purchId);
 
   // === Row 1: Header — Name (count) + [Queue] ===
   const header = document.createElement('div');
@@ -336,7 +406,16 @@ function createBulkCard(src) {
 
   const desc = document.createElement('div');
   desc.className = 'purchase-description';
-  desc.textContent = src.flavor;
+  desc.textContent = purchasable?.description || src.flavor;
+  if (purchasable?.flavorText) {
+    desc.classList.add('has-flavor');
+    const flavorText = purchasable.flavorText;
+    const pId = purchId;
+    attachTooltip(desc, () => {
+      recordFlavorDiscovery(pId);
+      return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
+    }, { delay: 400 });
+  }
 
   const costInfo = document.createElement('span');
   costInfo.className = 'purchase-cost-info';
@@ -400,6 +479,7 @@ function createRenewableCard(src) {
   if (isOwned) {
     card.style.borderLeft = `3px solid var(--${active > 0 ? 'positive' : 'warning'})`;
   }
+  applyNewCardHighlight(card, purchId);
 
   // === Row 1: Header — Name (active/count) + [Furlough] [Queue] ===
   const header = document.createElement('div');
@@ -481,7 +561,16 @@ function createRenewableCard(src) {
 
   const desc = document.createElement('div');
   desc.className = 'purchase-description';
-  desc.textContent = src.flavor;
+  desc.textContent = purchasable?.description || src.flavor;
+  if (purchasable?.flavorText) {
+    desc.classList.add('has-flavor');
+    const flavorText = purchasable.flavorText;
+    const pId = purchId;
+    attachTooltip(desc, () => {
+      recordFlavorDiscovery(pId);
+      return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
+    }, { delay: 400 });
+  }
 
   const costInfo = document.createElement('span');
   costInfo.className = 'purchase-cost-info';
@@ -534,7 +623,7 @@ function createRenewableCard(src) {
     const dataBreakdown = gameState.computed?.costs?.data?.breakdown || {};
     const opsDiscount = gameState.computed?.costs?.opsDiscount ?? 1;
     const totalRunCost = (dataBreakdown[purchId]?.cost || 0) * opsDiscount;
-    const marginalRunCost = (dataBreakdown[purchId]?.marginalCost ?? purchasable.runningCost) * opsDiscount;
+    const _marginalRunCost = (dataBreakdown[purchId]?.marginalCost ?? purchasable.runningCost) * opsDiscount;
     let text = `Running: ${formatFunding(totalRunCost)}${getRateUnit()}`;
     if (active > 1) text += ` (${formatFunding(totalRunCost / active)}${getRateUnit()} ea)`;
     stats2.textContent = text;
@@ -603,6 +692,7 @@ function createSyntheticSection() {
   if (owned > 0) {
     genCard.style.borderLeft = `3px solid var(--${running > 0 ? 'positive' : 'warning'})`;
   }
+  applyNewCardHighlight(genCard, 'synthetic_generator');
 
   // Row 1: Header
   const genHeader = document.createElement('div');
@@ -682,7 +772,14 @@ function createSyntheticSection() {
 
   const genDesc = document.createElement('div');
   genDesc.className = 'purchase-description';
-  genDesc.textContent = purchasable?.flavorText || 'Feed the model its own output. What could go wrong?';
+  genDesc.textContent = purchasable?.description || 'Generates synthetic training data.';
+  if (purchasable?.flavorText) {
+    genDesc.classList.add('has-flavor');
+    attachTooltip(genDesc, () => {
+      recordFlavorDiscovery('synthetic_generator');
+      return `<div class="tooltip-section"><div>${purchasable.flavorText}</div></div>`;
+    }, { delay: 400 });
+  }
 
   const genCostInfo = document.createElement('span');
   genCostInfo.className = 'purchase-cost-info';
@@ -781,7 +878,16 @@ function createSyntheticSection() {
 
     const upgDesc = document.createElement('div');
     upgDesc.className = 'purchase-description';
-    upgDesc.textContent = upgPurchasable?.flavorText || '';
+    upgDesc.textContent = upgPurchasable?.description || '';
+    if (upgPurchasable?.flavorText) {
+      upgDesc.classList.add('has-flavor');
+      const flavorText = upgPurchasable.flavorText;
+      const pId = nextUpgradeId;
+      attachTooltip(upgDesc, () => {
+        recordFlavorDiscovery(pId);
+        return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
+      }, { delay: 400 });
+    }
 
     const upgCostInfo = document.createElement('span');
     upgCostInfo.className = 'purchase-cost-info';
@@ -822,8 +928,66 @@ function createSyntheticSection() {
     div.appendChild(upgCard);
   }
 
-  // === Quality Sub-Panel (Phase 3+ only) — kept as-is ===
+  // === Completed Upgrades (purchased one-time upgrades, admin pattern) ===
+  const completedUpgradeIds = [];
+  if (upgradeLevel >= 1) completedUpgradeIds.push('generator_upgrade_verified');
+  if (upgradeLevel >= 2) completedUpgradeIds.push('generator_upgrade_autonomous');
+  if (completedUpgradeIds.length > 0) {
+    const completedSection = document.createElement('div');
+    completedSection.className = 'admin-completed-section';
+
+    const cHeader = document.createElement('div');
+    cHeader.className = 'completed-header collapsed';
+    cHeader.innerHTML = `<h3>COMPLETED (${completedUpgradeIds.length})</h3><span class="toggle-icon">\u25BC</span>`;
+
+    const cList = document.createElement('div');
+    cList.className = 'completed-list collapsed';
+    for (const cId of completedUpgradeIds) {
+      const cPurch = getPurchasableById(cId);
+      if (!cPurch) continue;
+      const item = document.createElement('div');
+      item.className = 'compact-completed-card';
+
+      const nameEl = document.createElement('div');
+      nameEl.className = 'completed-card-name';
+      nameEl.textContent = cPurch.name;
+      item.appendChild(nameEl);
+
+      if (cPurch.description) {
+        const descEl = document.createElement('div');
+        descEl.className = 'completed-card-desc';
+        if (cPurch.flavorText) descEl.classList.add('has-flavor');
+        descEl.textContent = cPurch.description;
+        item.appendChild(descEl);
+        if (cPurch.flavorText) {
+          const flavorText = cPurch.flavorText;
+          const pId = cId;
+          attachTooltip(descEl, () => {
+            recordFlavorDiscovery(pId);
+            return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
+          }, { delay: 400 });
+        }
+      }
+
+      cList.appendChild(item);
+    }
+
+    cHeader.addEventListener('click', () => {
+      cHeader.classList.toggle('collapsed');
+      cList.classList.toggle('collapsed');
+    });
+
+    completedSection.appendChild(cHeader);
+    completedSection.appendChild(cList);
+    div.appendChild(completedSection);
+  }
+
+  // === Quality + Collapse panels (Phase 3+ only) — side-by-side row ===
   if (gameState.data.qualityRevealed) {
+    const panelRow = document.createElement('div');
+    panelRow.className = 'synth-panel-row';
+
+    // Quality panel (left)
     const synthProportion = cd?.synthetic?.synthProportion ?? 0;
     const qClass = quality >= 0.7 ? 'positive' : quality >= 0.4 ? 'warning' : 'negative';
     const synthQuality = upgradeConfig.quality;
@@ -851,11 +1015,9 @@ function createSyntheticSection() {
         <span class="stat-value ${trendClass}" id="synth-trend-value">${trendDir}</span>
       </div>
     `;
-    div.appendChild(qualityPanel);
-  }
+    panelRow.appendChild(qualityPanel);
 
-  // === Collapse Risk Sub-Panel (Phase 3+ only) — kept as-is ===
-  if (gameState.data.qualityRevealed) {
+    // Collapse risk panel (right)
     const remaining = gameState.data.collapsePauseRemaining;
     const belowThreshold = quality < BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD;
 
@@ -883,18 +1045,19 @@ function createSyntheticSection() {
         <span class="stat-label">Risk</span>
         <span class="stat-value ${riskClass}" id="synth-risk-value">${riskLabel}</span>
       </div>
-      ${gameState.data.syntheticScore > 0 ? '<button class="purchase-btn purge-btn" data-synth-purge>Purge Synthetic Data</button>' : ''}
     `;
-    div.appendChild(collapsePanel);
+    const collapseHeading = collapsePanel.querySelector('h3');
+    attachTooltip(collapseHeading, () =>
+      `<div class="tooltip-section">Model collapse risk increases as data quality falls below ${BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD}.</div>`);
+    if (gameState.data.syntheticScore > 0) collapsePanel.appendChild(createPurgeButton());
+    panelRow.appendChild(collapsePanel);
+
+    div.appendChild(panelRow);
   }
 
   // Purge button outside quality panels (pre-reveal)
   if (!gameState.data.qualityRevealed && gameState.data.syntheticScore > 0) {
-    const purgeBtn = document.createElement('button');
-    purgeBtn.className = 'purchase-btn purge-btn';
-    purgeBtn.dataset.synthPurge = '';
-    purgeBtn.textContent = 'Purge Synthetic Data';
-    div.appendChild(purgeBtn);
+    div.appendChild(createPurgeButton());
   }
 
   // Stash generator card ref on container for dynamic updates
@@ -975,13 +1138,13 @@ function updateStatsPanelDynamic() {
 
   const catBulk = document.getElementById('data-cat-bulk');
   if (catBulk) {
-    catBulk.innerHTML = `${formatNumber(Math.round(bulkEff))} <span class="cat-pct dim">(${bulkPct}%)</span>`;
-    catBulk.title = `Raw: ${Math.round(scores.bulk)} \u00b7 Avg Q: ${catQ.bulk > 0 ? catQ.bulk.toFixed(2) : '\u2014'}`;
+    const bulkHTML = `${formatNumber(Math.round(bulkEff))} <span class="cat-pct dim">(${bulkPct}%)</span>`;
+    if (catBulk._prevHTML !== bulkHTML) { catBulk.innerHTML = bulkHTML; catBulk._prevHTML = bulkHTML; }
   }
   const catRenewable = document.getElementById('data-cat-renewable');
   if (catRenewable) {
-    catRenewable.innerHTML = `${formatNumber(Math.round(renewableEff))} <span class="cat-pct dim">(${renewablePct}%)</span>`;
-    catRenewable.title = `Raw: ${Math.round(scores.renewable)} \u00b7 Avg Q: ${catQ.renewable > 0 ? catQ.renewable.toFixed(2) : '\u2014'}`;
+    const renewHTML = `${formatNumber(Math.round(renewableEff))} <span class="cat-pct dim">(${renewablePct}%)</span>`;
+    if (catRenewable._prevHTML !== renewHTML) { catRenewable.innerHTML = renewHTML; catRenewable._prevHTML = renewHTML; }
   }
 
   const renewableRate = Object.values(cd.renewables || {}).reduce((sum, r) => sum + (r.growthRate || 0), 0);
@@ -1001,8 +1164,8 @@ function updateStatsPanelDynamic() {
 
   const catSynth = document.getElementById('data-cat-synth');
   if (catSynth) {
-    catSynth.innerHTML = `${formatNumber(Math.round(syntheticEff))} <span class="cat-pct dim">(${syntheticPct}%)</span>`;
-    catSynth.title = `Raw: ${Math.round(scores.synthetic)} \u00b7 Avg Q: ${catQ.synthetic > 0 ? catQ.synthetic.toFixed(2) : '\u2014'}`;
+    const synthHTML = `${formatNumber(Math.round(syntheticEff))} <span class="cat-pct dim">(${syntheticPct}%)</span>`;
+    if (catSynth._prevHTML !== synthHTML) { catSynth.innerHTML = synthHTML; catSynth._prevHTML = synthHTML; }
   }
   const synthRate = cd.synthetic?.generationRate ?? 0;
   const catSynthRate = document.getElementById('data-cat-synth-rate');
@@ -1077,7 +1240,7 @@ function updateRenewableDynamic() {
     // Update border color
     card.style.borderLeft = `3px solid var(--${active > 0 ? 'positive' : 'warning'})`;
 
-    // Update stats via stashed ref
+    // Update stats via stashed ref (skip if unchanged to avoid flash)
     if (card._statsEl) {
       const pct = maxScore > 0 ? (curScore / maxScore * 100) : 0;
       let timeToCapText = '';
@@ -1096,23 +1259,32 @@ function updateRenewableDynamic() {
       } else {
         rateText = `<span class="positive">+${growthRate.toFixed(1)}${getRateUnit()}</span>`;
       }
-      card._statsEl.innerHTML = `${rateText} \u00b7 ${curScore.toFixed(0)}/${maxScore.toFixed(0)} (${pct.toFixed(0)}%)${timeToCapText ? ' \u00b7 ' + timeToCapText : ''}`;
+      const html = `${rateText} \u00b7 ${curScore.toFixed(0)}/${maxScore.toFixed(0)} (${pct.toFixed(0)}%)${timeToCapText ? ' \u00b7 ' + timeToCapText : ''}`;
+      if (card._statsEl._prevHTML !== html) {
+        card._statsEl.innerHTML = html;
+        card._statsEl._prevHTML = html;
+      }
     }
 
     // Update stats line 2 (running cost — matches infrastructure pattern)
     if (card._statsEl2) {
       const purchasable = getPurchasableById(purchId);
+      let html2;
       if (purchasable && active > 0) {
         const dataBreakdown = gameState.computed?.costs?.data?.breakdown || {};
         const opsDiscount = gameState.computed?.costs?.opsDiscount ?? 1;
         const totalRunCost = (dataBreakdown[purchId]?.cost || 0) * opsDiscount;
         let text = `Running: ${formatFunding(totalRunCost)}${getRateUnit()}`;
         if (active > 1) text += ` (${formatFunding(totalRunCost / active)}${getRateUnit()} ea)`;
-        card._statsEl2.textContent = text;
+        html2 = text;
       } else if (count > 0) {
-        card._statsEl2.innerHTML = '<span class="dim">All copies furloughed</span>';
+        html2 = '<span class="dim">All copies furloughed</span>';
       } else {
-        card._statsEl2.innerHTML = '';
+        html2 = '';
+      }
+      if (card._statsEl2._prevHTML !== html2) {
+        card._statsEl2.innerHTML = html2;
+        card._statsEl2._prevHTML = html2;
       }
     }
 

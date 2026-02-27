@@ -3,12 +3,12 @@
 
 import { gameState } from './game-state.js';
 import { BALANCE, FUNDRAISE_ROUNDS } from '../data/balance.js';
-import { executeSinglePurchase, canQueuePurchase, purchasables, getPurchasableById, getPurchaseCost, PERSONNEL_IDS } from './content/purchasables.js';
+import { canQueuePurchase, purchasables, getPurchasableById, getPurchaseCost, PERSONNEL_IDS } from './content/purchasables.js';
 import { canAfford, spendResources } from './resources.js';
-import { addNewsItem } from './news-feed.js';
+import { triggerFundingMilestone } from './news-feed.js';
 import { getStaffingSpeedMultiplier, getFundraiseSpeedMultiplier } from './automation.js';
-import { formatFunding } from './utils/format.js';
 import { getCount, incrementCount, getPurchasableState, getActiveCount } from './purchasable-state.js';
+import { milestone } from './analytics.js';
 import { processCEOFocus, onFundraiseCompleted } from './ceo-focus.js';
 
 /** Culture drift speed multiplier based on org size. Small orgs pivot fast. */
@@ -100,6 +100,11 @@ export function createPurgeItem() {
     progress: 0,
     duration: Infinity,
   };
+}
+
+/** Find the queue index of a purge_synthetic item, or -1 if none. */
+export function findPurgeIndex() {
+  return gameState.focusQueue.findIndex(item => item.type === 'purge_synthetic');
 }
 
 export function createFurloughItem(purchasableId, duration, quantity = 1) {
@@ -204,7 +209,7 @@ export function processQueue(deltaTime) {
   const perSlotEfficiency = activeCount > 0
     ? gameState.totalEfficiency / activeCount
     : gameState.totalEfficiency;
-  let activeSlotsUsed = 0;
+  let _activeSlotsUsed = 0;
 
   for (let i = 0; i < activeCount && i < gameState.focusQueue.length; i++) {
     const item = gameState.focusQueue[i];
@@ -217,7 +222,7 @@ export function processQueue(deltaTime) {
       i--;
       activeCount = Math.min(activeCount, gameState.focusQueue.length);
     } else {
-      activeSlotsUsed++;
+      _activeSlotsUsed++;
     }
   }
 
@@ -413,7 +418,7 @@ function processCultureItem(item, effectiveDelta) {
 }
 
 // --- Purchase execution (progressive cost model - cost already paid) ---
-function executeProgressivePurchaseUnit(purchasableId, lockedCost) {
+function executeProgressivePurchaseUnit(purchasableId, _lockedCost) {
   // Unfurlough first (free) before purchasing new
   const state = getPurchasableState(purchasableId);
   if (state.furloughed > 0) {
@@ -438,6 +443,13 @@ function executeProgressivePurchaseUnit(purchasableId, lockedCost) {
 
   incrementCount(purchasableId);
 
+  // Funnel telemetry: track when player reaches 10 total purchasables
+  const totalCount = Object.values(gameState.purchasables)
+    .reduce((sum, p) => sum + (p.count || 0), 0);
+  if (totalCount >= 10) {
+    milestone('ten_purchasables');
+  }
+
   // Focus effects from purchasable data
   const effects = purchasable.effects || {};
   if (effects.focusSlots) {
@@ -461,20 +473,26 @@ export function getFundraiseMultiplier(roundId) {
 }
 
 /** Calculate raise amount and effective equity for a fundraise round.
- *  irExtraBase is the IR bonus that pushes the raise above the normal maxRaise cap. */
-export function calculateFundraisePreview(round, annualRevenue, multiplier, baseOverride, irExtraBase = 0) {
+ *  irExtraBase is the fixed IR bonus that pushes the raise above the normal maxRaise cap.
+ *  irMultFraction is the IR multiplier fraction (e.g. 0.20 = 20% of base multiplier) — its
+ *  revenue contribution also pushes above the cap. */
+export function calculateFundraisePreview(round, annualRevenue, multiplier, baseOverride, irExtraBase = 0, irMultFraction = 0) {
   const effectiveBase = baseOverride !== undefined ? baseOverride : (round.base || 0);
   const revenueComponent = annualRevenue * multiplier * round.equityPercent;
   const uncappedAmount = effectiveBase + revenueComponent;
   const cappedAmount = round.maxRaise ? Math.min(round.maxRaise, uncappedAmount) : uncappedAmount;
-  // IR bonus stacks above the normal cap
-  const raiseAmount = cappedAmount + irExtraBase;
+  // IR multiplier bonus: extra revenue from IR fraction of base multiplier, bypasses cap
+  const irMultRevenue = annualRevenue * (irMultFraction * multiplier) * round.equityPercent;
+  // Both IR components stack above the normal cap, total capped at maxRaise × (1 + overshoot)
+  const totalIrExtra = irExtraBase + irMultRevenue;
+  const irMaxRaise = round.maxRaise ? round.maxRaise * (1 + BALANCE.IR_MAX_OVERSHOOT) : Infinity;
+  const raiseAmount = Math.min(irMaxRaise, cappedAmount + totalIrExtra);
   let effectiveEquity = round.equityPercent;
-  const totalUncapped = uncappedAmount + irExtraBase;
+  const totalUncapped = uncappedAmount + totalIrExtra;
   if (round.maxRaise && totalUncapped > round.maxRaise) {
     effectiveEquity = round.equityPercent * (round.maxRaise / totalUncapped);
   }
-  return { raiseAmount, effectiveEquity };
+  return { raiseAmount, effectiveEquity, irMultRevenue };
 }
 
 // --- Tranche Disbursement Processing ---
@@ -497,16 +515,17 @@ function completeFundraise(item) {
   const round = FUNDRAISE_ROUNDS[item.target];
   if (!round) return;
   const state = gameState.fundraiseRounds[item.target];
+  milestone('funding_milestone', { round_id: item.target }, `funding_milestone_${item.target}`);
 
   // Use live values at completion time (#565)
-  const liveMultiplier = getFundraiseMultiplier(item.target)
-    + (gameState.computed?.ceoFocus?.irMultipleBonus || 0);
+  const liveMultiplier = getFundraiseMultiplier(item.target);
   const liveRevenue = gameState.computed?.revenue?.gross || 0;
   const irBaseBonus = gameState.computed?.ceoFocus?.irFundraiseBonus || 0;
+  const irMultFraction = gameState.computed?.ceoFocus?.irMultFraction || 0;
 
   const annualRevenue = liveRevenue * 365;
-  // IR base bonus passed separately so it can push above maxRaise cap (#564)
-  const { raiseAmount, effectiveEquity } = calculateFundraisePreview(round, annualRevenue, liveMultiplier, undefined, irBaseBonus);
+  // Both IR components push above maxRaise cap (#564, #724)
+  const { raiseAmount, effectiveEquity } = calculateFundraisePreview(round, annualRevenue, liveMultiplier, undefined, irBaseBonus, irMultFraction);
 
   // Tranche disbursement: money arrives over time instead of instantly
   const disbursementDuration = round.disbursementDuration || 1; // fallback to instant
@@ -527,11 +546,7 @@ function completeFundraise(item) {
   state.equitySold = effectiveEquity;
   state.valuation = effectiveEquity > 0 ? raiseAmount / effectiveEquity : 0;
 
-  const equityPct = (effectiveEquity * 100).toFixed(1);
-  addNewsItem(
-    `FUNDING: ${round.name} \u2014 ${formatFunding(raiseAmount, { precision: 1 })} raised for ${equityPct}% equity at ${liveMultiplier.toFixed(0)}x valuation. Disbursing over ${Math.round(disbursementDuration / 60)} min.`,
-    'success'
-  );
+  triggerFundingMilestone(item.target, raiseAmount, effectiveEquity, liveMultiplier);
 
   // Update CEO Focus fundraise tracking
   onFundraiseCompleted();
@@ -630,10 +645,7 @@ export function enqueueFundraise(roundId, priority = false) {
   const lockedMultiplier = getFundraiseMultiplier(roundId);
   const lockedRevenue = gameState.computed?.revenue?.gross || 0;
 
-  // Apply CEO Focus IR bonuses at lock time
-  const irMultipleBonus = gameState.computed?.ceoFocus?.irMultipleBonus || 0;
-
-  const item = createFundraiseItem(roundId, round.duration, lockedMultiplier + irMultipleBonus, lockedRevenue);
+  const item = createFundraiseItem(roundId, round.duration, lockedMultiplier, lockedRevenue);
   // Store IR base bonus on the item so completeFundraise can use it
   item.irBaseBonus = gameState.computed?.ceoFocus?.irFundraiseBonus || 0;
   addToQueue(item, priority);

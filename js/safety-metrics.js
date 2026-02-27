@@ -5,7 +5,7 @@
 // - Interpretability (leverage): alignment research effectiveness multiplier
 
 import { gameState } from './game-state.js';
-import { ALIGNMENT, BALANCE } from '../data/balance.js';
+import { ALIGNMENT } from '../data/balance.js';
 import { tracks } from './capabilities.js';
 
 // Alignment Lock constants

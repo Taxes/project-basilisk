@@ -205,7 +205,7 @@ function buildEndingDOM(overlay) {
   return { scrollArea, container, promptBlock };
 }
 
-function showEndingScreen(tier) {
+function showEndingScreen(_tier) {
   const overlay = document.getElementById('extinction-overlay');
   if (!overlay) {
     console.error('Extinction overlay not found');

@@ -7,8 +7,9 @@ import { applyHiddenAlignmentEffect } from './capabilities.js';
 import { strategicChoiceDefinitions } from '../data/strategic-choices.js';
 import { addNewsItem } from './news-feed.js';
 import { addActionMessage, hasMessageBeenTriggered, markMessageTriggered } from './messages.js';
-import { strategicChoiceMessages, getSender } from './content/message-content.js';
+import { strategicChoiceMessages } from './content/message-content.js';
 import { newsContent } from './content/news-content.js';
+import { milestone } from './analytics.js';
 
 // Check if a capability is unlocked in any track
 function isCapUnlocked(capId) {
@@ -100,12 +101,12 @@ export function checkChoiceUnlocks() {
           messageTemplate.choices,
           messageTemplate.priority || 'normal',
           messageTemplate.tags || ['strategic'],
-          messageTemplate.triggeredBy || 'strategic_choice_unlock'
+          messageKey
         );
         markMessageTriggered(messageKey);
       } else {
         // Fallback to old news item if no message template
-        addNewsItem(`Strategic decision available: ${choice.name}`, 'internal');
+        addNewsItem(`Internal: Board requests decision on ${choice.name}`, 'internal');
       }
     }
   }
@@ -142,6 +143,7 @@ export function makeStrategicChoice(choiceId, optionId) {
   if (!optionDef) return false;
 
   gameState.strategicChoices[choiceId].selected = optionId;
+  milestone('strategic_choice', { choice_id: choiceId, option_id: optionId }, `strategic_choice_${choiceId}`);
 
   // Trigger news item with delay (5-15s) so it feels like external news reacting
   const newsEntry = newsContent.strategic_choice[optionId];
@@ -203,10 +205,21 @@ export function getTokenRevenueMultiplier() {
   if (getChosenOption('open_vs_proprietary') === 'proprietary_models') {
     mult *= STRATEGIC_CHOICES.PROPRIETARY_TOKEN_REVENUE_BONUS;
   }
-  if (getChosenOption('rapid_vs_careful') === 'rapid_deployment') {
-    mult *= STRATEGIC_CHOICES.RAPID_REVENUE_BONUS;
-  }
   return mult;
+}
+
+export function getDemandMultiplier() {
+  if (getChosenOption('rapid_vs_careful') === 'rapid_deployment') {
+    return STRATEGIC_CHOICES.RAPID_DEMAND_BONUS;
+  }
+  return 1.0;
+}
+
+export function getAcquiredDemandGrowthMultiplier() {
+  if (getChosenOption('rapid_vs_careful') === 'rapid_deployment') {
+    return STRATEGIC_CHOICES.RAPID_ACQUIRED_DEMAND_GROWTH_BONUS;
+  }
+  return 1.0;
 }
 
 export function getMarketEdgeDecayMultiplier() {

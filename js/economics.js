@@ -3,10 +3,16 @@
 
 import { gameState } from './game-state.js';
 import { GRANTS, LINE_OF_CREDIT } from '../data/balance.js';
-import { addActionMessage, hasMessageBeenTriggered, markMessageTriggered } from './messages.js';
+import { addActionMessage, addNewsMessage, hasMessageBeenTriggered, markMessageTriggered } from './messages.js';
 import { addNewsItem } from './news-feed.js';
 import { formatFunding } from './utils/format.js';
-import { creditWarningMessage } from './content/message-content.js';
+import { creditWarningMessage, creditWarningPreAdaMessage } from './content/message-content.js';
+import {
+  AUTOMATABLE_PERSONNEL,
+  AUTOMATABLE_COMPUTE,
+  AUTOMATABLE_DATA,
+} from './automation-state.js';
+import { getPurchasableState } from './purchasable-state.js';
 
 // --- Grant Income (display-only) ---
 
@@ -80,7 +86,7 @@ export function processGrants(deltaTime) {
       if (grantState.elapsed >= grantDef.duration) {
         grantState.active = false;
         grantState.exhausted = true;
-        addNewsItem(`${grantDef.name} funding period ended. Total received: ${formatFunding(grantState.totalPaid)}.`, 'info');
+        addNewsItem(`Finance: ${grantDef.name} period concluded, ${formatFunding(grantState.totalPaid)} disbursed`, 'info');
       }
     }
   }
@@ -100,9 +106,9 @@ function activateGrant(grantId, grantDef, grantState) {
   // Send news
   const totalGrant = grantDef.initial + grantDef.rate * grantDef.duration;
   if (grantId === 'seed' && grantDef.rate > 0) {
-    addNewsItem(`University approved ${formatFunding(grantDef.rate)}/s research funding for 6 minutes.`, 'success');
+    addNewsItem(`Campus Wire: "CS department spinoff secures ${formatFunding(totalGrant)} research funding"`, 'success');
   } else if (grantId === 'research') {
-    addNewsItem(`DARPA awards ${formatFunding(grantDef.rate)}/s research grant for 10 minutes.`, 'success');
+    addNewsItem(`Reuters: "National Innovation Foundation awards ${formatFunding(totalGrant)} AI research grant"`, 'success');
   }
 }
 
@@ -155,11 +161,15 @@ export function processCredit(deltaTime) {
 
   // Check if using credit
   if (funding < 0) {
-    // First time going negative - pause and send CFO warning
+    // First time going negative - pause and send warning
     if (!gameState.credit.warningShown) {
       gameState.paused = true;
       gameState.pauseReason = 'credit_warning';
-      sendCreditWarning();
+      const isPostSeriesA = gameState.fundraiseRounds?.series_a?.raised;
+      sendCreditWarning(
+        isPostSeriesA ? creditWarningMessage : creditWarningPreAdaMessage,
+        isPostSeriesA ? 'post_ada' : 'pre_ada'
+      );
       gameState.credit.warningShown = true;
     }
 
@@ -182,8 +192,7 @@ export function processCredit(deltaTime) {
   }
 }
 
-function sendCreditWarning() {
-  const msg = creditWarningMessage;
+function sendCreditWarning(msg, variant) {
   const triggerId = msg.triggeredBy;
   if (hasMessageBeenTriggered(triggerId)) return;
 
@@ -195,10 +204,41 @@ function sendCreditWarning() {
     msg.choices,
     msg.priority,
     msg.tags,
-    triggerId
+    triggerId,
+    { variant }
   );
 
   markMessageTriggered(triggerId);
+}
+
+/**
+ * Handle credit warning choice.
+ * 'furlough_all' sets all automation targets to zero (emergency austerity).
+ */
+export function handleCreditWarningChoice(choiceId) {
+  if (choiceId !== 'furlough_all') return; // 'acknowledge' has no effect
+
+  const allItems = [
+    ...AUTOMATABLE_PERSONNEL.map(p => p.id),
+    ...AUTOMATABLE_COMPUTE.map(c => c.id),
+    ...AUTOMATABLE_DATA.map(d => d.id),
+    'hr_team',
+    'procurement_team_unit',
+  ];
+
+  for (const itemId of allItems) {
+    const state = getPurchasableState(itemId);
+    if (state.count > 0) {
+      state.automation.enabled = true;
+      state.automation.type = 'fixed';
+      state.automation.targetValue = 0;
+    }
+  }
+
+  addNewsMessage(
+    'EMERGENCY AUSTERITY: All automation targets set to zero. Staff and compute being furloughed.',
+    ['economics', 'internal']
+  );
 }
 
 function triggerBankruptcy() {
@@ -207,7 +247,7 @@ function triggerBankruptcy() {
   gameState.pauseReason = 'bankruptcy';
   gameState.bankrupted = true;
 
-  addNewsItem('BANKRUPTCY: Unable to meet financial obligations. Operations ceased.', 'danger');
+  addNewsItem('FT: "Promising AI venture folds amid cash crunch"', 'danger');
 
   // The UI will detect bankrupted state and show game over screen
 }

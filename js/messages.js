@@ -1,7 +1,7 @@
 // Message System - Unified narrative delivery
 // Replaces news-feed.js and event modals with email-like inbox
 
-import { gameState, gameTime } from './game-state.js';
+import { gameState } from './game-state.js';
 
 // Message ID counter (restored from saved messages on load)
 let messageIdCounter = 0;
@@ -57,7 +57,7 @@ export function setOnNewMessageCallback(callback) {
 
 // Prune old messages when over limit
 // Preserves unactioned action messages
-const MAX_MESSAGES = 100;
+const MAX_MESSAGES = 150;
 
 function pruneOldMessages() {
   while (gameState.messages.length > MAX_MESSAGES) {
@@ -100,9 +100,8 @@ export function addMessage({
   priority = null,
   tags = [],
   triggeredBy = null,
+  contentParams = null,
 }) {
-  const now = gameTime();
-
   // Calculate deadline for normal actions
   let deadline = null;
   if (type === 'action' && priority === 'normal') {
@@ -124,6 +123,7 @@ export function addMessage({
     deadline,
     tags,
     triggeredBy,
+    contentParams,
   };
 
   gameState.messages.push(message);
@@ -145,21 +145,23 @@ export function addMessage({
 }
 
 /**
- * Add a news message (one-liner, no detail view)
+ * Add a news message (headline in feed, optional body for detail view)
  */
-export function addNewsMessage(subject, tags = [], triggeredBy = null) {
-  return addMessage({
+export function addNewsMessage(subject, tags = [], triggeredBy = null, body = null) {
+  const msg = {
     type: 'news',
     subject,
     tags,
     triggeredBy,
-  });
+  };
+  if (body) msg.body = body;
+  return addMessage(msg);
 }
 
 /**
  * Add an informational message (readable content, no action required)
  */
-export function addInfoMessage(sender, subject, body, signature = null, tags = [], triggeredBy = null) {
+export function addInfoMessage(sender, subject, body, signature = null, tags = [], triggeredBy = null, contentParams = null) {
   return addMessage({
     type: 'info',
     sender,
@@ -168,13 +170,14 @@ export function addInfoMessage(sender, subject, body, signature = null, tags = [
     signature,
     tags,
     triggeredBy,
+    contentParams,
   });
 }
 
 /**
  * Add an action message (requires player choice)
  */
-export function addActionMessage(sender, subject, body, signature, choices, priority = 'normal', tags = [], triggeredBy = null) {
+export function addActionMessage(sender, subject, body, signature, choices, priority = 'normal', tags = [], triggeredBy = null, contentParams = null) {
   return addMessage({
     type: 'action',
     sender,
@@ -185,6 +188,7 @@ export function addActionMessage(sender, subject, body, signature, choices, prio
     priority,
     tags,
     triggeredBy,
+    contentParams,
   });
 }
 
@@ -212,7 +216,12 @@ export function markActionTaken(id, choiceId) {
 
 // Get count of unread messages (excluding news - news doesn't badge)
 export function getUnreadCount() {
-  return gameState.messages?.filter(m => !m.read && m.type !== 'news').length || 0;
+  if (!gameState.messages) return 0;
+  return gameState.messages.filter(m => {
+    if (m.type === 'news') return false;
+    if (m.type === 'action') return !m.actionTaken;
+    return !m.read;
+  }).length;
 }
 
 // Get count of pending actions (unactioned action messages)
@@ -228,6 +237,53 @@ export function getMessagesByType() {
     info: messages.filter(m => m.type === 'info'),
     news: messages.filter(m => m.type === 'news'),
   };
+}
+
+// Get messages grouped into 4 sections for inbox UI
+// New: unactioned actions + unread info (never news)
+// Reference: read tutorial-tagged info
+// Archive: actioned decisions + read non-tutorial info
+// News: all news messages (always here, never in New)
+export function getMessagesBySections() {
+  const messages = gameState.messages || [];
+  const sections = { new: [], reference: [], archive: [], news: [] };
+
+  for (const msg of messages) {
+    if (msg.type === 'news') {
+      sections.news.push(msg);
+    } else if (msg.type === 'action' && !msg.actionTaken) {
+      sections.new.push(msg);
+    } else if (msg.type === 'action' && msg.actionTaken) {
+      sections.archive.push(msg);
+    } else if (msg.type === 'info' && !msg.read) {
+      sections.new.push(msg);
+    } else if (msg.type === 'info' && msg.tags?.includes('tutorial')) {
+      sections.reference.push(msg);
+    } else if (msg.type === 'info') {
+      sections.archive.push(msg);
+    }
+  }
+
+  // Helper: extract numeric ID for stable tiebreaking (msg_1 → 1)
+  const idNum = (msg) => parseInt(msg.id.slice(4), 10) || 0;
+
+  // New: actions first, then by timestamp descending (ID tiebreak)
+  sections.new.sort((a, b) => {
+    if (a.type === 'action' && b.type !== 'action') return -1;
+    if (a.type !== 'action' && b.type === 'action') return 1;
+    return (b.timestamp - a.timestamp) || (idNum(b) - idNum(a));
+  });
+
+  // Reference: newest first
+  sections.reference.sort((a, b) => (b.timestamp - a.timestamp) || (idNum(b) - idNum(a)));
+
+  // Archive: newest first
+  sections.archive.sort((a, b) => (b.timestamp - a.timestamp) || (idNum(b) - idNum(a)));
+
+  // News: newest first
+  sections.news.sort((a, b) => (b.timestamp - a.timestamp) || (idNum(b) - idNum(a)));
+
+  return sections;
 }
 
 // Get recent messages for dashboard widget (newest first)
@@ -327,6 +383,7 @@ if (typeof window !== 'undefined') {
   window.getUnreadCount = getUnreadCount;
   window.getActionCount = getActionCount;
   window.getMessagesByType = getMessagesByType;
+  window.getMessagesBySections = getMessagesBySections;
   window.getRecentMessages = getRecentMessages;
   window.markMessageRead = markMessageRead;
   window.markActionTaken = markActionTaken;

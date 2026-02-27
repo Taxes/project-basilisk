@@ -4,8 +4,6 @@
 
 import { gameState } from './game-state.js';
 import {
-  AUTOMATABLE_PERSONNEL,
-  AUTOMATABLE_COMPUTE,
   canHRHire,
   canProcurementBuy,
 } from './automation-state.js';

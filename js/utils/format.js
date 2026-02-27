@@ -117,6 +117,7 @@ export function renderMarkdown(text) {
   const inlineMd = s => {
     s = escapeHtml(s);
     s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
     s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
     s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
     return s;
@@ -125,9 +126,25 @@ export function renderMarkdown(text) {
   const lines = text.split('\n');
   const out = [];
   let inList = false;
+  let inCodeBlock = false;
+  let codeLines = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+
+    // Fenced code blocks (```)
+    if (/^```/.test(line.trim())) {
+      if (inCodeBlock) {
+        out.push(`<pre><code>${codeLines.map(escapeHtml).join('\n')}</code></pre>`);
+        codeLines = [];
+        inCodeBlock = false;
+      } else {
+        if (inList) { out.push('</ul>'); inList = false; }
+        inCodeBlock = true;
+      }
+      continue;
+    }
+    if (inCodeBlock) { codeLines.push(line); continue; }
 
     // List items — wrap consecutive items in <ul>
     if (/^- /.test(line)) {
@@ -136,6 +153,9 @@ export function renderMarkdown(text) {
       continue;
     }
     if (inList) { out.push('</ul>'); inList = false; }
+
+    // Horizontal rules
+    if (/^---+$/.test(line.trim())) { out.push('<hr>'); continue; }
 
     // Headings
     if (line.startsWith('### ')) { out.push(`<h4>${escapeHtml(line.slice(4))}</h4>`); continue; }

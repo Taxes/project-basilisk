@@ -9,14 +9,15 @@ export function calculatePrestigeGain() {
   const progress = gameState.agiProgress || 0;
 
   // Diminishing returns formula: gain = base * sqrt(progress / 100)
-  const baseGain = 0.1;  // 10% max per reset at 100% progress
+  const baseGain = 0.2;
+  // baseGain 0.2 → up to 20% per bonus at 100% progress
   const multiplier = Math.sqrt(progress / 100);
 
   if (gameState.arc === 1) {
     return {
       researchMultiplier: baseGain * multiplier,
       startingFunding: baseGain * multiplier,
-      computeEfficiency: baseGain * multiplier * 0.5,
+      revenueMultiplier: baseGain * multiplier * 0.5,
     };
   } else {
     return {
@@ -30,12 +31,12 @@ export function calculatePrestigeGain() {
 // Apply prestige gains to current upgrades
 export function applyPrestigeGains(gains) {
   if (gameState.arc === 1) {
-    gameState.arc1Upgrades.researchMultiplier += gains.researchMultiplier || 0;
-    gameState.arc1Upgrades.startingFunding += gains.startingFunding || 0;
-    gameState.arc1Upgrades.computeEfficiency += gains.computeEfficiency || 0;
+    gameState.arc1Upgrades.researchMultiplier *= 1 + (gains.researchMultiplier || 0);
+    gameState.arc1Upgrades.startingFunding *= 1 + (gains.startingFunding || 0);
+    gameState.arc1Upgrades.revenueMultiplier *= 1 + (gains.revenueMultiplier || 0);
   } else {
-    gameState.arc2Upgrades.safetyResearchSpeed += gains.safetyResearchSpeed || 0;
-    gameState.arc2Upgrades.incidentDetection += gains.incidentDetection || 0;
+    gameState.arc2Upgrades.safetyResearchSpeed *= 1 + (gains.safetyResearchSpeed || 0);
+    gameState.arc2Upgrades.incidentDetection *= 1 + (gains.incidentDetection || 0);
     gameState.arc2Upgrades.interpretabilityBonus += gains.interpretabilityBonus || 0;
   }
 }
@@ -49,6 +50,13 @@ export function resetForPrestige() {
   // Preserve upgrades
   const arc1Upgrades = { ...gameState.arc1Upgrades };
   const arc2Upgrades = { ...gameState.arc2Upgrades };
+
+  // Preserve onboarding flag
+  const onboardingComplete = gameState.onboardingComplete;
+
+  // Preserve UI state that persists across prestige
+  const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
+  const everUnlockedSections = gameState.ui?.everUnlockedSections ? [...gameState.ui.everUnlockedSections] : [];
 
   // Preserve all-time lifetime stats
   const lifetimeAllTime = { ...gameState.lifetimeAllTime };
@@ -65,6 +73,9 @@ export function resetForPrestige() {
   gameState.arc1Upgrades = arc1Upgrades;
   gameState.arc2Upgrades = arc2Upgrades;
   gameState.lifetimeAllTime = lifetimeAllTime;
+  gameState.onboardingComplete = onboardingComplete;
+  gameState.ui.seenCards = seenCards;
+  gameState.ui.everUnlockedSections = everUnlockedSections;
 
   // Explicitly clear dynamic state that createDefaultGameState doesn't include
   // (Object.assign only copies properties from fresh — it doesn't delete extras)
@@ -85,10 +96,14 @@ export function resetForPrestige() {
 
 // Transition from Arc 1 to Arc 2 (one-way door)
 export function transitionToArc2() {
+  const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
+  const everUnlockedSections = gameState.ui?.everUnlockedSections ? [...gameState.ui.everUnlockedSections] : [];
   const fresh = createDefaultGameState();
 
   // Reset everything except arcUnlocked
   Object.assign(gameState, fresh);
+  gameState.ui.seenCards = seenCards;
+  gameState.ui.everUnlockedSections = everUnlockedSections;
   resetQueueIdCounter();
   gameState.arc = 2;
   gameState.arcUnlocked = 2;
@@ -109,6 +124,8 @@ export function transitionToArc2() {
   // Note: initializeNewsFeed() is NOT called here because the page reloads
   // after Arc 2 transition, and main.js will call it during startup.
   // Calling it here would cause duplicate "lab begins operations" news.
+  gameState.onboardingComplete = true; // If they got to Arc 2, they've seen onboarding
+
   gameState.lastTick = Date.now();
   saveGame();
 }

@@ -1,19 +1,21 @@
 // Resource Calculations and Updates
 
 import { gameState } from './game-state.js';
-import { BALANCE, FUNDING, AGI_RP_TARGET, AGI_LOG_K } from '../data/balance.js';
+import { BALANCE, AGI_RP_TARGET, AGI_LOG_K, FAREWELLS } from '../data/balance.js';
 import { tracks, checkAllMilestones } from './capabilities.js';
-import { getPurchasableById, getAllPurchasables, PERSONNEL_IDS, COMPUTE_IDS, ADMIN_IDS, DATA_IDS } from './content/purchasables.js';
+import { getPurchasableById, PERSONNEL_IDS, COMPUTE_IDS, ADMIN_IDS, DATA_IDS } from './content/purchasables.js';
 import { capabilitiesTrack } from './content/capabilities-track.js';
 import { applicationsTrack } from './content/applications-track.js';
-import { checkProgressMilestones, checkFundingMilestones } from './news-feed.js';
+import { checkProgressMilestones } from './news-feed.js';
 import { getOutputMultiplier } from './content/upgrades.js';
-import { getResearchRateMultiplier, getComputeCapacityMultiplier, getTokenRevenueMultiplier, getGovernmentFundingBonus, getMarketEdgeDecayMultiplier, getMarketEdgeBoostMultiplier } from './strategic-choices.js';
+import { getResearchRateMultiplier, getComputeCapacityMultiplier, getTokenRevenueMultiplier, getGovernmentFundingBonus, getMarketEdgeDecayMultiplier, getMarketEdgeBoostMultiplier, getDemandMultiplier, getAcquiredDemandGrowthMultiplier } from './strategic-choices.js';
 import { getDataEffectivenessMultiplier, isCapResearchPaused, isDataCleanupActive, computeDataDisplay } from './data-quality.js';
 import { isMoratoriumActive } from './moratoriums.js';
+import { isFarewellStalling } from './farewells.js';
 import { getActiveCount } from './automation-state.js';
 import { getCount } from './purchasable-state.js';
 import { getCreditStatus, computeGrantIncome } from './economics.js';
+import { computeEffects as computeCEOFocusEffects } from './ceo-focus.js';
 import { getEffectiveScaling } from './talent-pool.js';
 
 // Derive compute boost constants from anchor points (runs once at import)
@@ -24,12 +26,12 @@ const _cbAlpha = Math.log(_a0.tflops / _a1.tflops) / Math.log(_a0.totalRP / _a1.
 const _cbK = _a0.tflops / (_onPaceRatio * Math.pow(_a0.totalRP, _cbAlpha));
 
 // Autopricer constants (algorithm internals, not balance knobs)
-const AUTOPRICER_MODE_FACTORS = { growth: 3.0, balanced: 1.5, extraction: 1.0 };
-const AUTOPRICER_MAX_NUDGE = 0.05;          // ±5% per tick (buffed from 2%)
-const AUTOPRICER_DAMPING_THRESHOLD = 0.7;   // dampen when acquired/target < 70%
-const AUTOPRICER_DAMPING_FACTOR = 0.3;      // reduce nudge to 30% when damped
-const AUTOPRICER_COOLDOWN = 3;              // seconds between updates (buffed from 5)
-const AUTOPRICER_DEAD_ZONE = 0.03;          // skip when gap < 3% (wider to prevent oscillation with larger steps)
+// Mode targets: demand-to-supply ratio the autopricer aims for.
+// Higher ratio → lower price → more excess demand → faster customer growth.
+const AUTOPRICER_MODE_TARGETS = { extraction: 1.0, balanced: 1.2, growth: 1.5 };
+const AUTOPRICER_MAX_STEP = 0.05;           // move at most 5% toward ideal per tick
+const AUTOPRICER_DEAD_ZONE = 0.02;          // skip when within 2% of ideal
+const AUTOPRICER_COOLDOWN = 3;              // seconds between updates
 
 // Price inertia: actual price drifts toward target price at a capped rate
 const PRICE_INERTIA_MAX_RATE = BALANCE.PRICE_INERTIA_MAX_RATE;
@@ -194,6 +196,7 @@ export function calculateTokenRevenue() {
 //     - × getMarketEdgeBoostMultiplier()                     (strategic choice: proprietary)
 //     - × catchupMultiplier                                  (rubber-banding: bonus when behind competitor)
 //     - × network effects bonus                              (late game, from T8 app)
+//     - × getDemandMultiplier()                               (strategic choice: rapid deployment +20%)
 //   Revenue modifiers (applied after demand/pricing):
 //     - × (1 + cultureBalancedRevenue + ppBonusRevenue)      (PP: up to +10% bonus revenue)
 //   Price elasticity (via calculateReferencePrice + calculateEffectiveElasticity):
@@ -259,6 +262,8 @@ export function calculateDemand() {
   const lateGameMultiplier = state.resources.lateGameDemandMultiplier || 1.0;
   marketSize *= lateGameMultiplier;
 
+  // Strategic choice: Rapid Deployment demand bonus
+  marketSize *= getDemandMultiplier();
 
 
   // Price elasticity: demand = marketSize * (refPrice / price)^elasticity
@@ -300,12 +305,16 @@ export function updateAcquiredDemand(deltaTime) {
     const headroom = potentialDemand - acquiredDemand;
     let growthRate = headroom * BALANCE.ACQUIRED_DEMAND_GROWTH_RATE;
 
-    // Floor rate prevents "stuck at zero" trap
-    growthRate = Math.max(growthRate, BALANCE.ACQUIRED_DEMAND_FLOOR_RATE);
+    // Floor rates: absolute floor bootstraps from zero, proportional floor prevents late-game stagnation
+    const proportionalFloor = acquiredDemand * BALANCE.ACQUIRED_DEMAND_PROPORTIONAL_FLOOR;
+    growthRate = Math.max(growthRate, BALANCE.ACQUIRED_DEMAND_FLOOR_RATE, proportionalFloor);
 
     // CEO Focus: Public Positioning acquired demand growth multiplier
     const adGrowthMult = state.computed?.ceoFocus?.acquiredDemandGrowthMultiplier ?? 1;
     growthRate *= adGrowthMult;
+
+    // Strategic choice: Rapid Deployment customer growth bonus
+    growthRate *= getAcquiredDemandGrowthMultiplier();
 
     // Proprietary strategic choice: +25% acquisition
     if (state.strategicChoices?.openVsProprietary === 'proprietary') {
@@ -330,6 +339,7 @@ export function updateAcquiredDemand(deltaTime) {
 
   state.resources.acquiredDemand = acquiredDemand;
   state.resources.acquiredDemandDelta = deltaTime > 0 ? (acquiredDemand - prevAcquiredDemand) / deltaTime : 0;
+  state.resources.acquiredDemandCap = potentialDemand;
   return acquiredDemand;
 }
 
@@ -345,14 +355,16 @@ export function updateLateGameDemandMultiplier(deltaTime) {
   state.resources.lateGameDemandMultiplier *= Math.pow(1 + BALANCE.LATE_GAME_DEMAND_GROWTH_RATE, deltaTime);
 }
 
-// Autopricer: elasticity-aware gradient thermostat
+// Autopricer: clearing-price computation with rate-limited convergence
 export function updateAutopricer(deltaTime) {
   const state = gameState;
 
+  const _dbg = state._autopricerDebug;
+
   // Only run if enabled and unlocked
-  if (!state.resources.autopricerEnabled) return;
+  if (!state.resources.autopricerEnabled) { if (_dbg) console.log('[AP] disabled'); return; }
   const apps = state.tracks?.applications?.unlockedCapabilities || [];
-  if (!apps.includes('process_optimization')) return;
+  if (!apps.includes('process_optimization')) { if (_dbg) console.log('[AP] not unlocked'); return; }
 
   // Rate-limit: only update every AUTOPRICER_COOLDOWN seconds
   state.resources._autopricerTimer = (state.resources._autopricerTimer || 0) + deltaTime;
@@ -360,48 +372,46 @@ export function updateAutopricer(deltaTime) {
   state.resources._autopricerTimer = 0;
 
   const supply = state.resources.tokensPerSecond;
-  if (supply <= 0) return;
+  if (supply <= 0) { if (_dbg) console.log('[AP] supply=0'); return; }
 
-  const mode = state.resources.autopricerMode || 'balanced';
-  const modeFactor = AUTOPRICER_MODE_FACTORS[mode] || AUTOPRICER_MODE_FACTORS.balanced;
-
-  // What demand does the elasticity model predict at current price?
-  const targetDemand = state.resources.demand || 0;
-  // What demand do we want based on mode?
-  const desiredDemand = supply * modeFactor;
-
-  if (desiredDemand <= 0) return;
-
-  // Proportional nudge: positive = price too low, negative = price too high
-  const gap = (targetDemand - desiredDemand) / desiredDemand;
-
-  // Dead zone: skip when gap is negligible
-  if (Math.abs(gap) < AUTOPRICER_DEAD_ZONE) return;
-
-  let nudge = Math.max(-AUTOPRICER_MAX_NUDGE, Math.min(AUTOPRICER_MAX_NUDGE, gap));
-
-  // Demand lag damping: if acquired demand hasn't caught up to target,
-  // reduce nudge to avoid oscillation
-  const acquiredDemand = state.resources.acquiredDemand || 0;
-  if (targetDemand > 0 && acquiredDemand / targetDemand < AUTOPRICER_DAMPING_THRESHOLD) {
-    nudge *= AUTOPRICER_DAMPING_FACTOR;
-  }
-
-  // Set target price (actual price drifts via inertia)
-  // Read from targetPrice so autopricer compounds on its own decisions, not the lagging actual
   const currentTarget = state.resources.targetPrice ?? state.resources.tokenPrice;
-  const newTarget = currentTarget * (1 + nudge);
-  const clampedTarget = Math.max(0.01, Math.min(1000, newTarget));
-
-  // Stability check: don't set a target where predicted demand < supply
-  // Prevents runaway overshoot when target diverges from actual price
   const refPrice = state.resources.referencePrice;
   const mktSize = state.resources.marketSize;
-  if (refPrice > 0 && mktSize > 0) {
-    const elastAtTarget = calculateElasticityAtPrice(clampedTarget);
-    const demandAtTarget = mktSize * Math.pow(refPrice / clampedTarget, elastAtTarget);
-    if (demandAtTarget < supply) return;
+  if (!refPrice || !mktSize) { if (_dbg) console.log('[AP] no refPrice/mktSize', { refPrice, mktSize }); return; }
+
+  // Step 1: Compute ideal price via binary search.
+  // Find the price where demand = supply × modeTarget.
+  // Extraction (1.0×) = clearing price, balanced (1.2×) = 20% excess demand, growth (1.5×) = 50% excess.
+  const mode = state.resources.autopricerMode || 'balanced';
+  const demandTarget = supply * (AUTOPRICER_MODE_TARGETS[mode] || AUTOPRICER_MODE_TARGETS.balanced);
+
+  let lo = 0.01, hi = 1000;
+  for (let i = 0; i < 20; i++) {
+    const mid = Math.sqrt(lo * hi);
+    const e = calculateElasticityAtPrice(mid);
+    const d = mktSize * Math.pow(refPrice / mid, e);
+    if (d > demandTarget) lo = mid; else hi = mid;
   }
+  const idealPrice = Math.sqrt(lo * hi);
+
+  // Step 2: Dead zone — skip when already within 2% of ideal
+  const ratio = idealPrice / currentTarget;
+  if (Math.abs(ratio - 1) < AUTOPRICER_DEAD_ZONE) return;
+
+  // Step 3: Rate-limit convergence — move at most 5% toward ideal per tick
+  const cappedRatio = Math.max(1 - AUTOPRICER_MAX_STEP, Math.min(1 + AUTOPRICER_MAX_STEP, ratio));
+  const newTarget = currentTarget * cappedRatio;
+  const clampedTarget = Math.max(0.01, Math.min(1000, newTarget));
+
+  if (_dbg) console.log('[AP] tick', {
+    currentTarget: currentTarget.toFixed(4),
+    idealPrice: idealPrice.toFixed(4),
+    ratio: ratio.toFixed(4),
+    cappedRatio: cappedRatio.toFixed(4),
+    newTarget: clampedTarget.toFixed(4),
+    mode,
+    demandTarget: demandTarget.toFixed(0),
+  });
 
   state.resources.targetPrice = clampedTarget;
 }
@@ -793,7 +803,7 @@ export function computePurchaseState() {
 // Called from updateResources() each tick
 export function computeComputeState() {
   const total = calculateComputeRate();
-  const allocation = gameState.resources.computeAllocation || 0.5;
+  const allocation = gameState.resources.computeAllocation ?? 0.5;
   const internal = total * allocation;
   const external = total * (1 - allocation);
 
@@ -862,7 +872,7 @@ export function updateForecasts() {
   // Recompute allocation split using current compute capacity.
   // Use stored compute value — don't recalculate from purchases during pause.
   const total = gameState.resources.compute || 0;
-  const allocation = gameState.resources.computeAllocation || 0.5;
+  const allocation = gameState.resources.computeAllocation ?? 0.5;
   gameState.computed.compute = {
     total,
     internal: total * allocation,
@@ -879,6 +889,9 @@ export function updateForecasts() {
 
   // Data display state (scores, effectiveness, quality — no simulation mutation)
   computeDataDisplay();
+
+  // CEO Focus effects (idle state, grant rate, bonuses — display only during pause)
+  computeCEOFocusEffects();
 
   // Grant income (no payment processing — display only)
   computeGrantIncome();
@@ -908,7 +921,8 @@ export function updateForecasts() {
   const tokenRevenue = calculateTokenRevenue();
   const cultureForRevenue = getCultureBonuses();
   const ppBonusRevStat = gameState.computed?.ceoFocus?.bonusRevenueMultiplier ?? 0;
-  const adjustedTokenRevenue = tokenRevenue * (1 + cultureForRevenue.balancedRevenue + ppBonusRevStat);
+  const prestigeRevenue = gameState.arc1Upgrades?.revenueMultiplier ?? 1;
+  const adjustedTokenRevenue = tokenRevenue * (1 + cultureForRevenue.balancedRevenue + ppBonusRevStat) * prestigeRevenue;
 
   const equityShare = gameState.totalEquitySold || 0;
   const operatingCosts = gameState.computed.costs.totalRunningCost;
@@ -958,13 +972,16 @@ export function updateForecasts() {
     opex: { personnel: personnelCost, compute: computeCost, data: dataCost, total: personnelCost + computeCost + dataCost },
     interestCost,
     netIncome,
-    otherIncome: { disbursements: disbursementRate, grants: grantIncome, total: otherIncome },
+    otherIncome: { disbursements: disbursementRate, grants: grantIncome, ceoGrants: ceoGrantRate, total: otherIncome },
     capex: { hiring: capexHiring, infra: capexInfra, total: capexTotal },
     freeCashFlow,
     runway: freeCashFlow < 0 ? gameState.resources.funding / -freeCashFlow : Infinity,
     annual: adjustedTokenRevenue * 365,
     costPerMTokens: gameState.computed.computeStats?.avgCostPerMTokens || 0,
     marginPerM: gameState.resources.tokenPrice - (gameState.computed.computeStats?.avgCostPerMTokens || 0),
+    cultureBonus: cultureForRevenue.balancedRevenue,
+    ppBonus: ppBonusRevStat,
+    prestigeMultiplier: prestigeRevenue,
   };
 
   // Purchase advisor
@@ -1034,7 +1051,8 @@ export function updateResources(deltaTime) {
   // Apply culture balanced revenue bonus + PP bonus revenue to token revenue
   const cultureForRevenue = getCultureBonuses();
   const ppBonusRevenue = gameState.computed?.ceoFocus?.bonusRevenueMultiplier ?? 0;
-  const adjustedTokenRevenue = tokenRevenue * (1 + cultureForRevenue.balancedRevenue + ppBonusRevenue);
+  const prestigeRevenue = gameState.arc1Upgrades?.revenueMultiplier ?? 1;
+  const adjustedTokenRevenue = tokenRevenue * (1 + cultureForRevenue.balancedRevenue + ppBonusRevenue) * prestigeRevenue;
 
   // Compute cost state FIRST (needed for operating profit calculation)
   computeCostState();
@@ -1119,6 +1137,9 @@ export function updateResources(deltaTime) {
     annual: adjustedTokenRevenue * 365,
     costPerMTokens: gameState.computed.computeStats?.avgCostPerMTokens || 0,
     marginPerM: gameState.resources.tokenPrice - (gameState.computed.computeStats?.avgCostPerMTokens || 0),
+    cultureBonus: cultureForRevenue.balancedRevenue,
+    ppBonus: ppBonusRevenue,
+    prestigeMultiplier: prestigeRevenue,
   };
 
   // Compute marginal efficiency for purchase advisor
@@ -1176,9 +1197,13 @@ export function updateResources(deltaTime) {
   // Update AGI progress
   gameState.agiProgress = calculateAGIProgress();
 
+  // Clamp AGI during farewell stall
+  if (isFarewellStalling()) {
+    gameState.agiProgress = Math.min(gameState.agiProgress, FAREWELLS.STALL_CAP);
+  }
+
   // Check for news milestones
   checkProgressMilestones(gameState.agiProgress);
-  checkFundingMilestones(gameState.resources.funding);
 }
 
 // ---------------------------------------------------------------------------
@@ -1410,11 +1435,13 @@ export function computeResearchState(internalCompute) {
   const adjustedPersonnelBase = personnelBase * ceoResearchMult;
 
   // Base rate before track-specific multipliers
-  const baseRate = adjustedPersonnelBase * capMultiplier * computeBoost * strategyMultiplier;
+  const prestigeResearch = gameState.arc1Upgrades?.researchMultiplier ?? 1;
+  const baseRate = adjustedPersonnelBase * capMultiplier * computeBoost * strategyMultiplier * prestigeResearch;
 
   gameState.computed.research = {
     personnelBaseRaw: personnelBase,
     ceoResearchMult,
+    prestigeResearch,
     personnelBase: adjustedPersonnelBase,
     capMultiplier,
     computeBoost,
@@ -1535,8 +1562,8 @@ export function calculateComputeRate() {
   multiplier *= getComputeCapacityMultiplier();
 
   // Store breakdown for UI display
-  gameState.baseCompute = total;
-  gameState.computeMultiplier = multiplier;
+  gameState.computed.baseCompute = total;
+  gameState.computed.computeMultiplier = multiplier;
 
   return total * multiplier;
 }

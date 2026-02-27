@@ -120,8 +120,9 @@ export function processCEOFocus(deltaTime) {
   computeEffects();
 }
 
-/** Compute effective values from CEO Focus for other systems to consume */
-function computeEffects() {
+/** Compute effective values from CEO Focus for other systems to consume.
+ *  Called from processCEOFocus (each tick) and updateForecasts (during pause). */
+export function computeEffects() {
   const focus = gameState.ceoFocus;
   const buildup = focus.buildup;
   const idle = isEffectivelyIdle();
@@ -159,7 +160,7 @@ function computeEffects() {
   const IR_CAP_BASE = 5000000;  // $5M base cap at full buildup
   const irFundraiseCap = IR_CAP_BASE * Math.pow(8, irFundraiseScaling);
   const irFundraiseBonus = irFundraiseCap * irBuildup;
-  const irMultipleBonus = (120 / 12) * irBuildup;  // +10x max over full buildup
+  const irMultFraction = 0.20 * irBuildup;  // 20% of base multiplier at full buildup, bypasses cap
 
   // Public Positioning: acquisition growth + market edge preservation + bonus revenue
   const ppBuildup = buildup.public_positioning || 0;
@@ -182,7 +183,7 @@ function computeEffects() {
     opsAutomationBonus,
     irFundraiseBonus,
     irFundraiseCap,
-    irMultipleBonus,
+    irMultFraction,
     acquiredDemandGrowthMultiplier,
     edgeDecayReduction,
     bonusRevenueMultiplier,

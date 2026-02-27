@@ -39,6 +39,7 @@ export const BALANCE = {
   // Per-milestone demandMultiplier in capabilities-track.js and applications-track.js
   MARKET_EDGE_HALF_LIFE: 600,             // Seconds (10 game-minutes) — faster decay forces continued innovation
   MARKET_EDGE_FLOOR: 0.1,                 // Floor applied only at demand calc
+  MARKET_EDGE_MILESTONE_FLOOR: 2.0,       // Min edge after any app unlock (catch-up for behind players)
   MARKET_EDGE_DECAY_PER_SECOND: null,     // Computed below
 
   // Elasticity-Based Pricing (replaces PRICE_OPTIMAL_* and PRICE_SENSITIVITY)
@@ -64,6 +65,7 @@ export const BALANCE = {
   ACQUIRED_DEMAND_GROWTH_RATE: 0.0116,      // ln(2)/60 ≈ 60s doubling
   ACQUIRED_DEMAND_CHURN_RATE: 0.023,        // ln(2)/30 ≈ 30s half-life
   ACQUIRED_DEMAND_FLOOR_RATE: 1000000,      // 1M tokens/s/s bootstrap
+  ACQUIRED_DEMAND_PROPORTIONAL_FLOOR: 0.001, // 0.1% of acquired demand/s/s — prevents late-game stagnation
   ACQUIRED_DEMAND_GRACE_FACTOR: 2.0,        // Max acquired = 2× supply
   LATE_GAME_DEMAND_GROWTH_RATE: 0.003,      // ~6x over 10 game-minutes (compounding per second)
   LATE_GAME_GRACE_FACTOR: 4.0,              // T8 app doubles grace cap: 4× supply
@@ -170,9 +172,10 @@ export const BALANCE = {
     [480000,     300],    // compute_optimal_training / Series B gate. Achievable with bulk + couple renewables.
     [900000,     1200],   // massive_scaling. Player has Series B money to buy data sources.
     [2250000,    4200],   // Synthetic transition.
-    [36000000,   12000],  // Late game.
-    [144000000,  20000],  // Gentle late climb.
-    [576000000,  35000],  // Autonomous synthesis territory.
+    [36000000,   12000],   // Late game.
+    [144000000,  25000],   // Reasoning breakthroughs territory.
+    [576000000,  50000],   // Autonomous research territory.
+    [3456000000, 100000],  // Self-improvement — safe to spam synthetic at 0.6 quality.
   ],
 
   // Bulk data sources: { id, name, score, quality, flavor }
@@ -212,8 +215,8 @@ export const BALANCE = {
   // Generator upgrades — gated by capability, each improves quality + increases running cost
   DATA_GENERATOR_UPGRADES: [
     { level: 0, name: 'Self-Training',         quality: 0.1, runningCostMult: 1.0 },
-    { level: 1, name: 'Verified Pipeline',      quality: 0.3, runningCostMult: 2.5, unlock: 'synthetic_verification' },
-    { level: 2, name: 'Autonomous Synthesis',   quality: 0.5, runningCostMult: 5.0, unlock: 'autonomous_research' },
+    { level: 1, name: 'Verified Pipeline',      quality: 0.35, runningCostMult: 2.5, unlock: 'synthetic_verification' },
+    { level: 2, name: 'Autonomous Synthesis',   quality: 0.6, runningCostMult: 5.0, unlock: 'autonomous_research' },
   ],
 
   // Renewable copies scaling
@@ -222,11 +225,14 @@ export const BALANCE = {
   DATA_RENEWABLE_DECAY_TAU: 300,       // Decay tau (2x faster than growth tau of 600)
   DATA_RENEWABLE_COST_ALPHA: 0.3,      // Running cost = base * copies^(1 + α) = base * copies^1.3
 
-  // Data quality
-  DATA_QUALITY_COLLAPSE_THRESHOLD: 0.6,    // quality below this triggers collapse risk
-  DATA_QUALITY_COLLAPSE_MTTH_MIN: 30,      // seconds at worst quality
-  DATA_QUALITY_COLLAPSE_MTTH_MAX: 300,     // seconds at threshold
-  DATA_COLLAPSE_PAUSE_DURATION: 30,        // unchanged
+  // Data quality — collapse risk curve
+  // Interpolates linearly between quality 0.1 (floor) and threshold
+  DATA_QUALITY_COLLAPSE_THRESHOLD: 0.5,    // quality below this triggers collapse risk
+  DATA_QUALITY_COLLAPSE_QUALITY_FLOOR: 0.1, // effective floor for interpolation (base synthetic quality)
+  DATA_QUALITY_COLLAPSE_MTTH_MIN: 30,      // seconds MTTH at floor (30 game-days)
+  DATA_QUALITY_COLLAPSE_MTTH_MAX: 360,     // seconds MTTH at threshold (1 game-year)
+  DATA_COLLAPSE_PAUSE_DURATION_MIN: 30,    // seconds pause at threshold (30 game-days)
+  DATA_COLLAPSE_PAUSE_DURATION_MAX: 60,    // seconds pause at floor (60 game-days)
 
   // Purge synthetic data
   DATA_PURGE_DECAY_RATE: 0.01,
@@ -405,6 +411,9 @@ export const BALANCE = {
     HIGH_ALIGNMENT_REDUCTION: 0.5,      // 50% probability reduction when alignment allocation > 40%
     HIGH_ALIGNMENT_THRESHOLD: 0.40,     // Allocation threshold for reduction
   },
+
+  // IR fundraise cap override — total raise capped at maxRaise × (1 + overshoot)
+  IR_MAX_OVERSHOOT: 0.25,
 };
 
 // Compute derived constants
@@ -620,6 +629,13 @@ export const ARC = {
   AGI_THRESHOLD: 100,  // Progress needed to reach AGI
 };
 
+// Farewell Modal System (Phase 4 character goodbyes)
+export const FAREWELLS = {
+  START_THRESHOLD: 85,    // AGI % to start sequence
+  INTERVAL: 60,           // seconds between farewells (game time, after dismiss)
+  STALL_CAP: 99.9,        // AGI % cap during stall
+};
+
 // Arc timing targets: see docs/design-docs/economics/pacing.md for ground truth
 // Arc 1: 80 min target (0.8x-1.5x variance by strategy)
 
@@ -689,9 +705,10 @@ export const STRATEGIC_CHOICES = {
   INDEPENDENT_RESEARCH_BONUS: 1.15,        // +15% research rate
 
   // Choice 3: Rapid vs Careful
-  RAPID_REVENUE_BONUS: 1.3,               // +30% token revenue
+  RAPID_DEMAND_BONUS: 1.2,               // +20% demand ceiling
+  RAPID_ACQUIRED_DEMAND_GROWTH_BONUS: 1.2, // +20% customer growth rate
   RAPID_EDGE_DECAY_REDUCTION: 0.8,        // Market edge decays 20% slower
-  CAREFUL_INCIDENT_REDUCTION: 0.7,        // -30% incident rate (Arc 2)
+  CAREFUL_INCIDENT_REDUCTION: 0.7,        // -30% incident rate
 
   // Unlock triggers are now based on series completion + research/competitor pressure
   // See data/strategic-choices.js for unlock definitions

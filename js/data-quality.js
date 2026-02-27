@@ -4,6 +4,7 @@ import { BALANCE } from '../data/balance.js';
 import { getCount, getActiveCount, getPurchasableState } from './purchasable-state.js';
 import { capabilitiesTrack } from './content/capabilities-track.js';
 import { addActionMessage, addNewsMessage } from './messages.js';
+import { addNewsItem } from './news-feed.js';
 import { notify } from './ui.js';
 import { senders } from './content/message-content.js';
 
@@ -304,14 +305,20 @@ export function processDataQuality(deltaTime) {
   }
 
   // 6. Collapse roll — triggered by low quality
+  // MTTH and duration both scale with quality: worse quality → shorter MTTH, longer pause
+  // Interpolation range clamped to [QUALITY_FLOOR, THRESHOLD]
   if (quality < BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD && data.collapsePauseRemaining <= 0) {
-    const qualityRatio = quality / BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD;
-    const mtth = BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MAX * qualityRatio +
-                 BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MIN * (1 - qualityRatio);
+    const floor = BALANCE.DATA_QUALITY_COLLAPSE_QUALITY_FLOOR;
+    const clamped = Math.max(quality, floor);
+    const ratio = (clamped - floor) / (BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD - floor);
+    const mtth = BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MIN + ratio *
+                 (BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MAX - BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MIN);
     const probability = 1 - Math.exp(-deltaTime / mtth);
     if (Math.random() < probability) {
-      data.collapsePauseRemaining = BALANCE.DATA_COLLAPSE_PAUSE_DURATION;
-      triggerCollapseNews();
+      const pauseDuration = BALANCE.DATA_COLLAPSE_PAUSE_DURATION_MAX - ratio *
+                            (BALANCE.DATA_COLLAPSE_PAUSE_DURATION_MAX - BALANCE.DATA_COLLAPSE_PAUSE_DURATION_MIN);
+      data.collapsePauseRemaining = pauseDuration;
+      triggerCollapseNews(pauseDuration);
     }
   }
 
@@ -322,11 +329,11 @@ export function processDataQuality(deltaTime) {
   }
 
   // 8. Phase 3 data crisis reveal — phased over ~60s
+  // Aligns with data_quality_reveal tutorial message trigger (quality <= 0.55)
   if (!data.phase3RevealStarted) {
     const hasSynthetic = isCapUnlocked('synthetic_data');
-    const qualityDegraded = quality < 0.85;
-    const seriesCRaised = gameState.fundraiseRounds?.series_c?.raised;
-    if (hasSynthetic && qualityDegraded && seriesCRaised) {
+    const qualityDegraded = quality <= 0.55;
+    if (hasSynthetic && qualityDegraded) {
       data.phase3RevealStarted = gameState.timeElapsed;
     }
   }
@@ -422,7 +429,7 @@ export function getNextTierInfo(capRP) {
   return null;
 }
 
-function triggerCollapseNews() {
+function triggerCollapseNews(pauseDuration) {
   // Initialize collapse tracking
   if (!gameState.data.collapseCount) gameState.data.collapseCount = 0;
   gameState.data.collapseCount++;
@@ -431,28 +438,31 @@ function triggerCollapseNews() {
   const count = gameState.data.collapseCount;
   const quality = gameState.data.quality;
   const qualityPct = (quality * 100).toFixed(0);
-  const pauseDuration = BALANCE.DATA_COLLAPSE_PAUSE_DURATION;
+  pauseDuration = Math.round(pauseDuration);
 
   if (count === 1) {
     // First collapse: ACTION message from CTO
     addActionMessage(
       senders.babbage,
-      'Model collapse detected — immediate action needed',
-      `We have a serious problem. Our models just produced degenerate output in production — garbled text, hallucinated patterns, complete nonsense. I've already rolled back the deployment.
+      'Model collapse detected',
+      `Models produced degenerate output in production. Garbled text, hallucinated patterns, nonsense. I rolled back the deployment.
 
-**What happened:** We've been training on too much synthetic data. The models are learning from their own mistakes, amplifying errors with each generation. Data quality is at ${qualityPct}% and falling.
+Data quality is at ${qualityPct}%. That's below the threshold where training runs produce reliable results. Capabilities research is paused for ${pauseDuration} days while we audit the pipeline.
 
-**The impact:** Capabilities research is paused for ${pauseDuration} days while we audit the data pipeline. This will keep happening — and get worse — unless we fix the underlying problem.
+This will keep happening. The synthetic contamination is systemic. Every collapse costs us research time and we're not getting it back.
 
-**Your call on next steps.**`,
-      '— Dennis',
+Your call on next steps.`,
+      '– Dennis',
       [
-        { id: 'evaluate', label: "I'll evaluate our options", effects: 'Navigate to data tab' },
-        { id: 'cleanup', label: 'Temporarily pause research to clean up data', effects: `Pause all research ${pauseDuration} days, purge 50% synthetic data, furlough generators` },
+        { id: 'evaluate', label: "I'll evaluate our options", effects: 'Navigate to data tab',
+          tooltip: 'Opens the Data tab<br>No mechanical effect' },
+        { id: 'cleanup', label: 'Temporarily pause research to clean up data', effects: `Pause all research ${pauseDuration} days, purge 50% synthetic data, furlough generators`,
+          tooltip: `Pause ALL research for ${pauseDuration} days<br>Purge 50% synthetic data<br>Furlough all synthetic generators` },
       ],
       'normal',
       ['data', 'crisis'],
-      'model_collapse'
+      'model_collapse',
+      { qualityPct, pauseDuration }
     );
   } else {
     // Subsequent collapses: incident-style toast notification
@@ -474,7 +484,7 @@ function triggerCollapseNews() {
 
     // Also add to news feed for the record
     addNewsMessage(
-      `Model collapse #${count} — capabilities research paused ${pauseDuration}s. Data quality: ${qualityPct}%.`,
+      `Model collapse #${count}.`,
       ['data', 'negative']
     );
   }
@@ -485,7 +495,13 @@ function triggerCollapseNews() {
  * Pauses ALL research for 30s, purges 50% of synthetic data, furloughs all generators.
  */
 export function handleCollapseCleanup() {
-  const pauseDuration = BALANCE.DATA_COLLAPSE_PAUSE_DURATION;
+  const floor = BALANCE.DATA_QUALITY_COLLAPSE_QUALITY_FLOOR;
+  const clamped = Math.max(gameState.data.quality, floor);
+  const ratio = (clamped - floor) / (BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD - floor);
+  const pauseDuration = Math.round(
+    BALANCE.DATA_COLLAPSE_PAUSE_DURATION_MAX - ratio *
+    (BALANCE.DATA_COLLAPSE_PAUSE_DURATION_MAX - BALANCE.DATA_COLLAPSE_PAUSE_DURATION_MIN)
+  );
 
   // 1. Pause all research (not just capabilities) via gameState
   gameState.data.dataCleanupPauseEnd = gameState.timeElapsed + pauseDuration;
@@ -519,9 +535,22 @@ export function handleModelCollapseChoice(choiceId) {
   if (choiceId === 'cleanup') {
     handleCollapseCleanup();
   } else {
-    // 'evaluate' — navigate to data tab
+    // 'evaluate' — navigate to dashboard → data sub-tab → scroll to synthetic section
     import('./ui/tab-navigation.js').then(({ switchTab }) => {
-      switchTab('data');
+      switchTab('dashboard');
+      // Activate data sub-tab via click — coupled to initInfraTabs() click handlers in infrastructure.js
+      const dataSubTab = document.getElementById('data-sub-tab');
+      if (dataSubTab) dataSubTab.click();
+      // Scroll to synthetic section after render settles
+      requestAnimationFrame(() => {
+        const titles = document.querySelectorAll('.data-section-title');
+        for (const t of titles) {
+          if (t.textContent.includes('SYNTHETIC')) {
+            t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            break;
+          }
+        }
+      });
     }).catch(() => {});
   }
 }
@@ -530,21 +559,10 @@ function triggerDataWallEvent() {
   if (!gameState.triggeredEvents.includes('data_wall')) {
     gameState.triggeredEvents.push('data_wall');
   }
-  import('./narrative-modal.js').then(({ showNarrativeModal }) => {
-    showNarrativeModal({
-      title: 'The Data Wall',
-      narrative: `<p>Your models have learned everything they can from your current data. Researchers report diminishing returns — the same training runs produce smaller and smaller improvements.</p>
-<p>To push further, you'll need higher-quality data sources. The internet got you this far, but frontier AI needs curated, specialized, and eventually synthetic data.</p>`,
-      buttonText: 'Seek Better Data',
-    });
-  }).catch(() => {});
-  if (typeof window !== 'undefined' && window.addNewsItem) {
-    window.addNewsItem('RESEARCH: Diminishing returns detected — models outpacing available data quality.', 'warning');
-  }
+  // Dennis's data_wall tutorial message (in tutorial-messages.js) handles the narrative beat.
+  // Tab reveal happens via data.dataTabRevealed flag set by the caller.
 }
 
 function triggerDataExhaustionNews() {
-  if (typeof window !== 'undefined' && window.addNewsItem) {
-    window.addNewsItem("Your AI's appetite for data exceeds human output. The era of training on human knowledge is ending.", 'warning');
-  }
+  addNewsItem('Nature: "The data well runs dry: AI training hits fundamental supply limit"', 'warning');
 }

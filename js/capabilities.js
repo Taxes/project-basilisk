@@ -12,6 +12,7 @@ import { requestFullUpdate } from './ui/signals.js';
 import { getFundraiseMultiplier } from './focus-queue.js';
 import { addInfoMessage, hasMessageBeenTriggered, markMessageTriggered } from './messages.js';
 import { fundingMessages } from './content/message-content.js';
+import { milestone } from './analytics.js';
 
 // Send CFO email when a fundraise round becomes available
 function notifyFundraiseAvailable(roundId) {
@@ -119,6 +120,7 @@ function applyMilestoneEffects(trackId, capabilityId) {
 
   // Mark as unlocked
   trackState.unlockedCapabilities.push(capabilityId);
+  milestone('first_research', { capability_id: capabilityId });
   trackState.unlockOrder = trackState.unlockOrder || [];
   trackState.unlockOrder.push(capabilityId);
   trackState.unlockTimestamps = trackState.unlockTimestamps || {};
@@ -131,7 +133,8 @@ function applyMilestoneEffects(trackId, capabilityId) {
 
   // Apply market edge multiplier
   if (capability.effects?.marketEdgeMultiplier) {
-    gameState.resources.marketEdge *= capability.effects.marketEdgeMultiplier;
+    const newEdge = gameState.resources.marketEdge * capability.effects.marketEdgeMultiplier;
+    gameState.resources.marketEdge = Math.max(newEdge, BALANCE.MARKET_EDGE_MILESTONE_FLOOR);
     if (!gameState.resources.marketEdgeDecaying) {
       gameState.resources.marketEdgeDecaying = true;
     }
@@ -147,7 +150,7 @@ function applyMilestoneEffects(trackId, capabilityId) {
 
   // Announce feedback loop activation for capabilities with capFeedbackRate
   if (capability.effects?.capFeedbackRate) {
-    addNewsItem('AI RESEARCH: AI systems contributing to their own research. Feedback loop initiated.', 'warning');
+    addNewsItem('Internal: Research feedback loop confirmed, models now proposing their own experiments', 'warning');
   }
 
   // Staffing speed from milestones (multiplicative, applies to personnel + compute focus queue)
@@ -158,12 +161,10 @@ function applyMilestoneEffects(trackId, capabilityId) {
   // Focus efficiency from milestones (multiplicative)
   if (capability.effects?.focusEfficiencyMultiplier) {
     gameState.totalEfficiency *= capability.effects.focusEfficiencyMultiplier;
-    addNewsItem(`AI OPERATIONS: AI-driven efficiency boost \u2014 focus efficiency now ${(gameState.totalEfficiency * 100).toFixed(0)}%.`, 'success');
   }
   // Focus slots from milestones (additive)
   if (capability.effects?.focusSlots) {
     gameState.focusSlots += capability.effects.focusSlots;
-    addNewsItem(`AI OPERATIONS: Organizational capacity expanded \u2014 ${gameState.focusSlots} focus slots.`, 'success');
   }
 
   // Trigger news
@@ -285,14 +286,13 @@ export function checkFundraiseGates() {
         state.unlockTime = gameState.timeElapsed;
         state.startingMultiplier = getFundraiseMultiplier(roundId);
         state.currentMultiplier = state.startingMultiplier;
-        addNewsItem(`INVESTMENT: ${round.name} round available.`, 'info');
         notifyFundraiseAvailable(roundId);
       }
     } else {
       // Gate open — close if revenue drops below 90% of threshold
       if (minRevenue > 0 && currentRevenue < minRevenue * 0.9) {
         state.available = false;
-        addNewsItem(`INVESTMENT: ${round.name} \u2014 investors pulling back. Revenue too low.`, 'warning');
+        addNewsItem(`Finance: ${round.name} investors retreat, citing insufficient revenue`, 'warning');
       }
     }
   }

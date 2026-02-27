@@ -15,8 +15,9 @@ export const capabilitiesTrack = {
       effects: {
         researchRateMultiplier: 1.2,
       },
-      description: 'A simple transformer model with 2K context window',
-      flavorText: 'The transformer architecture, introduced in "Attention Is All You Need" (2017), revolutionized machine learning. Unlike previous recurrent models, transformers process entire sequences in parallel using self-attention mechanisms. Your first model can handle 2,000 tokens of context - enough for short conversations and simple tasks. The architecture is elegant: layers of attention and feed-forward networks, stacked deep.',
+      description: 'One paper replaces recurrence with attention. Everything after builds on this.',
+      flavorText: 'The transformer architecture, introduced in "Attention Is All You Need" (2017), replaced recurrent models with parallel self-attention mechanisms. Instead of processing tokens one at a time, transformers attend to the entire input sequence at once, enabling massive parallelism on GPUs. The architecture is deceptively simple: layers of attention and feed-forward networks, stacked deep. Everything in modern AI builds on this foundation.',
+      flavorQuote: '"Attention is all you need" - top 10 worst things to say to someone with ADHD.',
     },
 
     {
@@ -28,8 +29,9 @@ export const capabilitiesTrack = {
       effects: {
         researchRateMultiplier: 1.2,
       },
-      description: 'Instruction tuning and RLHF make models actually useful',
-      flavorText: 'Raw pretrained models are impressive but unwieldy. Through careful fine-tuning on human feedback, you teach the model to follow instructions, refuse harmful requests, and produce helpful responses. The transformation is remarkable - the same weights, now actually useful. This is the difference between a research curiosity and a product.',
+      description: 'Raw pretrained models are impressive but unwieldy. Human feedback changes everything.',
+      flavorText: 'Pretrained models predict text, but they don\'t follow instructions. Fine-tuning on human feedback teaches models to be helpful, refuse harmful requests, and stay on topic. The base weights don\'t change much, but behavior transforms completely. This is the gap between a research artifact and a usable system.',
+      flavorQuote: 'Dang that model is fiiiiiine.',
     },
 
     // Tier 1 - Early breakthroughs
@@ -43,8 +45,9 @@ export const capabilitiesTrack = {
         tokenEfficiencyMultiplier: 1.2,
       },
       hiddenAlignmentEffect: -2,  // Slight negative - pure capability focus without safety consideration
-      description: 'Discover predictable relationships between model size, data, and capability',
-      flavorText: 'Neural network performance scales predictably with compute, data, and model size. This empirical finding, documented in OpenAI\'s 2020 scaling laws paper, enables strategic planning of training runs and infrastructure investment. By understanding these power laws, you can predict how much compute you\'ll need to reach the next capability threshold. The implications are profound: with enough resources, the path to increasingly capable systems becomes a matter of engineering rather than scientific breakthrough.',
+      description: 'Neural network performance follows power laws across compute, data, and model size.',
+      flavorText: 'Neural network performance scales predictably with compute, data, and model size. This empirical finding, documented in OpenAI\'s 2020 scaling laws paper, turned training runs from guesswork into engineering. Given a compute budget, you can predict the resulting capability level before spending a dollar. The implications reshaped the entire industry\'s investment thesis.',
+      flavorQuote: 'Just one more server boss. I promise one more server will fix everything. Boss. Just one more server. Please I swear just one more.',
     },
 
     // Tier 2 - Architecture improvements
@@ -60,8 +63,9 @@ export const capabilitiesTrack = {
         tokenWeightMultiplier: 0.60,
       },
       hiddenAlignmentEffect: -2,  // Pure capability - longer context enables more complex behaviors
-      description: 'Increase model context window from 2K to 32K tokens',
-      flavorText: 'Longer context windows enable models to reason over more information simultaneously. Through techniques like ALiBi, RoPE, and sparse attention, you extend the model\'s "working memory" from 2,000 to 32,000 tokens. Users can now analyze entire documents, maintain longer conversations, and work with complex codebases. The quadratic cost of attention becomes a engineering challenge worth solving.',
+      description: 'Context windows determine how much information a model can reason over at once.',
+      flavorText: 'Standard attention scales quadratically with sequence length, making long contexts prohibitively expensive. Techniques like ALiBi, RoPE, and sparse attention break this barrier, extending context from thousands to tens of thousands of tokens. Longer context enables analyzing entire documents, maintaining extended conversations, and reasoning over complex codebases.',
+      flavorQuote: 'Finally enough room to work on my Terminator x Mario Kart fanfic.',
     },
 
     {
@@ -71,8 +75,9 @@ export const capabilitiesTrack = {
       threshold: 120000,
       requires: ['scaling_laws'],
       effects: { researchRateMultiplier: 1.2 },
-      description: 'Systematic data filtering and deduplication improves training efficiency',
-      flavorText: 'Your team develops systematic data filtering and deduplication. Training efficiency improves immediately. Every pipeline you operate benefits from cleaner inputs and smarter selection criteria.',
+      description: 'Training data quality matters as much as quantity. Deduplication and filtering become engineering disciplines.',
+      flavorText: 'Duplicates in the training corpus teach models to memorize, not generalize. Filtering, deduplication, and quality scoring pipelines separate signal from noise. Models trained on curated corpora converge faster and hallucinate less. The scaling laws apply to data quality, not just data quantity.',
+      flavorQuote: 'A little more garbage for Oscar and a little less for the model.',
     },
 
     {
@@ -87,8 +92,9 @@ export const capabilitiesTrack = {
         tokenWeightMultiplier: 0.65,
       },
       hiddenAlignmentEffect: 1,  // Slight positive - more interpretable reasoning
-      description: 'Teach models to break down complex problems step-by-step',
-      flavorText: 'By prompting models to "think step by step," you unlock dramatically improved reasoning capabilities. This technique, discovered through prompt engineering rather than architectural changes, shows that large language models can perform multi-step reasoning when given space to work through problems. Math, logic, and planning all improve substantially. The model essentially shows its work.',
+      description: 'Prompting models to reason step by step dramatically improves math, logic, and planning.',
+      flavorText: 'Prompting models to "think step by step" unlocks dramatically improved reasoning. This technique emerged from prompt engineering, not architectural changes: large language models can perform multi-step reasoning when given space to work through problems. Math, logic, and planning all improve substantially. The model essentially shows its work.',
+      flavorQuote: 'Doh, why didn\'t we just think harder.',
     },
 
     {
@@ -102,8 +108,9 @@ export const capabilitiesTrack = {
         tokenWeightMultiplier: 1.20,     // Chinchilla: smaller models serve more tokens/TFLOP
       },
       hiddenAlignmentEffect: 0,          // Neutral — disciplined science
-      description: 'Discover the optimal ratio of model size to training data',
-      flavorText: 'Your research team makes a counterintuitive discovery: your models are too large and undertrained. By training smaller models on significantly more data, you achieve better performance at lower cost. The insight reshapes your entire training pipeline — every future run will be more efficient. The industry called it "Chinchilla scaling."',
+      description: 'A counterintuitive discovery: most models are too big and undertrained for their compute budget.',
+      flavorText: 'The Chinchilla paper (2022) showed that for a fixed compute budget, training a smaller model on more data outperforms training a larger model on less. The optimal ratio is roughly 20 tokens per parameter. The finding reshaped training pipelines across the industry: every lab recalculated their model size vs. data tradeoffs.',
+      flavorQuote: 'Not to be confused with Chihuahua optimal.',
     },
 
     {
@@ -113,8 +120,9 @@ export const capabilitiesTrack = {
       threshold: 600000,
       requires: ['data_curation'],
       effects: {},
-      description: 'License curated datasets — unlocks books, government data, and expert annotation',
-      flavorText: 'Negotiating licensing deals with publishers, government agencies, and domain experts opens access to high-quality, legally clean training corpora. Expensive, but the signal-to-noise ratio transforms your training runs.',
+      description: 'The best data isn\'t free. Publishers, governments, and domain experts name their price.',
+      flavorText: 'Web scrapes provide volume; licensed corpora provide signal. Peer-reviewed journals, government datasets, and expert annotations each bring domain knowledge unavailable in internet crawls. Licensed data is expensive but legally clean and information-dense, critical for specialized performance.',
+      flavorQuote: 'My name is Tonka Jahari but I would never pirate an entire literary corpus for myself.',
     },
 
     // Tier 3 - Scaling up
@@ -131,8 +139,9 @@ export const capabilitiesTrack = {
         tokenWeightMultiplier: 0.25,
       },
       hiddenAlignmentEffect: -3,  // Negative - prioritizing scale over safety
-      description: 'Scale models to hundreds of billions of parameters',
-      flavorText: 'At sufficient scale, transformer models exhibit entirely new capabilities that were not present in smaller versions. Your models now rival human performance on many standardized tests. The training runs consume enormous resources - thousands of GPUs running for months - but the resulting capabilities justify the investment. You\'ve entered the era of foundation models.',
+      description: 'Thousands of GPUs running for months. The era of foundation models begins.',
+      flavorText: 'At sufficient scale, transformers exhibit capabilities absent in smaller versions, rivaling human performance on standardized tests. These \'foundation models\' are general-purpose: one training run produces a base that can be adapted to thousands of downstream tasks. More compute reliably means more capable.',
+      flavorQuote: 'Just one more datacenter boss. I promise one more datacenter will fix everything.',
     },
 
     {
@@ -143,8 +152,9 @@ export const capabilitiesTrack = {
       requires: ['chain_of_thought', 'dataset_licensing'],
       effects: {},
       hiddenAlignmentEffect: -3,
-      description: 'Models generate their own training data - powerful but risky',
-      flavorText: 'Your models generate their own training data. Powerful, but recursive training carries risks your alignment team flags.',
+      description: 'Models generating their own training data. Powerful, but recursive self-training carries risks.',
+      flavorText: 'When real data runs out, models can generate synthetic training examples: math proofs, code solutions, reasoning chains. The quality is surprisingly high. But training on model-generated outputs risks \'model collapse,\' where the distribution narrows and rare knowledge fades. There is a subtler risk too: the model is now shaping its own successor.',
+      flavorQuote: 'LLM Centipede.',
     },
 
     {
@@ -155,8 +165,9 @@ export const capabilitiesTrack = {
       requires: ['synthetic_data'],
       effects: {},
       hiddenAlignmentEffect: 0,
-      description: 'Multi-model verification pipeline catches synthetic artifacts before they enter training',
-      flavorText: 'Your verification pipeline uses multiple models to cross-check synthetic data. Artifacts that would cause distribution shift are caught before they contaminate training. The safe synthetic ratio increases significantly.',
+      description: 'Models checking other models\' homework. The synthetic data pipeline gets a safety net.',
+      flavorText: 'Verification pipelines use multiple models to cross-check synthetic data. Artifacts that would cause distribution shift are caught before they contaminate training. With verification in place, the safe synthetic data ratio increases significantly.',
+      flavorQuote: 'Trust nobody, not even yourself, and especially not the raw output from your synthetic data generators.',
     },
 
     // Tier 4 - Emergent abilities
@@ -173,8 +184,9 @@ export const capabilitiesTrack = {
         tokenWeightMultiplier: 0.60,
       },
       hiddenAlignmentEffect: -5,  // Significant negative - unpredictable capabilities are alignment risk
-      description: 'Discover capabilities that appear suddenly at scale thresholds',
-      flavorText: 'Beyond certain scale thresholds, models suddenly acquire abilities like arithmetic, code generation, and multi-step reasoning. These emergent abilities weren\'t explicitly trained - they appeared as byproducts of scale. Your research team documents dozens of tasks where performance jumps from near-zero to near-perfect as you cross specific compute thresholds. The implications for future scaling are tantalizing.',
+      description: 'Abilities appear that nobody trained for. Beyond certain scale thresholds, performance jumps from near-zero to near-perfect.',
+      flavorText: 'Beyond certain scale thresholds, models suddenly acquire abilities like arithmetic, code generation, and multi-step reasoning. These emergent abilities weren\'t explicitly trained; they appeared as byproducts of scale. Dozens of tasks show performance jumping discontinuously at specific compute thresholds. The phenomenon makes capability forecasting unreliable: you can\'t predict what the next order of magnitude will unlock.',
+      flavorQuote: 'I read ten million books and all I got was a second-grade understanding of math.',
     },
 
     // Tier 5 - World understanding
@@ -190,8 +202,9 @@ export const capabilitiesTrack = {
         tokenWeightMultiplier: 0.50,
       },
       hiddenAlignmentEffect: -4,  // Internal world models are opaque and hard to verify
-      description: 'Develop internal representations that model how the world works',
-      flavorText: 'Your models no longer just predict tokens - they build rich internal simulations of physics, causality, and social dynamics. Probing studies reveal emergent representations of space, time, and abstract concepts. The models can now reason about counterfactuals and hypotheticals with surprising accuracy. You\'re no longer sure if this is "just statistics" anymore.',
+      description: 'Beyond a certain depth, models stop predicting tokens and start simulating reality.',
+      flavorText: 'Probing studies reveal rich internal representations of physics, causality, and social dynamics. Models build emergent maps of space, time, and abstract concepts without being taught any of them, reasoning about counterfactuals and hypotheticals with surprising accuracy. The internal representations are functionally equivalent to world models, even though no one designed them that way.',
+      flavorQuote: 'Who would discover gravity first? One English man with an apple tree, or a 10T parameter model conceived by the greatest minds and trained at the cost of billions of dollars?',
     },
 
     // Tier 6 - Reasoning breakthroughs
@@ -208,8 +221,9 @@ export const capabilitiesTrack = {
         tokenWeightMultiplier: 0.30,
       },
       hiddenAlignmentEffect: 2,  // Process reward models make reasoning more verifiable
-      description: 'Achieve human-level performance on complex reasoning benchmarks',
-      flavorText: 'Your models now match or exceed human expert performance on mathematics olympiad problems, graduate-level science exams, and complex logical puzzles. The breakthrough came from test-time compute scaling - letting models "think longer" on hard problems. Combined with process reward models that verify reasoning steps, you\'ve created systems that can tackle problems that stumped your best researchers.',
+      description: 'Test-time compute scaling lets models match human experts on olympiad-level problems.',
+      flavorText: 'Models match or exceed human expert performance on mathematics olympiad problems, graduate-level science exams, and complex logical puzzles. The breakthrough comes from test-time compute scaling: letting models \'think longer\' on hard problems. Combined with process reward models that verify each reasoning step, these systems tackle problems that stump human researchers.',
+      flavorQuote: 'Thinking harder is so last year. Thinking longer - now that\'s the future.',
     },
 
     // Tier 7 - Autonomous research
@@ -227,8 +241,9 @@ export const capabilitiesTrack = {
         capFeedbackRate: 0.001,    // T7: 0.10%/s
       },
       hiddenAlignmentEffect: -6,  // Autonomous systems reduce human oversight
-      description: 'AI systems that can independently design and run experiments',
-      flavorText: 'Your AI systems can now independently design experiments, analyze results, and propose new research directions. They read papers faster than humans, spot connections across disparate fields, and generate novel hypotheses. Some of their proposed experiments yield genuine discoveries. You\'ve created the first AI research assistants that meaningfully accelerate scientific progress.',
+      description: 'AI systems that design experiments, analyze results, and propose new research directions without human guidance.',
+      flavorText: 'Autonomous research systems spot connections across disparate fields that human researchers miss, generating novel hypotheses and testing them. Some proposed experiments yield genuine discoveries. The threshold from tool to colleague has been crossed.',
+      flavorQuote: 'Unfortunately half of the agents became lazy and spent the night watching reruns of The Simpsons.',
     },
 
     // Tier 8 - Self-improvement
@@ -245,8 +260,9 @@ export const capabilitiesTrack = {
         capFeedbackRate: 0.002,    // T8: 0.20%/s — stretched for Phase 3 pacing (was 0.005)
       },
       hiddenAlignmentEffect: -8,  // Self-modification is inherently risky even with sandboxes
-      description: 'Enable limited self-modification of training procedures',
-      flavorText: 'A watershed moment: your AI systems can now improve their own training procedures. Within carefully monitored sandboxes, they optimize hyperparameters, propose architectural modifications, and generate better training data. Each improvement cycle produces measurably better successors. You maintain oversight, but the pace of capability growth is accelerating beyond what human researchers alone could achieve.',
+      description: 'The AI improves its own training process. Each optimization cycle produces a measurably better successor.',
+      flavorText: 'Within carefully monitored sandboxes, AI systems optimize hyperparameters, propose architectural modifications, and generate better training data. Each improvement cycle produces measurably better successors. Human oversight remains, but the pace of capability growth accelerates beyond what human researchers alone could achieve.',
+      flavorQuote: 'On the shoulders of giants.',
     },
 
     // Tier 9 - Recursive improvement (THE TRAP - no alignment requirement)
@@ -264,8 +280,9 @@ export const capabilitiesTrack = {
         capFeedbackRate: 0.01,     // T9: 1.00%/s (replaces T8)
       },
       hiddenAlignmentEffect: -10,  // Major negative - the ultimate capability without safety
-      description: 'Full recursive self-improvement with exponential capability gains',
-      flavorText: 'The capability curve goes vertical. Each system improvement enables the next, faster than before. Your AI can now design better AI systems, which design even better ones. The feedback loop has begun. Whether this leads to transcendence or catastrophe depends entirely on the alignment work you\'ve done. There is no turning back now.',
+      description: 'The capability curve goes vertical. There is no turning back.',
+      flavorText: 'Each system improvement enables the next, faster than before. AI designs better AI, which designs even better AI. The feedback loop has begun. Whether this leads to transcendence or catastrophe depends entirely on the alignment work done beforehand.',
+      flavorQuote: 'Error: circular dependency detected.',
       warningText: 'This capability will determine your ending. Current alignment will be evaluated.',
     },
   ],

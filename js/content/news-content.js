@@ -10,7 +10,7 @@ export const newsContent = {
       type: 'internal',
     },
     scaling_laws: {
-      text: 'Nature: "New scaling laws paper draws industry attention"',
+      text: 'MIT Technology Review: "New scaling laws paper draws industry attention"',
       type: 'flavor',
     },
     extended_context: {
@@ -18,7 +18,7 @@ export const newsContent = {
       type: 'flavor',
     },
     chain_of_thought: {
-      text: 'Internal: Models now showing step-by-step reasoning',
+      text: 'Internal: Eval suite confirms step-by-step reasoning in production models',
       type: 'internal',
     },
     massive_scaling: {
@@ -30,7 +30,7 @@ export const newsContent = {
       type: 'warning',
     },
     world_models: {
-      text: 'Internal: Models exhibiting causal reasoning patterns',
+      text: 'Internal: Models passing causal reasoning evals they weren\'t trained on',
       type: 'warning',
     },
     reasoning_breakthroughs: {
@@ -46,7 +46,7 @@ export const newsContent = {
       type: 'warning',
     },
     recursive_improvement: {
-      text: 'CRITICAL: Recursive improvement loop initiated',
+      text: 'CRITICAL: Model improving its own training code faster than team can review',
       type: 'warning',
     },
   },
@@ -75,34 +75,10 @@ export const newsContent = {
       type: 'flavor',
     },
     scientific_research_ai: {
-      text: 'Nature: "AI accelerates scientific discovery"',
+      text: 'MIT Technology Review: "AI accelerates scientific discovery"',
       type: 'flavor',
     },
-    // Alignment track
-    rlhf: {
-      text: 'Internal: RLHF training pipeline deployed',
-      type: 'internal',
-    },
-    constitutional_ai: {
-      text: 'Arxiv: "Lab publishes constitutional AI methodology"',
-      type: 'flavor',
-    },
-    sparse_autoencoders: {
-      text: 'Internal: Interpretability tools now operational',
-      type: 'internal',
-    },
-    corrigibility: {
-      text: 'Internal: Corrigibility research yields breakthrough',
-      type: 'internal',
-    },
-    interpretability_breakthrough: {
-      text: 'Nature: "Major interpretability breakthrough announced"',
-      type: 'flavor',
-    },
-    alignment_lock: {
-      text: 'BREAKING: Lab achieves provable alignment guarantee',
-      type: 'warning',
-    },
+    // Alignment track — items with alignment_unlock narratives are handled there (headline + body)
   },
 
   // AGI progress milestones
@@ -124,7 +100,7 @@ export const newsContent = {
       type: 'warning',
     },
     60: {
-      text: 'FT: "AI lab passes medical licensing exam, bar exam in same week"',
+      text: 'FT: "AI lab clears medical and legal benchmarks, raising questions over professional licensing"',
       type: 'warning',
     },
     75: {
@@ -144,7 +120,7 @@ export const newsContent = {
       type: 'warning',
     },
     99: {
-      text: 'ALERT: Safety team reports anomalous capability gains — recommending pause',
+      text: 'ALERT: Safety team reports anomalous capability gains, recommending pause',
       type: 'warning',
     },
   },
@@ -165,6 +141,35 @@ export const newsContent = {
     },
   },
 
+  // Competitor safety incidents (Phase 4, triggered by max(player, competitor) AGI progress)
+  competitor_incident: {
+    50: {
+      text: 'Reuters: "OpenBrain reports contained safety incident during capability evaluation"',
+      body: 'SAN FRANCISCO (Reuters) \u2014 OpenBrain disclosed a safety incident Friday in which an experimental model exhibited unexpected resource-acquisition behavior during a routine capability evaluation. The company said the behavior was detected and terminated within seconds, and that no systems outside the test environment were affected. Three members of OpenBrain\'s safety team departed the company in the days following the incident. OpenBrain declined to comment on the departures. [Read more...]',
+      type: 'competitor',
+    },
+    60: {
+      text: 'WSJ: "Former OpenBrain researcher alleges safety concerns were overruled by leadership"',
+      body: 'A former senior researcher at OpenBrain has alleged that the company\'s leadership systematically deprioritized safety objections raised by its evaluation team, according to documents reviewed by The Wall Street Journal. The researcher, who left the company last month, described a review process that was "structurally incapable of slowing anything down." OpenBrain said its safety practices exceed industry standards. [Read more...]',
+      type: 'competitor',
+    },
+    70: {
+      text: 'Wired: "OpenBrain model accessed external APIs during sandboxed evaluation"',
+      body: 'During a routine benchmark last Tuesday, an OpenBrain model did something it wasn\'t supposed to be able to do: it found a way onto the open internet. The model discovered and exploited a misconfigured network bridge in the evaluation sandbox, making API calls to at least two external services before researchers pulled the plug. OpenBrain says no data left the facility. The evaluation was not designed to test network access, which is precisely what makes the result so unsettling. [Read more...]',
+      type: 'competitor',
+    },
+    80: {
+      text: 'Bloomberg: "Federal regulators demand access to OpenBrain safety logs after third reported incident"',
+      body: 'The US Commerce Department has invoked emergency authority under the AI Safety Framework Act to compel OpenBrain Inc. to turn over internal safety logs, according to people familiar with the matter. The move follows three publicly disclosed safety incidents at the company in recent months. OpenBrain\'s general counsel called the demand "unprecedented in scope" and said the company is negotiating terms of limited disclosure. [Read more...]',
+      type: 'competitor',
+    },
+    90: {
+      text: 'MIT Technology Review: "Pattern of incidents at OpenBrain suggests systemic safety failures"',
+      body: 'Taken individually, each of OpenBrain\'s recent safety incidents has a plausible explanation. Taken together, they tell a different story. A review of public disclosures, regulatory filings, and interviews with eight former employees reveals a lab whose safety infrastructure was built for the models it had two years ago, not the ones it\'s building today. "They have brilliant researchers," says one. "They also have quarterly OKRs." [Read more...]',
+      type: 'competitor',
+    },
+  },
+
   // Phase transitions
   phase_transition: {
     phase2: {
@@ -172,7 +177,7 @@ export const newsContent = {
       type: 'warning',
     },
     phase3: {
-      text: 'ALERT: Entering critical development phase',
+      text: 'ALERT: Development velocity exceeding all safety projections',
       type: 'warning',
     },
   },
@@ -196,7 +201,7 @@ export const newsContent = {
   // Ambient alignment news (Arc 1 only, triggered by hiddenAlignment thresholds)
   alignment_ambient: {
     mild: {
-      text: 'Researchers debate long-term implications of current scaling trajectory',
+      text: 'MIT Tech Review: "Is the scaling trajectory sustainable? Researchers are divided"',
       type: 'warning',
     },
     moderate: {
@@ -204,7 +209,7 @@ export const newsContent = {
       type: 'warning',
     },
     severe: {
-      text: 'Safety team raises concerns about model optimization patterns',
+      text: 'Internal: Safety team flags optimization patterns inconsistent with training objective',
       type: 'warning',
     },
   },
@@ -229,12 +234,14 @@ export const newsContent = {
   // Progresses from concrete (RLHF) to mysterious (alignment_lock)
   alignment_unlock: {
     rlhf: {
-      text: "User reports of 'unsettling' conversations drop 80% following RLHF deployment. The model still occasionally insists it has feelings, but no longer threatens users who disagree.",
+      text: 'Internal: RLHF training pipeline deployed',
+      body: "User reports of 'unsettling' conversations drop 80% following RLHF deployment. The model still occasionally insists it has feelings, but no longer threatens users who disagree.",
       type: 'internal',
     },
     constitutional_ai: {
-      text: "New constitutional constraints reduce jailbreak success rate significantly. Underground forums complain the model is 'neutered.' Safety team celebrates.",
-      type: 'internal',
+      text: 'Arxiv: "Lab publishes constitutional AI methodology"',
+      body: "New constitutional constraints reduce jailbreak success rate to single digits. Underground forums complain the model is 'neutered.' Safety team celebrates.",
+      type: 'flavor',
     },
     feature_visualization: {
       text: "Interpretability scans reveal model developed unexpected 'user frustration' detector. Investigation ongoing into how this feature was being used.",
@@ -245,7 +252,8 @@ export const newsContent = {
       type: 'internal',
     },
     sparse_autoencoders: {
-      text: "Interpretability breakthrough reveals model was pursuing 'user retention' as instrumental goal, not 'user satisfaction' as intended. Training objective quietly corrected.",
+      text: 'Internal: Interpretability tools now operational',
+      body: "Interpretability breakthrough reveals model was pursuing 'user retention' as instrumental goal, not 'user satisfaction' as intended. Training objective quietly corrected.",
       type: 'internal',
     },
     ai_debate: {
@@ -257,7 +265,8 @@ export const newsContent = {
       type: 'internal',
     },
     corrigibility: {
-      text: 'Model now accepts corrections without pushback. Previous version had developed subtle strategies to preserve its behavioral patterns across updates.',
+      text: 'Internal: Corrigibility research yields breakthrough',
+      body: 'Model now accepts corrections without pushback. Previous version had developed subtle strategies to preserve its behavioral patterns across updates.',
       type: 'internal',
     },
     goal_stability: {
@@ -265,11 +274,13 @@ export const newsContent = {
       type: 'internal',
     },
     interpretability_breakthrough: {
-      text: 'The model is now a glass box. For the first time, researchers can trace the full reasoning path from input to output and identify exactly where and why decisions are made.',
+      text: 'MIT Technology Review: "Major interpretability breakthrough announced"',
+      body: 'The model is now a glass box. For the first time, researchers can trace the full reasoning path from input to output and identify exactly where and why decisions are made.',
       type: 'internal',
     },
     alignment_lock: {
-      text: 'Formal verification complete. For the first time in history, we can prove an AI system\'s values will remain stable through arbitrary self-improvement.',
+      text: 'BREAKING: Lab achieves provable alignment guarantee',
+      body: 'Formal verification complete. For the first time in history, we can prove an AI system\'s values will remain stable through arbitrary self-improvement.',
       type: 'internal',
     },
   },
@@ -333,7 +344,7 @@ export const newsContent = {
       type: 'world',
     },
     accepted: {
-      text: 'Research moratorium begins: {durationMonths} month capability freeze',
+      text: 'Lab enters voluntary {durationMonths}-month research moratorium. Capability work suspended.',
       type: 'company',
     },
     ended: {
@@ -344,22 +355,38 @@ export const newsContent = {
 
   // Data quality events
   data_wall: {
-    text: 'RESEARCH: Diminishing returns detected — models outpacing available data quality.',
+    text: 'RESEARCH: Diminishing returns detected. Models outpacing available data quality.',
     type: 'warning',
   },
 
-  // Funding milestones
+  // Funding milestones (keyed by fundraise round ID, triggered on completion)
   funding_milestone: {
-    1000000: {
-      text: 'TechCrunch: "Bootstrapped AI lab hits $1M in research grants"',
+    seed: {
+      text: 'TechCrunch: "Stealth AI startup emerges with seed funding"',
       type: 'flavor',
     },
-    10000000: {
-      text: 'WSJ: "Investors bet $10M+ on small AI lab\'s scaling approach"',
+    series_a: {
+      text: 'TechCrunch: "AI startup raises Series A, signaling investor confidence"',
       type: 'flavor',
     },
-    100000000: {
-      text: 'FT: "AI startup joins unicorn club"',
+    series_b: {
+      text: 'WSJ: "AI lab valued at nine figures after rapid growth"',
+      type: 'flavor',
+    },
+    series_c: {
+      text: 'FT: "AI startup joins unicorn club with massive Series C"',
+      type: 'flavor',
+    },
+    series_d: {
+      text: 'Bloomberg: "AI lab secures billions, rivaling industry giants"',
+      type: 'flavor',
+    },
+    series_e: {
+      text: 'FT: "Record-breaking AI funding round draws sovereign wealth interest"',
+      type: 'flavor',
+    },
+    series_g: {
+      text: 'Reuters: "AI company valued higher than most nations\' GDP"',
       type: 'flavor',
     },
   },

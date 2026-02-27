@@ -229,10 +229,10 @@ const ACTIVITY_TOOLTIPS = {
     html += '<div class="tooltip-section">';
     html += '<div class="tooltip-row dim"><span>Type: Buildup (grows while idle)</span></div>';
     html += '<div class="tooltip-row"><span>Build relationships with investors to improve your next fundraise.</span></div>';
-    html += `<div class="tooltip-row"><span>Fundraise bonus</span><span>+${formatFunding(computed.irFundraiseBonus)} / ${formatFunding(computed.irFundraiseCap || 0)}</span></div>`;
-    const multBonus = computed.irMultipleBonus || 0;
-    if (multBonus > 0.01) {
-      html += `<div class="tooltip-row"><span>Revenue multiple bonus</span><span>+${multBonus.toFixed(1)}x</span></div>`;
+    html += `<div class="tooltip-row"><span>Fixed fundraise bonus</span><span>+${formatFunding(computed.irFundraiseBonus)} / ${formatFunding(computed.irFundraiseCap || 0)}</span></div>`;
+    const multFrac = computed.irMultFraction || 0;
+    if (multFrac > 0.001) {
+      html += `<div class="tooltip-row"><span>Revenue multiple bonus</span><span>+${Math.round(multFrac * 100)}% of multiplier</span></div>`;
     }
     html += '<div class="tooltip-row dim"><span>Resets after completing a fundraise</span></div>';
     html += buildupTimeEstimate('ir', computed) || '';

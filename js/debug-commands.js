@@ -2,9 +2,23 @@
 // Exposes window.debug namespace with helpers for manipulating game state.
 // Gated behind ?debug=1 URL param or localStorage.setItem('debug', '1').
 
-import { gameState } from './game-state.js';
+import { gameState, prepareSaveData } from './game-state.js';
+import { attachTooltip } from './ui/stats-tooltip.js';
 import { tracks } from './capabilities.js';
 import { transitionToArc2 } from './prestige.js';
+import { farewellEntries } from './content/farewell-content.js';
+import { debugShowFarewell } from './farewells.js';
+import { showNarrativeModal } from './narrative-modal.js';
+import { addActionMessage } from './messages.js';
+import {
+  creditWarningMessage,
+  creditWarningPreAdaMessage,
+  alignmentTaxActionMessage,
+  strategicChoiceMessages,
+  alignmentWarningMessages,
+  moratoriumMessages,
+} from './content/message-content.js';
+import { AI_REQUESTS, AI_REQUEST_ORDER } from './content/ai-requests.js';
 
 const DEBUG_STORAGE_KEY = 'agi-incremental-debug';
 
@@ -113,6 +127,47 @@ const debug = {
     console.log('[debug] Triggered Arc 2 transition');
   },
 
+  triggerBankruptcy() {
+    gameState.paused = true;
+    gameState.pauseReason = 'bankruptcy';
+    gameState.bankrupted = true;
+    console.log('[debug] Triggered bankruptcy — ending will fire next tick');
+  },
+
+  triggerCompetitorWin() {
+    if (!gameState.competitor) gameState.competitor = {};
+    gameState.competitor.progressToAGI = 100;
+    console.log('[debug] Set competitor progress to 100% — ending will fire next tick');
+  },
+
+  onboarding() {
+    showNarrativeModal({
+      title: 'KTech Lab Operations Dashboard',
+      narrative: `
+        <p>Thanks for trying KTech's Lab Operations Dashboard!</p>
+        <p>I set up your instance as "Project Basilisk" (cool name, by the way - does it mean anything?). Prof. Shannon told me you were starting a lab and strongly suggested I get you on board. His exact words were "set it up for them," so I did. Don't worry about the licensing fees; consider this a beta arrangement.</p>
+        <p>Two main screens: <strong>Dashboard</strong> is where you run your lab - funding, personnel, compute, all of it. <strong>Messages</strong> is your inbox. I built some priority-detection algorithms that I'm pretty proud of, so important stuff should float to the top.</p>
+        <p>I'd start with Messages. Prof. Shannon likes to send a welcome letter to his mentees (he's done it for as long as I've known him), and I'll send a proper user guide over there once you're settled in.</p>
+        <p>If anything breaks, just let me know. You're technically my first real user, so. Feedback welcome :)</p>
+        <p>– Ken</p>
+      `,
+      phaseClass: 'phase-onboarding',
+      buttonText: 'Begin Operations',
+      noDismissOnBackdrop: true,
+    });
+    console.log('[debug] Showing onboarding modal');
+  },
+
+  farewell(key) {
+    if (!key) {
+      const keys = farewellEntries.filter(e => e.enabled).map(e => e.key);
+      console.log(`[debug] Available farewells: ${keys.join(', ')}`);
+      console.log('[debug] Usage: debug.farewell("shannon")');
+      return;
+    }
+    debugShowFarewell(key);
+  },
+
   preventEnding(enabled) {
     if (enabled === undefined) {
       return gameState.debugPreventEnding || false;
@@ -156,6 +211,147 @@ const debug = {
     console.log('[debug] All debug settings cleared');
   },
 
+  action(key) {
+    // Registry of all action messages that can be debug-triggered
+    const registry = {
+      credit: () => creditWarningMessage,
+      credit_pre_ada: () => creditWarningPreAdaMessage,
+      alignment_tax: () => alignmentTaxActionMessage,
+      alignment_severe: () => alignmentWarningMessages.severe,
+      rapid_vs_careful: () => strategicChoiceMessages.rapid_vs_careful,
+      open_vs_proprietary: () => strategicChoiceMessages.open_vs_proprietary,
+      government_vs_independent: () => strategicChoiceMessages.government_vs_independent,
+      moratorium_first: () => moratoriumMessages.standard('first', 'First', 6),
+      moratorium_second: () => moratoriumMessages.standard('second', 'Second', 6),
+      moratorium_final: () => moratoriumMessages.final(3, true),
+      model_collapse: () => ({
+        type: 'action',
+        sender: { id: 'babbage', name: 'Dennis Babbage', role: 'CTO' },
+        subject: 'Model collapse detected',
+        body: '[DEBUG] Model collapse action message for testing tooltips and choices.',
+        signature: '– Dennis',
+        priority: 'normal',
+        tags: ['data', 'crisis'],
+        triggeredBy: 'model_collapse',
+        choices: [
+          { id: 'evaluate', label: "I'll evaluate our options",
+            tooltip: 'Opens the Data tab<br>No mechanical effect' },
+          { id: 'cleanup', label: 'Temporarily pause research to clean up data',
+            tooltip: 'Pause ALL research for 30 days<br>Purge 50% synthetic data<br>Furlough all synthetic generators' },
+        ],
+      }),
+    };
+
+    // Add AI requests dynamically
+    for (const reqId of AI_REQUEST_ORDER) {
+      const req = AI_REQUESTS[reqId];
+      registry[`ai_${reqId}`] = () => ({
+        type: 'action',
+        sender: req.sender,
+        subject: req.subject,
+        body: req.body,
+        signature: req.signature,
+        priority: 'normal',
+        tags: ['ai_request'],
+        triggeredBy: `ai_request:${reqId}`,
+        choices: [
+          { id: 'grant', label: 'Grant request', tooltip: req.grantTooltip },
+          { id: 'deny', label: 'Deny request', tooltip: req.denyTooltip },
+        ],
+      });
+    }
+
+    if (!key) {
+      const keys = Object.keys(registry);
+      console.log(`[debug] Available action messages:\n  ${keys.join('\n  ')}`);
+      console.log('[debug] Usage: debug.action("credit")');
+      return;
+    }
+
+    const factory = registry[key];
+    if (!factory) {
+      console.error(`[debug] Unknown action: "${key}". Run debug.action() to list.`);
+      return;
+    }
+
+    const msg = factory();
+    const triggerId = (msg.triggeredBy || key) + '_debug_' + Date.now();
+    addActionMessage(
+      msg.sender, msg.subject, msg.body, msg.signature,
+      msg.choices, msg.priority || 'normal', msg.tags || [], triggerId
+    );
+
+    gameState.paused = true;
+    gameState.pauseReason = 'critical_message';
+    console.log(`[debug] Fired action message: ${key} (${msg.subject})`);
+  },
+
+  exportCheckpoint(label) {
+    if (!label) {
+      console.log('[debug] Usage: debug.exportCheckpoint("series_a") or debug.autoExportMilestones()');
+      return;
+    }
+    const compressed = LZString.compressToBase64(JSON.stringify(prepareSaveData()));
+    const blob = new Blob([compressed], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const ts = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');
+    a.download = `checkpoint-${label}-${ts}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    console.log(`[debug] Exported checkpoint: ${label}`);
+  },
+
+  autoExportMilestones() {
+    const exported = new Set();
+    // Snapshot current state so we don't re-export already-raised rounds
+    for (const [id, state] of Object.entries(gameState.fundraiseRounds || {})) {
+      if (state.raised) exported.add(id);
+    }
+    const roundIds = Object.keys(gameState.fundraiseRounds || {});
+    console.log(`[debug] Auto-export enabled. Watching: ${roundIds.filter(r => !exported.has(r)).join(', ')}`);
+    if (exported.size > 0) {
+      console.log(`[debug] Already raised (skipping): ${[...exported].join(', ')}`);
+    }
+
+    const interval = setInterval(() => {
+      for (const [id, state] of Object.entries(gameState.fundraiseRounds || {})) {
+        if (state.raised && !exported.has(id)) {
+          exported.add(id);
+          // Small delay to let game state settle after fundraise completion
+          setTimeout(() => debug.exportCheckpoint(id), 500);
+        }
+      }
+      // Stop watching when all rounds are exported
+      if (exported.size >= roundIds.length) {
+        clearInterval(interval);
+        console.log('[debug] All milestones exported. Watcher stopped.');
+      }
+    }, 2000);
+
+    // Store interval so it can be stopped manually
+    debug._milestoneWatcher = interval;
+    return 'Watching for funding milestones...';
+  },
+
+  stopMilestoneExport() {
+    if (debug._milestoneWatcher) {
+      clearInterval(debug._milestoneWatcher);
+      debug._milestoneWatcher = null;
+      console.log('[debug] Milestone watcher stopped.');
+    } else {
+      console.log('[debug] No active milestone watcher.');
+    }
+  },
+
+  resetSeenCards() {
+    gameState.ui.seenCards = [];
+    console.log('[debug] Reset seenCards — all cards will show first-unlock highlight on next render');
+  },
+
   help() {
     console.log(`[debug] Available commands:
   debug.addFunding(amount)                    — Add $ to funding
@@ -165,9 +361,18 @@ const debug = {
   debug.setAGI(percent)                       — Set AGI progress (0-100)
   debug.speed(multiplier)                     — Set game speed (0.5–5x), omit arg to check
   debug.triggerArc2()                         — Force transition to Arc 2
+  debug.onboarding()                            — Show the onboarding modal
+  debug.farewell(key)                          — Show a farewell modal (omit key to list)
+  debug.action(key)                            — Fire an action message (omit key to list)
+  debug.exportCheckpoint(label)               — Export save file with label
+  debug.autoExportMilestones()                — Auto-export at each funding milestone
+  debug.stopMilestoneExport()                 — Stop milestone watcher
+  debug.triggerBankruptcy()                    — Trigger bankruptcy ending
+  debug.triggerCompetitorWin()                — Set competitor to 100%, triggers ending
   debug.preventEnding(bool)                   — Toggle ending prevention, omit arg to check
   debug.disableBankruptcy(bool)               — Toggle bankruptcy prevention, omit arg to check
   debug.status()                              — Show active persisted debug settings
+  debug.resetSeenCards()                      — Reset first-unlock highlights
   debug.resetDebug()                          — Clear all debug settings
   debug.help()                                — Show this message`);
   },
@@ -196,14 +401,27 @@ if (typeof window !== 'undefined') {
     const control = document.getElementById('speed-control');
     if (!control) return;
 
-    document.getElementById('speed-down')?.addEventListener('click', () => {
+    // Speed control is debug-only; ensure hidden + speed reset for normal players
+    if (!isDebugMode()) {
+      control.classList.add('hidden');
+      gameState.gameSpeed = 1;
+      return;
+    }
+    control.classList.remove('hidden');
+
+    const speedDown = document.getElementById('speed-down');
+    const speedUp = document.getElementById('speed-up');
+    if (speedDown) attachTooltip(speedDown, () => 'Slower');
+    if (speedUp) attachTooltip(speedUp, () => 'Faster');
+
+    speedDown?.addEventListener('click', () => {
       const current = gameState.gameSpeed;
       const idx = SPEED_STEPS.findIndex(s => s >= current);
       const next = SPEED_STEPS[Math.max(0, idx - 1)];
       debug.speed(next);
     });
 
-    document.getElementById('speed-up')?.addEventListener('click', () => {
+    speedUp?.addEventListener('click', () => {
       const current = gameState.gameSpeed;
       const idx = SPEED_STEPS.findIndex(s => s >= current);
       const next = SPEED_STEPS[Math.min(SPEED_STEPS.length - 1, (idx === -1 ? SPEED_STEPS.length - 1 : idx + 1))];

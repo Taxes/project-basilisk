@@ -2,7 +2,6 @@
 // Inline automation controls for purchase cards.
 // Simplified TF Titans-style: [checkbox] Auto [input] [policy dropdown]
 
-import { gameState } from '../game-state.js';
 import { getPurchasableById } from '../content/purchasables.js';
 import {
   POLICY_TYPES,
@@ -17,6 +16,7 @@ import {
 import { formatDuration } from '../utils/format.js';
 import { el, enhanceInput } from '../utils/dom.js';
 import { logAutomationPolicy } from '../playtest-logger.js';
+import { attachTooltip } from './stats-tooltip.js';
 import { getCount, getPurchasableState } from '../purchasable-state.js';
 
 // Create automation panel for a purchasable card
@@ -87,7 +87,7 @@ export function createAutomationPanel(purchasableId) {
   // Priority input (1-9, lower = higher priority)
   const priorityInput = el('input', {
     className: 'automation-input automation-priority-input',
-    attrs: { type: 'text', inputmode: 'numeric', title: 'Priority (1-9, lower = higher priority)' },
+    attrs: { type: 'text', inputmode: 'numeric' },
   });
   priorityInput.value = automation.priority || 1;
   enhanceInput(priorityInput);
@@ -101,6 +101,7 @@ export function createAutomationPanel(purchasableId) {
     logAutomationPolicy(purchasableId, automation, automation.enabled);
   });
   controlRow.appendChild(priorityInput);
+  attachTooltip(priorityInput, () => '1 is the highest priority.');
 
   // Inline status span (after priority input, same line)
   const statusSpan = el('span', { className: 'automation-status-inline dim' });

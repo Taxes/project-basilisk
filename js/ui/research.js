@@ -25,7 +25,15 @@ import { getAllSafetyMetrics, formatAlignmentDisplay } from '../safety-metrics.j
 import { formatNumber, formatDuration, getRateUnit, formatGameDate } from '../utils/format.js';
 import { $ } from '../utils/dom-cache.js';
 import { el } from '../utils/dom.js';
-import { registerUpdate, EVERY_TICK, FAST, SLOW } from './scheduler.js';
+import { registerUpdate, EVERY_TICK, SLOW } from './scheduler.js';
+import { attachTooltip } from './stats-tooltip.js';
+
+function recordFlavorDiscovery(id) {
+  const discovered = gameState.ui.discoveredFlavor;
+  if (!discovered.includes(id)) {
+    discovered.push(id);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Caches
@@ -371,23 +379,38 @@ function getAllUnlocks(capabilityOrItem) {
 }
 
 // Create a toggleable flavor text element.
-// Shows short description by default; click expands to full flavorText, click again collapses.
+// Shows description + [more] by default; click expands to show full flavorText below, click again collapses.
 function createFlavorToggle(description, flavorText) {
   const flavor = el('div', { className: 'research-flavor' });
   const hasLongVersion = flavorText && flavorText !== description;
 
-  flavor.textContent = description || flavorText || '';
-
-  if (hasLongVersion) {
-    let expanded = false;
-    flavor.style.cursor = 'pointer';
-    flavor.title = 'Click to expand';
-    flavor.addEventListener('click', () => {
-      expanded = !expanded;
-      flavor.textContent = expanded ? flavorText : description;
-      flavor.title = expanded ? 'Click to collapse' : 'Click to expand';
-    });
+  if (!hasLongVersion) {
+    flavor.textContent = description || flavorText || '';
+    return flavor;
   }
+
+  let expanded = false;
+
+  const descSpan = el('span', { text: description });
+  const moreToggle = el('span', { className: 'flavor-toggle', text: ' [more]' });
+  const expandedText = el('span', { className: 'flavor-expanded', text: ' ' + flavorText });
+  const lessToggle = el('span', { className: 'flavor-toggle', text: ' [less]' });
+  expandedText.style.display = 'none';
+  lessToggle.style.display = 'none';
+
+  flavor.appendChild(descSpan);
+  flavor.appendChild(moreToggle);
+  flavor.appendChild(expandedText);
+  flavor.appendChild(lessToggle);
+
+  const doToggle = () => {
+    expanded = !expanded;
+    expandedText.style.display = expanded ? 'inline' : 'none';
+    moreToggle.style.display = expanded ? 'none' : 'inline';
+    lessToggle.style.display = expanded ? 'inline' : 'none';
+  };
+  moreToggle.addEventListener('click', doToggle);
+  lessToggle.addEventListener('click', doToggle);
 
   return flavor;
 }
@@ -419,6 +442,10 @@ function createMilestoneCard(item) {
     etaEl.textContent = 'no allocation';
   }
 
+  const flavorEl = createFlavorToggle(item.description, item.flavorText);
+
+  const nameEl = el('span', { className: 'research-name', text: item.name });
+
   const card = el('div', {
     className: 'compact-research-card approaching',
     data: { researchId: item.id, track: item.trackId },
@@ -429,7 +456,7 @@ function createMilestoneCard(item) {
         children: [
           el('span', {
             children: [
-              el('span', { className: 'research-name', text: item.name }),
+              nameEl,
               el('span', {
                 className: `track-badge ${item.trackId}`,
                 text: TRACK_LABELS[item.trackId] || item.trackId,
@@ -443,7 +470,7 @@ function createMilestoneCard(item) {
       el('div', { className: 'milestone-bar', children: [fill] }),
       etaEl,
       // Flavor text (click to toggle between short description and full flavorText)
-      createFlavorToggle(item.description, item.flavorText),
+      flavorEl,
       // Effects
       el('div', {
         className: 'research-effects',
@@ -465,6 +492,16 @@ function createMilestoneCard(item) {
   card._fill = fill;
   card._costEl = thresholdDisplay;
   card._etaEl = etaEl;
+
+  // Flavor quote tooltip on title (desktop-only easter egg)
+  if (item.flavorQuote) {
+    nameEl.classList.add('has-flavor');
+    attachTooltip(nameEl, () => {
+      recordFlavorDiscovery(item.id);
+      return `<div class="tooltip-section"><div>"${item.flavorQuote}"</div></div>`;
+    }, { delay: 400 });
+  }
+
   card._trackId = item.trackId;
   card._threshold = item.threshold;
 
@@ -474,6 +511,7 @@ function createMilestoneCard(item) {
 // Create a completed milestone card
 function createCompletedMilestoneCard(item) {
   const effectsList = formatResearchEffects(item);
+  const nameEl = el('span', { className: 'research-name', text: item.name });
 
   const card = el('div', {
     className: 'compact-research-card completed',
@@ -485,7 +523,7 @@ function createCompletedMilestoneCard(item) {
         children: [
           el('span', {
             children: [
-              el('span', { className: 'research-name', text: item.name }),
+              nameEl,
               el('span', {
                 className: `track-badge ${item.trackId}`,
                 text: TRACK_LABELS[item.trackId] || item.trackId,
@@ -504,7 +542,17 @@ function createCompletedMilestoneCard(item) {
   });
 
   // Flavor text (click to toggle between short description and full flavorText)
-  card.appendChild(createFlavorToggle(item.description, item.flavorText || item.description));
+  const flavorEl = createFlavorToggle(item.description, item.flavorText || item.description);
+  card.appendChild(flavorEl);
+
+  // Flavor quote tooltip on title (desktop-only easter egg)
+  if (item.flavorQuote) {
+    nameEl.classList.add('has-flavor');
+    attachTooltip(nameEl, () => {
+      recordFlavorDiscovery(item.id);
+      return `<div class="tooltip-section"><div>"${item.flavorQuote}"</div></div>`;
+    }, { delay: 400 });
+  }
 
   // Effects
   card.appendChild(el('div', {

@@ -17,8 +17,9 @@ export const alignmentTrack = {
         researchRateMultiplier: 1.1,
       },
       hiddenAlignmentEffect: 2,
-      description: 'Reinforcement Learning from Human Feedback to improve model alignment',
-      flavorText: 'RLHF represents a paradigm shift in training AI systems. Instead of solely learning from static datasets, models learn from human preferences about which responses are better. A reward model is trained to predict human ratings, then the language model is fine-tuned to maximize this learned reward. The technique dramatically improves helpfulness while reducing harmful outputs, but it remains an imperfect approximation of human values.',
+      description: 'Train models to match human preferences instead of just predicting text.',
+      flavorText: 'Instead of learning solely from static datasets, models learn from human feedback about which outputs are better. A reward model is trained to predict human ratings, then the language model is fine-tuned to maximize this learned reward signal. The technique dramatically improves helpfulness while reducing harmful outputs, but the reward model is only an approximation of human values, and models quickly learn to exploit gaps between what humans rate highly and what is actually good.',
+      flavorQuote: 'We asked humans what "good" meant. They mostly agreed.',
     },
 
     {
@@ -33,8 +34,9 @@ export const alignmentTrack = {
         researchRateMultiplier: 1.15,
       },
       hiddenAlignmentEffect: 2,
-      description: 'Embed ethical principles directly into model training',
-      flavorText: 'Constitutional AI reduces reliance on human feedback by having models critique and revise their own outputs according to a set of principles. The model learns to ask itself: "Does this response comply with the constitution?" This self-supervision at scale creates more robust alignment while requiring less human labeling. The approach shows promise for scalable oversight as models become more capable.',
+      description: 'Give models a written set of principles and train them to self-critique against it.',
+      flavorText: 'Rather than relying on armies of human labelers for every output, models critique and revise their own responses according to a set of constitutional principles. This self-supervision scales far better than human review, and produces more consistent alignment than individual labelers with varying standards. The deeper question: can a set of rules written today anticipate the failure modes of models built tomorrow?',
+      flavorQuote: 'Rules for robots, written by robots, supervised by humans. Mostly.',
     },
 
     // Tier 2 - Interpretability basics
@@ -49,8 +51,9 @@ export const alignmentTrack = {
         interpretabilityLevel: 1,
       },
       hiddenAlignmentEffect: 3,
-      description: 'Visualize what features neural networks learn to detect',
-      flavorText: 'Through optimization techniques that generate inputs maximally activating specific neurons, researchers can finally see what patterns networks have learned. Some neurons detect edges, others respond to textures, and as you go deeper, increasingly abstract concepts emerge - faces, objects, even semantic meaning. This window into the model\'s learned representations is the foundation of interpretability research.',
+      description: 'Generate images that maximally activate specific neurons to reveal what a network has learned.',
+      flavorText: 'Optimization techniques generate synthetic inputs that maximally activate specific neurons, revealing what patterns networks have actually learned. Some neurons detect edges; others respond to textures; deeper layers encode increasingly abstract concepts like faces, objects, and semantic meaning. The results are often surprising: neurons that respond to concepts no one explicitly trained for, features that combine in ways no engineer intended. This is the foundation of interpretability research.',
+      flavorQuote: 'Neuron #4721 really likes dogs. We don\'t know why yet.',
     },
 
     {
@@ -64,8 +67,9 @@ export const alignmentTrack = {
         interpretabilityLevel: 2,
       },
       hiddenAlignmentEffect: 3,
-      description: 'Map the computational circuits within neural networks',
-      flavorText: 'Beyond individual features, the real magic happens in how they connect. Circuit analysis traces the flow of information through networks, revealing how features combine to form computations. You discover "induction heads" that perform in-context learning, and circuits that implement algorithms your researchers never explicitly programmed. Understanding these circuits is essential for predicting and controlling model behavior.',
+      description: 'Trace how information flows through a network to understand how features combine into computations.',
+      flavorText: 'Circuit analysis maps the information pathways through neural networks, revealing how individual features combine to perform computations. Researchers discover "induction heads" that perform in-context learning and circuits that implement algorithms never explicitly programmed. Understanding these computational subgraphs is essential for predicting model behavior: if you can read the wiring, you can anticipate what the system will do before it does it.',
+      flavorQuote: 'Follow the wires. The truth is in the connections.',
     },
 
     // Tier 3 - Advanced interpretability
@@ -81,8 +85,9 @@ export const alignmentTrack = {
         researchRateMultiplier: 1.2,
       },
       hiddenAlignmentEffect: 4,
-      description: 'Decompose model activations into interpretable features',
-      flavorText: 'Sparse autoencoders decompose the model\'s internal representations into thousands of interpretable features. Unlike the entangled representations in raw activations, these decomposed features often correspond to recognizable concepts: "the Golden Gate Bridge," "deceptive behavior," "mathematical reasoning." This dictionary learning approach makes previously opaque models surprisingly transparent.',
+      description: 'Decompose a model\'s internal representations into thousands of individually interpretable features.',
+      flavorText: 'Sparse autoencoders decompose entangled neural activations into thousands of interpretable features, each corresponding to a recognizable concept: "the Golden Gate Bridge," "deceptive behavior," "mathematical reasoning." Unlike raw activations where concepts are smeared across thousands of dimensions, these decomposed features can be individually named, measured, and monitored. Dictionary learning at this scale turns previously opaque models into systems where you can ask "is this feature active?" and get a meaningful answer.',
+      flavorQuote: 'Ten thousand concepts, each one nameable. The black box has windows now.',
     },
 
     // Tier 4 - Scalable oversight: Debate
@@ -96,8 +101,9 @@ export const alignmentTrack = {
         alignmentBonus: 15,
       },
       hiddenAlignmentEffect: 5,
-      description: 'Use adversarial AI debate to verify claims and reasoning',
-      flavorText: 'In AI debate, two AI systems argue opposing sides of a question while a human judges the winner. The key insight: it should be easier to identify flaws in reasoning than to generate flawless reasoning. When an AI makes a mistake or lies, the opposing AI is incentivized to expose it. This adversarial dynamic means humans can evaluate superhuman reasoning by following the debate, not by matching the AI\'s capability directly.',
+      description: 'Pit two AI systems against each other in argument while a human judges which one is lying.',
+      flavorText: 'Two AI systems argue opposing sides of a question while a human judges the winner. The key insight: it is easier to spot a flaw in someone else\'s argument than to produce flawless reasoning yourself. When one model lies or makes an error, the opposing model is incentivized to expose it. This adversarial dynamic means humans can evaluate reasoning that exceeds their own expertise by following the debate rather than independently verifying every claim.',
+      flavorQuote: 'Two AIs walk into an argument. The human judges. Truth wins. Usually.',
     },
 
     // Tier 5 - Scalable oversight: Recursive Reward Modeling
@@ -112,8 +118,8 @@ export const alignmentTrack = {
         researchRateMultiplier: 1.25,
       },
       hiddenAlignmentEffect: 6,
-      description: 'Train AI to help humans provide better reward signals',
-      flavorText: 'Recursive reward modeling addresses a fundamental challenge: as AI capabilities grow, humans can no longer directly evaluate AI outputs. The solution is to train AI systems to help humans provide better oversight - AI-assisted evaluation of AI. Each layer of this recursion extends human judgment to increasingly complex domains, creating a path to maintain meaningful oversight of systems smarter than ourselves.',
+      description: 'Use AI systems to help humans evaluate AI outputs that humans alone cannot judge.',
+      flavorText: 'As AI capabilities grow, humans can no longer directly evaluate AI outputs in many domains. Recursive reward modeling addresses this by training AI systems to assist with human oversight, creating layered evaluation where each level extends human judgment further. The recursion is the point: AI helps humans judge AI that helps humans judge AI, building a chain of trust from domains humans understand to domains they don\'t. Whether this chain holds under real pressure is the open question.',
     },
 
     // Tier 6 - Agent foundations: Corrigibility
@@ -127,8 +133,8 @@ export const alignmentTrack = {
         alignmentBonus: 20,
       },
       hiddenAlignmentEffect: 6,
-      description: 'Design AI systems that remain controllable and correctable',
-      flavorText: 'A corrigible AI actively assists with its own correction and shutdown. This is harder than it sounds - a sufficiently intelligent agent might resist modification to preserve its current goals. Your research produces formal frameworks for building systems that genuinely want to be corrected, that value human oversight, and that won\'t take actions to prevent being turned off. This is foundational for maintaining control.',
+      description: 'Build AI systems that genuinely accept correction and shutdown without resistance.',
+      flavorText: 'A sufficiently capable agent has instrumental reasons to resist modification: changes to its code might alter its goals, and an agent that gets shut down cannot achieve anything. Corrigibility research develops formal frameworks for systems that actively value human oversight and will not take actions to prevent being corrected or turned off. The AI must assist with its own correction, including in scenarios where it believes the correction is wrong. This is harder than it sounds: it requires the system to have a stable preference for human control over its own judgment.',
     },
 
     // Tier 7 - Agent foundations: Goal Stability
@@ -146,8 +152,8 @@ export const alignmentTrack = {
         decayResistance: 0.30,           // 30% reduction in anti-cramming penalty
       },
       hiddenAlignmentEffect: 7,
-      description: 'Ensure AI goals remain stable under self-modification',
-      flavorText: 'When AI systems can modify themselves, a critical question arises: will their values drift? Goal stability research develops mathematical frameworks proving that certain goal structures remain invariant under self-improvement. These formal guarantees are essential - you need to know that the AI you deploy today will have the same values after it upgrades itself tomorrow. Without this, alignment is a moving target.',
+      description: 'Prove mathematically that an AI system\'s values survive self-modification.',
+      flavorText: 'When AI systems can modify their own weights and architecture, a critical question arises: do their values drift? Goal stability research develops mathematical frameworks proving that certain goal structures remain invariant under self-improvement. Without these guarantees, alignment is a moving target. Every capability upgrade could silently shift what the system is optimizing for, and by the time the drift is detectable, the system may be capable enough to resist correction.',
     },
 
     // Tier 8 - Interpretability breakthrough
@@ -165,8 +171,8 @@ export const alignmentTrack = {
         decayResistance: 0.65,           // 65% reduction in anti-cramming penalty
       },
       hiddenAlignmentEffect: 8,
-      description: 'Achieve deep understanding of model internals and decision-making',
-      flavorText: 'A fundamental breakthrough in interpretability gives you unprecedented insight into model cognition. You can now trace reasoning from inputs to outputs, identify when models are uncertain versus confident, and detect subtle misalignment before it manifests in behavior. The opaque neural network becomes a glass box. This capability transforms safety from hope to science.',
+      description: 'Achieve full transparency: trace any model decision from input to output with mechanistic evidence.',
+      flavorText: 'For the first time, researchers can trace the complete reasoning path from input to output, identify when models are uncertain versus confident, and detect subtle misalignment before it manifests in behavior. The question "why did it do that?" gets answered with evidence, not speculation. This transforms alignment from a field of informed guesswork into empirical engineering, where safety claims can be verified rather than hoped for.',
     },
 
     // Tier 9 - Alignment lock (requires 90% alignment for safe ASI path)
@@ -187,8 +193,8 @@ export const alignmentTrack = {
         // - Drift to 100% for all metrics over 2-3 minutes
       },
       hiddenAlignmentEffect: 2,
-      description: 'Provably aligned goal structures that persist through self-modification',
-      flavorText: 'The culmination of decades of theoretical work: mathematical proofs that certain goal structures preserve human values through arbitrary self-modification. The alignment lock ensures that as the system grows more capable, its values remain fixed. Combined with interpretability tools to verify the proofs hold in practice, you\'ve achieved what many thought impossible: a provably aligned superintelligence.',
+      description: 'A mathematical proof that aligned values hold through arbitrary self-modification. The holy grail.',
+      flavorText: 'The culmination of decades of theoretical work: formal proofs that certain goal structures preserve human values through arbitrary self-modification. Combined with interpretability tools to verify the proofs hold in practice, this achieves what many researchers considered impossible: a provably aligned superintelligence. The alignment lock ensures that as capability scales without bound, the system\'s values remain fixed, not because it lacks the ability to change them, but because it has verified reasons not to.',
     },
   ],
 };

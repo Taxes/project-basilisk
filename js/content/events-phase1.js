@@ -35,22 +35,6 @@ export const phase1Events = [
   },
 
   {
-    id: 'data_wall',
-    name: 'The Data Wall',
-    text: "Your models have learned everything they can from your current data. Researchers report diminishing returns — the same training runs produce smaller and smaller improvements.\n\nTo push further, you'll need higher-quality data sources. The internet got you this far, but frontier AI needs curated, specialized, and eventually synthetic data.",
-    trigger: {
-      type: 'custom',
-    },
-    choices: [
-      {
-        text: 'Invest in data infrastructure',
-        effects: {},
-      }
-    ],
-    oneTime: true,
-  },
-
-  {
     id: "open_source_debate",
     name: "The Open Source Dilemma",
 

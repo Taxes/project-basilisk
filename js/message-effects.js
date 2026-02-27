@@ -5,6 +5,7 @@
 import { gameState } from './game-state.js';
 import { addNewsMessage } from './messages.js';
 import { applyMoratoriumEffect } from './moratoriums.js';
+import { incrementCount } from './purchasable-state.js';
 
 /**
  * Apply effects from a message choice
@@ -39,16 +40,6 @@ export function applyMessageChoiceEffects(effects) {
         }
       }
     }
-  }
-
-  // Initialize event multipliers if needed
-  if (!gameState.eventMultipliers) {
-    gameState.eventMultipliers = {
-      researchRate: 1.0,
-      computeRate: 1.0,
-      capabilitiesPaused: false,
-      capabilitiesPauseEndTime: 0,
-    };
   }
 
   // Apply research rate multiplier
@@ -117,6 +108,13 @@ export function applyMessageChoiceEffects(effects) {
   // Add news message if specified
   if (effects.newsMessage) {
     addNewsMessage(effects.newsMessage, effects.newsTags || ['internal']);
+  }
+
+  // Grant free researcher(s)
+  if (effects.grantResearcher) {
+    for (let i = 0; i < effects.grantResearcher; i++) {
+      incrementCount('junior_researcher');
+    }
   }
 
   // Moratorium effect
