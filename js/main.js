@@ -283,6 +283,11 @@ export function handleOnboarding() {
 function initializeGame() {
   console.log('Initializing AGI Incremental...');
 
+  // Register game version as a PostHog super property (attached to every event)
+  if (typeof posthog !== 'undefined' && typeof posthog.register === 'function') { // eslint-disable-line no-undef
+    posthog.register({ game_version: VERSION }); // eslint-disable-line no-undef
+  }
+
   // Load event content (capability content is handled by track system)
   initializeEvents([phase1Events, phase2Events, phase3Events]);
 

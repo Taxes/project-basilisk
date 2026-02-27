@@ -21,11 +21,13 @@ export function completeTutorialStep(step, method = 'dismiss') {
   gameState.tutorial.active = false;
   gameState.tutorial.shownStep = 0;
 
-  milestone('tutorial_step_completed', {
-    step,
-    step_name: getStepName(step),
-    method,  // 'action' | 'dismiss' | 'skip-ahead'
-  }, `tutorial_step_completed_${step}`);
+  if (MILESTONE_STEPS.has(step)) {
+    milestone('tutorial_step_completed', {
+      step,
+      step_name: getStepName(step),
+      method,  // 'action' | 'dismiss' | 'skip-ahead'
+    }, `tutorial_step_completed_${step}`);
+  }
 
   // Check if this was the final main sequence step
   if (step === MAIN_SEQUENCE_END) {
@@ -35,15 +37,13 @@ export function completeTutorialStep(step, method = 'dismiss') {
   }
 }
 
+// Milestone steps for analytics — only these fire tutorial_step_completed
+const MILESTONE_STEPS = new Set([1, 6, 13, 21, 23]);
+
 // Show a tutorial step card
 export function showTutorialStep(step) {
   gameState.tutorial.active = true;
   gameState.tutorial.shownStep = step;
-
-  milestone('tutorial_step_shown', {
-    step,
-    step_name: getStepName(step),
-  }, `tutorial_step_shown_${step}`);
 }
 
 // Skip the entire tutorial

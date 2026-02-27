@@ -6,6 +6,7 @@
 // page reloads mid-run don't re-fire events. Cleared on prestige / hard reset.
 
 import { gameState } from './game-state.js';
+import { VERSION } from './version.js';
 
 /**
  * Fire a funnel milestone event (deduped by key).
@@ -32,6 +33,7 @@ export function milestone(name, data = {}, dedupKey, options = {}) {
 
   posthog.capture(name, {
     event_category: 'funnel',
+    game_version: VERSION,
     playtime_seconds: Math.round(gameState.timeElapsed),
     total_playtime_seconds: Math.round(gameState.lifetimeAllTime?.totalPlaytime || gameState.timeElapsed),
     prestige_count: gameState.prestigeCount || 0,
