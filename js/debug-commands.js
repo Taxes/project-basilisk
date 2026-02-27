@@ -19,6 +19,11 @@ import {
   moratoriumMessages,
 } from './content/message-content.js';
 import { AI_REQUESTS, AI_REQUEST_ORDER } from './content/ai-requests.js';
+import { notify } from './ui.js';
+import { showChangelog } from './ui/modals.js';
+import { VERSION } from './version.js';
+import { changelog } from './changelog.js';
+import { BALANCE } from '../data/balance.js';
 
 const DEBUG_STORAGE_KEY = 'agi-incremental-debug';
 
@@ -352,6 +357,17 @@ const debug = {
     console.log('[debug] Reset seenCards — all cards will show first-unlock highlight on next render');
   },
 
+  versionToast() {
+    const preview = changelog[0]?.changes?.[0];
+    const body = preview || 'See changelog in Settings.';
+    notify(`Updated to v${VERSION}`, body, 'info', {
+      duration: BALANCE.VERSION_TOAST_DURATION,
+      onClick: () => showChangelog(),
+      onDismiss: () => { gameState.lastSeenVersion = VERSION; },
+    });
+    console.log('[debug] Showing version update toast');
+  },
+
   help() {
     console.log(`[debug] Available commands:
   debug.addFunding(amount)                    — Add $ to funding
@@ -373,6 +389,7 @@ const debug = {
   debug.disableBankruptcy(bool)               — Toggle bankruptcy prevention, omit arg to check
   debug.status()                              — Show active persisted debug settings
   debug.resetSeenCards()                      — Reset first-unlock highlights
+  debug.versionToast()                        — Show version update toast
   debug.resetDebug()                          — Clear all debug settings
   debug.help()                                — Show this message`);
   },

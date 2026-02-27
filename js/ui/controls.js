@@ -20,7 +20,7 @@
 import { gameState } from '../game-state.js';
 import { BALANCE } from '../../data/balance.js';
 import { getPurchasableById } from '../content/purchasables.js';
-import { createCultureItem, addToQueue, getCultureSpeedMultiplier } from '../focus-queue.js';
+import { createCultureItem, addToQueue, getCultureSpeedMultiplier, enqueueCulture } from '../focus-queue.js';
 import { getPurchasableState } from '../purchasable-state.js';
 import { formatNumber, getRateUnit, formatDuration, formatFunding } from '../utils/format.js';
 import { $ } from '../utils/dom-cache.js';
@@ -128,6 +128,15 @@ export function initAllocationSliders() {
         alignment: target.alignment,
       });
       addToQueue(item);
+      requestFullUpdate();
+    });
+
+    cultureBtn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const target = gameState.targetAllocation;
+      if (!target) return;
+      if (gameState.focusQueue.some(item => item.type === 'culture')) return;
+      enqueueCulture(target, true);
       requestFullUpdate();
     });
 

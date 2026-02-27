@@ -443,10 +443,20 @@ export function triggerEnding(endingId, variant = null) {
   if (!ending) return false;
 
   gameState.endingTriggered = endingId;
+  gameState.paused = true;
+  gameState.pauseReason = 'ending';
+  const strategicChoicesMade = Object.entries(gameState.strategicChoices || {})
+    .filter(([, v]) => v.selected)
+    .map(([id, v]) => `${id}:${v.selected}`);
   milestone('ending_reached', {
     ending_id: endingId,
     alignment_score: gameState.alignment?.total ?? gameState.hiddenAlignment ?? 0,
-  });
+    archetype: getArchetype(ending.tier || 'silver'),
+    personality_passive_active: gameState.personality?.passiveActive ?? 0,
+    personality_pluralist_optimizer: gameState.personality?.pluralistOptimizer ?? 0,
+    strategic_choices: strategicChoicesMade,
+    arc: gameState.arc,
+  }, undefined, { sendImmediately: true });
   gameState.endingVariant = variant;
   gameState.endingTime = Date.now();
 

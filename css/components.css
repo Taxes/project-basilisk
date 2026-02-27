@@ -2903,6 +2903,17 @@ body[data-arc="2"] #research-section .scrollable-section {
   text-decoration: underline;
 }
 
+.about-discord-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.about-discord-link svg {
+  vertical-align: middle;
+}
+
 /* Ending screen feedback */
 .ending-feedback {
   margin-top: 16px;

@@ -16,6 +16,7 @@ import { VERSION } from '../version.js';
 import { attachTooltip } from './stats-tooltip.js';
 import { showNarrativeModal } from '../narrative-modal.js';
 import { $ } from '../utils/dom-cache.js';
+import { resumeTutorial, restartTutorial, disableTutorial } from '../tutorial-state.js';
 import { requestFullUpdate } from './signals.js';
 import { applyDebugSettings } from '../debug-commands.js';
 import { getDebugMessageStatus } from '../tutorial-messages.js';
@@ -236,7 +237,7 @@ function renderChangelogContent() {
   let html = '';
   for (const entry of changelog) {
     html += `<div class="changelog-entry">`;
-    html += `<div class="changelog-version">v${entry.version}</div>`;
+    html += `<div class="changelog-version">v${entry.version}${entry.date ? ` <span class="changelog-date">${entry.date}</span>` : ''}</div>`;
     html += `<ul class="changelog-changes">`;
     for (const change of entry.changes) {
       const li = document.createElement('li');
@@ -317,7 +318,16 @@ export function showSettingsModal() {
 
   // Always open on Settings tab
   switchSettingsTab('settings');
+  updateTutorialSettingsUI();
 
+  modal.classList.remove('hidden');
+}
+
+/** Open the Settings modal directly to the Changelog tab. */
+export function showChangelog() {
+  const modal = $('settings-modal');
+  if (!modal) return;
+  switchSettingsTab('changelog');
   modal.classList.remove('hidden');
 }
 
@@ -347,6 +357,11 @@ export function showDebugModal() {
   if (!modal) return;
   populateCapabilityDropdown();
   renderDebugMessages();
+  // Sync checkbox state from gameState
+  const pe = document.getElementById('debug-prevent-ending');
+  if (pe) pe.checked = !!gameState.debugPreventEnding;
+  const db = document.getElementById('debug-disable-bankruptcy');
+  if (db) db.checked = !!gameState.debugDisableBankruptcy;
   modal.classList.remove('hidden');
 }
 
@@ -877,6 +892,46 @@ export function initSettingsModal() {
 
   // Wire save data section
   initSaveDataSection();
+
+  // Tutorial settings
+  document.getElementById('tutorial-resume-button')?.addEventListener('click', () => {
+    resumeTutorial();
+    updateTutorialSettingsUI();
+  });
+
+  document.getElementById('tutorial-restart-button')?.addEventListener('click', () => {
+    restartTutorial();
+    updateTutorialSettingsUI();
+  });
+
+  document.getElementById('tutorial-off-button')?.addEventListener('click', () => {
+    disableTutorial();
+    updateTutorialSettingsUI();
+  });
+}
+
+const MAIN_SEQ_END = 15;
+
+function updateTutorialSettingsUI() {
+  const t = gameState.tutorial;
+  const resumeBtn = document.getElementById('tutorial-resume-button');
+  const statusEl = document.getElementById('tutorial-status');
+
+  if (resumeBtn) {
+    resumeBtn.disabled = !(t.dismissed && !t.disabled && t.currentStep < MAIN_SEQ_END);
+  }
+
+  if (statusEl) {
+    if (t.disabled) {
+      statusEl.textContent = 'Tutorial disabled';
+    } else if (t.currentStep >= MAIN_SEQ_END) {
+      statusEl.textContent = 'Tutorial completed';
+    } else if (t.dismissed) {
+      statusEl.textContent = `Tutorial paused at step ${t.currentStep + 1}`;
+    } else {
+      statusEl.textContent = `Tutorial active — step ${t.currentStep + 1}`;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1210,4 +1265,10 @@ export function resetEndingModalButtons() {
 export function hideEndingModal() {
   const modal = $('ending-modal');
   if (modal) modal.classList.add('hidden');
+
+  // Resume if paused for ending (prestige "Keep Playing" or "Start New Game")
+  if (gameState.pauseReason === 'ending') {
+    gameState.paused = false;
+    gameState.pauseReason = null;
+  }
 }

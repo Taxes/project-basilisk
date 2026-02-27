@@ -209,6 +209,16 @@ export function createDefaultGameState() {
       everUnlockedSections: [], // Section IDs unlocked at least once (survives prestige)
     },
 
+    // Tutorial system (cue card onboarding)
+    tutorial: {
+      currentStep: 0,          // last completed step (0 = none)
+      dismissed: false,         // player clicked "Skip tutorial" (can resume from Settings)
+      disabled: false,          // player turned it off in Settings
+      active: false,            // a card is currently showing
+      shownStep: 0,             // step currently displayed (0 = none)
+      completedPostSteps: [],   // IDs of completed post-tutorial standalone steps
+    },
+
     // Event tracking
     triggeredEvents: [],
 
@@ -342,6 +352,9 @@ export function createDefaultGameState() {
     personality: { passiveActive: 0, pluralistOptimizer: 0 },
     // Internal tick counter for sampling (sample every 60 ticks = 2 sec)
     _personalityTickCounter: 0,
+
+    // Analytics dedup keys (persisted so page reload doesn't re-fire milestones)
+    firedMilestones: [],
 
     // Ending state
     endingTriggered: null,       // Ending ID when triggered, null otherwise
@@ -897,6 +910,54 @@ export function loadGame() {
       if (!loaded.ui?.everUnlockedSections) {
         if (!gameState.ui) gameState.ui = createDefaultGameState().ui;
         gameState.ui.everUnlockedSections = [];
+      }
+
+      // Save migration: add tutorial state if missing (pre-tutorial saves)
+      if (!loaded.tutorial) {
+        // Infer progress from game state so existing players don't see stale tutorials
+        let inferredStep = 0;
+        if (loaded.fundraiseRounds?.seed?.raised) inferredStep = 23;  // past tutorial scope
+        else if (loaded.tracks?.capabilities?.unlockedCapabilities?.includes('basic_transformer')) inferredStep = 12;
+        else if (loaded.onboardingComplete) inferredStep = 1;
+
+        gameState.tutorial = {
+          currentStep: inferredStep,
+          dismissed: inferredStep >= 23,  // auto-dismiss if past tutorial scope
+          disabled: false,
+          active: false,
+          shownStep: 0,
+          completedPostSteps: [],
+        };
+      }
+
+      // Ensure completedPostSteps array exists (future-proofing)
+      if (!gameState.tutorial.completedPostSteps) {
+        gameState.tutorial.completedPostSteps = [];
+      }
+
+      // Save migration: tutorial step IDs changed from 15-step to 26-step sequence
+      // Old IDs 1-15 map to new IDs. Old post-steps 17-18 map to 25-26.
+      // Detect old saves by checking if currentStep <= 15 and the save has the old format.
+      // The old step 15 = tutorial_complete, new step 23 = tutorial_complete.
+      {
+        const OLD_TO_NEW = { 1: 1, 2: 4, 3: 6, 4: 8, 5: 10, 6: 11, 7: 12, 8: 14, 9: 15, 10: 17, 11: 19, 12: 20, 13: 21, 14: 22, 15: 23 };
+        const OLD_POST_TO_NEW = { 17: 25, 18: 26 };
+        const cs = gameState.tutorial.currentStep;
+        // Only migrate if currentStep is in old range (1-15) and NOT already in new range
+        // New step 16+ are nav/action steps that old saves never had
+        if (cs >= 1 && cs <= 15 && OLD_TO_NEW[cs] !== undefined && OLD_TO_NEW[cs] !== cs) {
+          gameState.tutorial.currentStep = OLD_TO_NEW[cs];
+          // Also update dismissed threshold — old 15 → new 23
+          if (gameState.tutorial.dismissed && cs >= 15) {
+            gameState.tutorial.currentStep = 23;
+          }
+        }
+        // Migrate completedPostSteps IDs
+        if (gameState.tutorial.completedPostSteps.length > 0) {
+          gameState.tutorial.completedPostSteps = gameState.tutorial.completedPostSteps.map(
+            id => OLD_POST_TO_NEW[id] || id
+          );
+        }
       }
 
       // Save migration: lifetimeAllTime new fields (peaks, dataCollapses)

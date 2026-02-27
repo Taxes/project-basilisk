@@ -498,7 +498,7 @@ function createMilestoneCard(item) {
     nameEl.classList.add('has-flavor');
     attachTooltip(nameEl, () => {
       recordFlavorDiscovery(item.id);
-      return `<div class="tooltip-section"><div>"${item.flavorQuote}"</div></div>`;
+      return `<div class="tooltip-section"><div>${item.flavorQuote}</div></div>`;
     }, { delay: 400 });
   }
 
@@ -550,7 +550,7 @@ function createCompletedMilestoneCard(item) {
     nameEl.classList.add('has-flavor');
     attachTooltip(nameEl, () => {
       recordFlavorDiscovery(item.id);
-      return `<div class="tooltip-section"><div>"${item.flavorQuote}"</div></div>`;
+      return `<div class="tooltip-section"><div>${item.flavorQuote}</div></div>`;
     }, { delay: 400 });
   }
 

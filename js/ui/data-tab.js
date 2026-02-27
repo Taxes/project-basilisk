@@ -77,6 +77,17 @@ function initDataTabDelegation(container) {
       if (section) section.classList.toggle('collapsed');
     }
   });
+
+  // Right-click purge: add with priority (don't toggle off)
+  container.addEventListener('contextmenu', (e) => {
+    const purgeBtn = e.target.closest('[data-synth-purge]');
+    if (!purgeBtn) return;
+    e.preventDefault();
+    if (findPurgeIndex() >= 0) return;
+    addToQueue(createPurgeItem(), true);
+    _dataTabFingerprint = '';
+    requestFullUpdate();
+  });
 }
 
 // ---------------------------------------------------------------------------

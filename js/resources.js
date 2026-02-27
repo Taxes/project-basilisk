@@ -7,6 +7,7 @@ import { getPurchasableById, PERSONNEL_IDS, COMPUTE_IDS, ADMIN_IDS, DATA_IDS } f
 import { capabilitiesTrack } from './content/capabilities-track.js';
 import { applicationsTrack } from './content/applications-track.js';
 import { checkProgressMilestones } from './news-feed.js';
+import { milestone } from './analytics.js';
 import { getOutputMultiplier } from './content/upgrades.js';
 import { getResearchRateMultiplier, getComputeCapacityMultiplier, getTokenRevenueMultiplier, getGovernmentFundingBonus, getMarketEdgeDecayMultiplier, getMarketEdgeBoostMultiplier, getDemandMultiplier, getAcquiredDemandGrowthMultiplier } from './strategic-choices.js';
 import { getDataEffectivenessMultiplier, isCapResearchPaused, isDataCleanupActive, computeDataDisplay } from './data-quality.js';
@@ -1141,6 +1142,15 @@ export function updateResources(deltaTime) {
     ppBonus: ppBonusRevenue,
     prestigeMultiplier: prestigeRevenue,
   };
+
+  // Funnel telemetry: first time revenue > 0
+  if (adjustedTokenRevenue > 0) {
+    milestone('first_revenue', {
+      token_price: gameState.resources.tokenPrice,
+      tokens_per_second: gameState.resources.tokensPerSecond,
+      acquired_demand: gameState.resources.acquiredDemand || 0,
+    });
+  }
 
   // Compute marginal efficiency for purchase advisor
   computePurchaseState();

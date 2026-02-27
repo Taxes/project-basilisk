@@ -185,7 +185,39 @@ export function moveInQueue(fromIndex, direction) {
   if (toIndex < 0 || toIndex >= gameState.focusQueue.length) return false;
   const items = gameState.focusQueue;
   [items[fromIndex], items[toIndex]] = [items[toIndex], items[fromIndex]];
+  scheduleDeferredMerge();
   return true;
+}
+
+// --- Deferred merge after reorder ---
+let _mergeTimeout = null;
+
+function scheduleDeferredMerge() {
+  if (_mergeTimeout) clearTimeout(_mergeTimeout);
+  _mergeTimeout = setTimeout(() => {
+    _mergeTimeout = null;
+    // Don't merge while the player is hovering over the queue panel
+    const queuePanel = document.getElementById('queue-panel');
+    if (queuePanel?.matches(':hover')) {
+      // Re-schedule — check again after another 2s
+      scheduleDeferredMerge();
+      return;
+    }
+    mergeAllAdjacent();
+  }, 5000);
+}
+
+function mergeAllAdjacent() {
+  const q = gameState.focusQueue;
+  for (let i = q.length - 1; i > 0; i--) {
+    const prev = q[i - 1];
+    const curr = q[i];
+    if (prev.type === curr.type && prev.target === curr.target
+        && (prev.type === 'purchase' || prev.type === 'furlough')) {
+      prev.quantity += curr.quantity - curr.completed;
+      q.splice(i, 1);
+    }
+  }
 }
 
 export function clearQueue() {
@@ -204,6 +236,9 @@ export function processQueue(deltaTime) {
   if (!gameState.computed) gameState.computed = {};
   gameState.computed.capex = { hiring: 0, infrastructure: 0 };
 
+  // Reconcile stale queue entries (e.g. paused purchases where count dropped)
+  reconcilePausedPurchases();
+
   const speed = gameState.focusSpeed;
 
   if (gameState.focusQueue.length > 0) {
@@ -218,6 +253,31 @@ export function processQueue(deltaTime) {
   }
 
   processCEOFocus(deltaTime);
+}
+
+// When purchases are paused (funding < 0), a player can reduce their owned
+// count below what a queue item has already completed, leaving a nonsensical
+// state (e.g. "3/5 completed" but only 2 owned). Clamp completed and remove
+// items that have nothing left to do.
+function reconcilePausedPurchases() {
+  if (gameState.resources.funding >= 0) return; // only while credit-blocked
+
+  const q = gameState.focusQueue;
+  for (let i = q.length - 1; i >= 0; i--) {
+    const item = q[i];
+    if (item.type !== 'purchase' || !item.paused) continue;
+
+    const owned = getCount(item.target);
+    if (item.completed <= owned) continue;
+
+    // Clamp completed to current owned count
+    item.completed = owned;
+
+    // If nothing left to do, remove the item
+    if (item.completed >= item.quantity) {
+      q.splice(i, 1);
+    }
+  }
 }
 
 function processQueueItem(item, effectiveDelta, deltaTime, speed) {
@@ -498,8 +558,6 @@ function completeFundraise(item) {
   const round = FUNDRAISE_ROUNDS[item.target];
   if (!round) return;
   const state = gameState.fundraiseRounds[item.target];
-  milestone('funding_milestone', { round_id: item.target }, `funding_milestone_${item.target}`);
-
   // Use live values at completion time (#565)
   const liveMultiplier = getFundraiseMultiplier(item.target);
   const liveRevenue = gameState.computed?.revenue?.gross || 0;
@@ -528,6 +586,14 @@ function completeFundraise(item) {
   state.raisedAt = gameState.timeElapsed;
   state.equitySold = effectiveEquity;
   state.valuation = effectiveEquity > 0 ? raiseAmount / effectiveEquity : 0;
+
+  milestone('funding_milestone', {
+    round_id: item.target,
+    amount_raised: raiseAmount,
+    valuation: state.valuation,
+    equity_percent: effectiveEquity,
+    multiplier: liveMultiplier,
+  }, `funding_milestone_${item.target}`);
 
   triggerFundingMilestone(item.target, raiseAmount, effectiveEquity, liveMultiplier);
 

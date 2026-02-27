@@ -40,7 +40,7 @@ I dug up some notes from an orientation I used to give new lab directors. A bit 
 **When in doubt, gun for your next breakthrough.** Reaching major research milestones tends to open doors and opportunities.`,
     signature: '– Prof. Shannon',
     tags: ['tutorial', 'welcome'],
-    trigger: () => gameState.timeElapsed < 1000,
+    trigger: () => gameState.timeElapsed >= 30000 && gameState.timeElapsed < 60000,
   },
 
   {
@@ -101,7 +101,7 @@ Some practical notes:
     key: 'babbage_intro',
     sender: senders.babbage,
     subject: 'Hi',
-    body: `Shannon said I should introduce myself, even though we already met when you hired me. So in case you need a reminder:
+    body: `James — Prof. Shannon — said I should introduce myself, even though we already met when you hired me. So in case you need a reminder:
 
 I run the technical side. Models, architectures, training pipelines. The transformer work so far is solid for a team this size. Scaling it is the next problem, and scaling means compute. Every GPU we add compounds. The math on this is straightforward.
 

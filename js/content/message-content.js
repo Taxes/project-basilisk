@@ -54,7 +54,7 @@ export function getSender(id) {
 export const onboardingMessage = {
   type: 'info',
   sender: senders.ktech,
-  subject: 'KTech User Guide',
+  subject: 'Lab Operations Dashboard User Guide',
   body: `Promised user guide, as advertised.
 
 ## Stats Bar

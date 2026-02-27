@@ -25,6 +25,8 @@ import { getCount, getActiveCount } from './purchasable-state.js';
 import { canUnpause, updatePauseState } from './messages.js';
 import { createPurgeItem, addToQueue, enqueuePurchase } from './focus-queue.js';
 import { debugEnding } from './extinction-sequence.js';
+import { completeTutorialStep, skipTutorial, resumeTutorial, restartTutorial } from './tutorial-state.js';
+import { showCard, hideCard } from './ui/cue-cards.js';
 
 if (typeof window !== 'undefined') {
   Object.assign(window, {
@@ -85,5 +87,16 @@ if (typeof window !== 'undefined') {
 
     // From extinction-sequence.js
     debugEnding,
+
+    // Tutorial system
+    tutorial: {
+      complete: completeTutorialStep,
+      skip: skipTutorial,
+      resume: resumeTutorial,
+      restart: restartTutorial,
+      showCard,
+      hideCard,
+      getState: () => gameState.tutorial,
+    },
   });
 }

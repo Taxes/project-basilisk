@@ -3,6 +3,7 @@
 import { gameState, createDefaultGameState, saveGame } from './game-state.js';
 import { FUNDING } from '../data/balance.js';
 import { resetQueueIdCounter } from './focus-queue.js';
+import { resetAnalytics } from './analytics.js';
 
 // Calculate prestige upgrade gains based on current progress
 export function calculatePrestigeGain() {
@@ -61,6 +62,9 @@ export function resetForPrestige() {
   // Preserve UI arrays that persist across prestige
   const discoveredFlavor = gameState.ui?.discoveredFlavor ? [...gameState.ui.discoveredFlavor] : [];
 
+  // Preserve tutorial progress (player shouldn't re-see tutorials after prestige)
+  const tutorial = gameState.tutorial ? { ...gameState.tutorial } : null;
+
   // Accumulate all-time lifetime stats before reset
   const lifetimeAllTime = { ...gameState.lifetimeAllTime };
   lifetimeAllTime.prestigeResets = (lifetimeAllTime.prestigeResets || 0) + 1;
@@ -85,6 +89,13 @@ export function resetForPrestige() {
   gameState.ui.everUnlockedSections = everUnlockedSections;
   gameState.ui.discoveredFlavor = discoveredFlavor;
 
+  // Restore tutorial progress, clear transient card state
+  if (tutorial) {
+    gameState.tutorial = tutorial;
+    gameState.tutorial.active = false;
+    gameState.tutorial.shownStep = 0;
+  }
+
   // Explicitly clear dynamic state that createDefaultGameState doesn't include
   // (Object.assign only copies properties from fresh — it doesn't delete extras)
   gameState.endingTriggered = null;
@@ -98,6 +109,7 @@ export function resetForPrestige() {
   }
 
   resetQueueIdCounter();
+  resetAnalytics();
   gameState.lastTick = Date.now();
   saveGame();
 }
@@ -112,6 +124,7 @@ export function resetForExtinction(endingId, variant) {
   const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
   const everUnlockedSections = gameState.ui?.everUnlockedSections ? [...gameState.ui.everUnlockedSections] : [];
   const discoveredFlavor = gameState.ui?.discoveredFlavor ? [...gameState.ui.discoveredFlavor] : [];
+  const tutorial = gameState.tutorial ? { ...gameState.tutorial } : null;
   const lifetimeAllTime = { ...gameState.lifetimeAllTime };
   const endingsSeen = [...(gameState.endingsSeen || [])];
 
@@ -133,6 +146,13 @@ export function resetForExtinction(endingId, variant) {
   gameState.lifetimeAllTime = lifetimeAllTime;
   gameState.endingsSeen = endingsSeen;
 
+  // Restore tutorial progress, clear transient card state
+  if (tutorial) {
+    gameState.tutorial = tutorial;
+    gameState.tutorial.active = false;
+    gameState.tutorial.shownStep = 0;
+  }
+
   // Clear dynamic state that Object.assign doesn't remove
   gameState.endingTriggered = null;
   gameState.endingVariant = null;
@@ -140,6 +160,7 @@ export function resetForExtinction(endingId, variant) {
   gameState.bankrupted = false;
 
   resetQueueIdCounter();
+  resetAnalytics();
   gameState.lastTick = Date.now();
   saveGame();
 }
@@ -149,6 +170,7 @@ export function transitionToArc2() {
   const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
   const everUnlockedSections = gameState.ui?.everUnlockedSections ? [...gameState.ui.everUnlockedSections] : [];
   const discoveredFlavor = gameState.ui?.discoveredFlavor ? [...gameState.ui.discoveredFlavor] : [];
+  const tutorial = gameState.tutorial ? { ...gameState.tutorial } : null;
   const fresh = createDefaultGameState();
 
   // Reset everything except arcUnlocked
@@ -156,7 +178,16 @@ export function transitionToArc2() {
   gameState.ui.seenCards = seenCards;
   gameState.ui.everUnlockedSections = everUnlockedSections;
   gameState.ui.discoveredFlavor = discoveredFlavor;
+
+  // Restore tutorial progress, clear transient card state
+  if (tutorial) {
+    gameState.tutorial = tutorial;
+    gameState.tutorial.active = false;
+    gameState.tutorial.shownStep = 0;
+  }
+
   resetQueueIdCounter();
+  resetAnalytics();
   gameState.arc = 2;
   gameState.arcUnlocked = 2;
 

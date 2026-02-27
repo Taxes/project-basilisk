@@ -19,7 +19,15 @@ export function checkPhaseCompletion() {
 
     // Progress to Phase 2
     gameState.phase = 2;
-    milestone('phase_transition', { from_phase: 1, to_phase: 2 }, 'phase_transition_2');
+    milestone('phase_transition', {
+      from_phase: 1, to_phase: 2,
+      tokens_per_second: gameState.resources.tokensPerSecond,
+      total_funding_earned: gameState.lifetime?.totalFundingEarned || 0,
+      total_research_earned: gameState.lifetime?.totalResearchEarned || 0,
+      customer_count: gameState.resources.acquiredDemand || 0,
+      research_count: Object.keys(gameState.capabilities || {}).length,
+      funding: gameState.resources.funding,
+    }, 'phase_transition_2');
     triggerNewsForEvent('phase_transition', 'phase2');
 
     // Persist that we've shown the completion
@@ -34,7 +42,15 @@ export function checkPhaseCompletion() {
 
     // Progress to Phase 3
     gameState.phase = 3;
-    milestone('phase_transition', { from_phase: 2, to_phase: 3 }, 'phase_transition_3');
+    milestone('phase_transition', {
+      from_phase: 2, to_phase: 3,
+      tokens_per_second: gameState.resources.tokensPerSecond,
+      total_funding_earned: gameState.lifetime?.totalFundingEarned || 0,
+      total_research_earned: gameState.lifetime?.totalResearchEarned || 0,
+      customer_count: gameState.resources.acquiredDemand || 0,
+      research_count: Object.keys(gameState.capabilities || {}).length,
+      funding: gameState.resources.funding,
+    }, 'phase_transition_3');
     triggerNewsForEvent('phase_transition', 'phase3');
 
     // Persist that we've shown the completion

@@ -3,7 +3,7 @@
 
 import { gameState } from '../game-state.js';
 import { PERSONNEL_IDS, COMPUTE_IDS, ADMIN_IDS, getPurchasableById } from '../content/purchasables.js';
-import { formatFunding, formatTime, getRateUnit } from '../utils/format.js';
+import { formatFunding, formatNumber, formatTime, getRateUnit } from '../utils/format.js';
 import { getGovernmentFundingBonus } from '../strategic-choices.js';
 import { getGrantStatus } from '../economics.js';
 import { registerUpdate, EVERY_TICK } from './scheduler.js';
@@ -365,6 +365,60 @@ function buildAGITooltip() {
   return html;
 }
 
+/** Build compute breakdown tooltip HTML. */
+function buildComputeTooltip() {
+  const base = gameState.computed.baseCompute || 0;
+  const mult = gameState.computed.computeMultiplier || 1;
+  const comp = gameState.computed.compute || {};
+
+  // Nothing useful to show yet
+  if (!base && !comp.total) return '';
+
+  let html = '';
+
+  // Base × multiplier breakdown (only when multiplier is meaningful)
+  if (mult > 1.01 && base > 0) {
+    html += `<div class="tooltip-row"><span>${formatNumber(base)} base × ${mult.toFixed(1)}x</span></div>`;
+  }
+
+  // Allocation split (only after compute allocation is unlocked)
+  if (comp.allocation != null && comp.allocation < 1.0 && comp.total > 0) {
+    html += `<div class="tooltip-row"><span>Research</span><span>${formatNumber(comp.internal)} TFLOPS</span></div>`;
+    html += `<div class="tooltip-row"><span>Revenue</span><span>${formatNumber(comp.external)} TFLOPS</span></div>`;
+  }
+
+  return html || '';
+}
+
+/** Title-case a snake_case id: "data_curation" → "Data Curation". */
+function titleCase(id) {
+  return id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/** Build data effectiveness tooltip HTML. */
+function buildDataTooltip() {
+  const data = gameState.data;
+  if (!data || !data.dataTabRevealed) return '';
+
+  const eff = data.effectiveness;
+  let html = '<div class="tooltip-section">';
+  html += '<div class="dim">Multiplier on capabilities research speed</div>';
+  html += '</div>';
+
+  // Progress toward next tier
+  const score = data.dataScore;
+  const required = data.dataRequired;
+  const tierName = data.nextTierName;
+  if (eff >= 1.0) {
+    html += `<div class="tooltip-row"><span>Data score</span><span>${Math.floor(score)} — exceeds requirements</span></div>`;
+  } else if (tierName) {
+    html += `<div class="tooltip-row"><span>Next milestone</span><span>${titleCase(tierName)}</span></div>`;
+    html += `<div class="tooltip-row"><span>Progress</span><span>${Math.floor(score)} / ${Math.floor(required)}</span></div>`;
+  }
+
+  return html;
+}
+
 /** Initialize stats bar tooltips. */
 export function initStatsTooltips() {
   const fundingGroup = document.querySelector('#stats-bar .stats-group:first-child');
@@ -374,4 +428,13 @@ export function initStatsTooltips() {
   const agiLabel = document.getElementById('agi-progress-label');
   const agiGroup = agiLabel?.closest('.stats-group');
   if (agiGroup) attachTooltip(agiGroup, buildAGITooltip);
+
+  // Compute group
+  const computeTotal = document.getElementById('compute-total');
+  const computeGroup = computeTotal?.closest('.stats-group');
+  if (computeGroup) attachTooltip(computeGroup, buildComputeTooltip);
+
+  // Data effectiveness group
+  const dataGroup = document.getElementById('data-effectiveness-group');
+  if (dataGroup) attachTooltip(dataGroup, buildDataTooltip);
 }

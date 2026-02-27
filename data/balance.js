@@ -275,6 +275,7 @@ export const BALANCE = {
 
   // UI
   NOTIFICATION_DURATION: 5000,             // ms
+  VERSION_TOAST_DURATION: 10000,           // ms — version update toast
   SAVE_INTERVAL: 10,                       // seconds
 
   // Game loop

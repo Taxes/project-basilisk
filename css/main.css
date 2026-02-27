@@ -225,6 +225,14 @@ input[type="range"] {
   color: var(--text-dim);
 }
 
+.notification.clickable {
+  cursor: pointer;
+}
+
+.notification.clickable:hover {
+  background: #1a1a1a;
+}
+
 .notification-close {
   background: none;
   border: none;

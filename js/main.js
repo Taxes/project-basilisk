@@ -3,8 +3,8 @@
 import { gameState, loadGame, rehydrateMessages, saveGame } from './game-state.js';
 import { updateResources, updateForecasts } from './resources.js';
 import { initializeEvents, checkResourceThresholdEvents, checkTimeBasedEvents } from './events.js';
-import { updateUI, initializeUI, setOnHardReset } from './ui.js';
-import { showEndingModal } from './ui/modals.js';
+import { updateUI, initializeUI, setOnHardReset, notify } from './ui.js';
+import { showEndingModal, showChangelog } from './ui/modals.js';
 import { initializePhaseCompletion, checkPhaseCompletion } from './phase-completion.js';
 import { initializeCompetitor, updateCompetitor } from './competitor.js';
 import { checkEndings } from './endings.js';
@@ -35,12 +35,16 @@ import { applyDebugSettings } from './debug-commands.js';
 import { initPlaytestLogger } from './playtest-logger.js';
 import { requestFullUpdate } from './ui/signals.js';
 import { initializeMessages, checkMessageDeadlines, setOnNewMessageCallback, addInfoMessage, restoreMessageIdCounter, hasMessageBeenTriggered, markMessageTriggered } from './messages.js';
-import { initializeTabNavigation, updateTabBadge, switchTab } from './ui/tab-navigation.js';
+import { initializeTabNavigation, updateTabBadge, navigateToMessage } from './ui/tab-navigation.js';
+import { initTutorialController, checkTutorialSteps } from './tutorial-controller.js';
+import { initCueCards } from './ui/cue-cards.js';
 import { initializeMessagesPanel, updatePauseOverlay, prependNewMessage } from './ui/messages-panel.js';
 import { updateFavicon } from './favicon.js';
 import { initializeFarewells, checkFarewells } from './farewells.js';
 import { showNarrativeModal } from './narrative-modal.js';
 import { onboardingMessage } from './content/message-content.js';
+import { VERSION } from './version.js';
+import { changelog } from './changelog.js';
 
 // Import content
 import { phase1Events } from './content/events-phase1.js';
@@ -176,6 +180,9 @@ function gameTick(deltaTime) {
   // Check for tutorial message triggers
   checkTutorialTriggers();
 
+  // Check cue card tutorial steps
+  checkTutorialSteps();
+
   // 3. Update UI
   updateUI();
 
@@ -210,6 +217,7 @@ function startGameLoop() {
 
     // Skip time advancement and game logic if paused, but still update forecasts + UI
     if (gameState.paused) {
+      checkTutorialSteps();  // Tutorial cards pause the game; still need trigger checks
       updateForecasts();
       updateUI();
       return;
@@ -228,14 +236,20 @@ function startGameLoop() {
 // Handle first-time onboarding modal + inbox message
 export function handleOnboarding() {
   // Send KTech reference message once per playthrough
+  // Note: on first load, this runs before the modal so we can capture the
+  // message ID for navigateToMessage in onDismiss.
+  let guideMessageId = null;
   if (!hasMessageBeenTriggered('ktech_user_guide')) {
     const { sender, subject, body, tags } = onboardingMessage;
-    addInfoMessage(sender, subject, body, null, tags, 'ktech_user_guide');
+    const msg = addInfoMessage(sender, subject, body, null, tags, 'ktech_user_guide');
+    guideMessageId = msg.id;
     markMessageTriggered('ktech_user_guide');
   }
 
   if (!gameState.onboardingComplete) {
-    // First time — show modal, stay paused
+    // First time — start paused, show modal
+    gameState.paused = true;
+    gameState.pauseStartTime = Date.now();
     showNarrativeModal({
       title: 'KTech Lab Operations Dashboard',
       narrative: `
@@ -243,6 +257,7 @@ export function handleOnboarding() {
         <p>I set up your instance as "Project Basilisk" (cool name, by the way - does it mean anything?). Prof. Shannon told me you were starting a lab and strongly suggested I get you on board. His exact words were "set it up for them," so I did. Don't worry about the licensing fees; consider this a beta arrangement.</p>
         <p>Two main screens: <strong>Dashboard</strong> is where you run your lab - funding, personnel, compute, all of it. <strong>Messages</strong> is your inbox. I built some priority-detection algorithms that I'm pretty proud of, so important stuff should float to the top.</p>
         <p>I'd start with Messages. Prof. Shannon likes to send a welcome letter to his mentees (he's done it for as long as I've known him), and I'll send a proper user guide over there once you're settled in.</p>
+        <p>The game starts paused so you can look around. Hit the <strong>Play</strong> button (top-right) or press <strong>Space</strong> when you're ready.</p>
         <p>If anything breaks, just let me know. You're technically my first real user, so. Feedback welcome :)</p>
         <p>– Ken</p>
       `,
@@ -251,7 +266,9 @@ export function handleOnboarding() {
       noDismissOnBackdrop: true,
       onDismiss: () => {
         gameState.onboardingComplete = true;
-        switchTab('messages');
+        if (guideMessageId) {
+          navigateToMessage(guideMessageId);
+        }
         milestone('game_started');
       },
     });
@@ -271,6 +288,15 @@ function initializeGame() {
 
   // Load saved game or start fresh
   const loaded = loadGame();
+  // Track save imports (before clearing the flag)
+  if (loaded && sessionStorage.getItem('agi-import-pending')) {
+    milestone('save_imported', {
+      milestones_in_save: [...(gameState.firedMilestones || [])],
+      arc: gameState.arc,
+      phase: gameState.phase,
+      prestige_count: gameState.prestigeCount || 0,
+    }, `save_imported_${Date.now()}`);
+  }
   // Clear import guard now that load is complete (safe to save again)
   sessionStorage.removeItem('agi-import-pending');
   if (loaded) {
@@ -341,6 +367,10 @@ function initializeGame() {
   // Initialize tab navigation
   initializeTabNavigation();
 
+  // Initialize cue card tutorial
+  initCueCards();
+  initTutorialController();
+
   // Initialize messages panel
   initializeMessagesPanel();
 
@@ -359,6 +389,17 @@ function initializeGame() {
 
   // Handle onboarding (must be after UI init so modal DOM exists)
   handleOnboarding();
+
+  // Version update toast for returning players
+  if (loaded && gameState.lastSeenVersion != null && gameState.lastSeenVersion < VERSION) {
+    const preview = changelog[0]?.changes?.[0];
+    const body = preview || 'See changelog in Settings.';
+    notify(`Updated to v${VERSION}`, body, 'info', {
+      duration: BALANCE.VERSION_TOAST_DURATION,
+      onClick: () => showChangelog(),
+      onDismiss: () => { gameState.lastSeenVersion = VERSION; },
+    });
+  }
 
   // Start game loop
   startGameLoop();

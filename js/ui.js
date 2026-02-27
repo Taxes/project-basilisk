@@ -18,12 +18,12 @@ import { formatNumber, getRateUnit } from './utils/format.js';
 import { requestFullUpdate, consumeFullUpdate } from './ui/signals.js';
 import { runScheduledUpdates, forceFullUpdate, resetAllCaches, SLOW } from './ui/scheduler.js';
 import { invalidateCache } from './utils/dom-cache.js';
-import { applyDebugSettings, isDebugMode } from './debug-commands.js';
+import { isDebugMode, debug as debugCommands } from './debug-commands.js';
 // Domain UI modules — each self-registers with the scheduler at module scope.
 // Named imports pull in init functions; the import itself triggers registerUpdate().
 import { initTokenPricing, initAutopricer, initLedgerTooltips, initPricingTooltips, initLedgerSummary } from './ui/economics.js';
 import { initCEOFocusPanel } from './ui/ceo-focus.js';
-import { initStatsTooltips, attachTooltip } from './ui/stats-tooltip.js';
+import { initStatsTooltips } from './ui/stats-tooltip.js';
 import { initResearchTooltips } from './ui/research-tooltips.js';
 import './ui/research.js';  // no named exports needed; side-effect registration only
 import { initInfraTabs } from './ui/infrastructure.js';
@@ -433,19 +433,8 @@ export function updateResourceDisplays() {
         effEl.textContent = eff.toFixed(2) + 'x';
         effEl.className = 'stat-value ' + (eff >= 1.0 ? 'positive' : eff >= 0.7 ? 'warning' : 'negative');
       }
-      if (goalEl) {
-        const score = state.data.dataScore;
-        const required = state.data.dataRequired;
-        const tierName = state.data.nextTierName;
-        const effectiveness = state.data.effectiveness || 0;
-      if (effectiveness >= 1.0) {
-          goalEl.textContent = `[${Math.floor(score)} — exceeds requirements (${effectiveness.toFixed(2)}x)]`;
-        } else if (tierName) {
-          goalEl.textContent = `[${Math.floor(score)} / ${Math.floor(required)} for ${tierName}]`;
-        } else {
-          goalEl.textContent = '';
-        }
-      }
+      // Goalpost detail moved to data tooltip
+      if (goalEl) goalEl.textContent = '';
     } else {
       dataGroup.style.display = 'none';
     }
@@ -478,13 +467,15 @@ export { formatNumber };
 
 // Show notification with optional type
 // Types: 'success' (default), 'info', 'warning'
-export function notify(title, message, type = 'success') {
+// Options: { onClick, duration, onDismiss }
+export function notify(title, message, type = 'success', { onClick, duration, onDismiss } = {}) {
   if (gameState._fastForwarding) return;
   const container = document.getElementById('notification-container');
   if (!container) return;
 
   const notification = document.createElement('div');
   notification.className = `notification notification-${type}`;
+  if (onClick) notification.classList.add('clickable');
 
   // Create notification content
   const content = document.createElement('div');
@@ -509,24 +500,35 @@ export function notify(title, message, type = 'success') {
     notification.classList.remove('notification-enter');
   }, 300);
 
-  // Function to dismiss notification
+  // Idempotent dismiss — onDismiss fires exactly once
+  let dismissed = false;
   const dismissNotification = () => {
+    if (dismissed) return;
+    dismissed = true;
+    clearTimeout(autoDismissTimer);
+    if (onDismiss) onDismiss();
     notification.classList.add('notification-exit');
     setTimeout(() => {
       notification.remove();
     }, 300);
   };
 
-  // Close button handler
-  closeBtn.addEventListener('click', dismissNotification);
+  // Close button handler (dismiss only, no onClick action)
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dismissNotification();
+  });
+
+  // Click anywhere on notification to act + dismiss
+  if (onClick) {
+    notification.addEventListener('click', () => {
+      onClick();
+      dismissNotification();
+    });
+  }
 
   // Auto-dismiss after duration
-  const autoDismissTimer = setTimeout(dismissNotification, BALANCE.NOTIFICATION_DURATION);
-
-  // Cancel auto-dismiss if manually closed
-  closeBtn.addEventListener('click', () => {
-    clearTimeout(autoDismissTimer);
-  });
+  const autoDismissTimer = setTimeout(dismissNotification, duration || BALANCE.NOTIFICATION_DURATION);
 }
 
 // Update notifications (for queue management if needed)
@@ -606,7 +608,7 @@ export function initializeUI() {
         : 'HARD RESET: This permanently deletes ALL progress, including lifetime stats, prestige bonuses, and unlocks. There is no undo. Are you sure?';
       if (confirm(msg)) {
         resetGame();
-        applyDebugSettings();
+        if (isDebugMode()) debugCommands.resetDebug();
         resetQueueIdCounter();
         resetTriggeredMessages();
         resetUI();
@@ -708,14 +710,7 @@ export function initializeUI() {
   // Initialize pricing panel tooltips (demand, edge, elasticity)
   initPricingTooltips();
 
-  // Initialize compute breakdown tooltip (stats bar)
-  attachTooltip(document.getElementById('compute-total'), () => {
-    const mult = gameState.computed.computeMultiplier || 1;
-    if (mult > 1.01 && gameState.computed.baseCompute > 0) {
-      return `<div class="tooltip-row"><span>${formatNumber(gameState.computed.baseCompute)} base × ${mult.toFixed(1)}x</span></div>`;
-    }
-    return '';
-  });
+  // Compute + data tooltips now initialized in initStatsTooltips()
 
   // Initialize CEO Focus panel
   initCEOFocusPanel();
