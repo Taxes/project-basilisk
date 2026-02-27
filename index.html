@@ -9,7 +9,7 @@
     gtag('js', new Date());
     if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1'
         && !new URLSearchParams(location.search).has('debug')) {
-      gtag('config', 'G-YGQV4WN86V', { 'traffic_type': 'basilisk' });
+      gtag('config', 'G-YGQV4WN86V', { 'site_token': 'basilisk' });
       window.onerror = function(msg, file, line) {
         gtag('event', 'js_error', { event_label: file + ':' + line + ' - ' + msg });
       };
