@@ -101,7 +101,7 @@ let _dataTabFingerprint = '';
 function buildDataFingerprint() {
   const parts = [];
 
-  // Bulk sources
+  // Bulk sources — visibility + owned/not (structural: card appearance changes on first buy)
   const bulkParts = [];
   for (const src of BALANCE.DATA_BULK_SOURCES || []) {
     if (!isDataSourceVisible(src.id)) continue;
@@ -109,20 +109,22 @@ function buildDataFingerprint() {
   }
   parts.push('bulk:' + bulkParts.join(','));
 
-  // Renewable sources (track count/active for rebuild on purchase or furlough change)
+  // Renewable sources — only visibility + owned-or-not (0 vs >0).
+  // Count/active changes are handled incrementally by updateRenewableDynamic
+  // and updateAffordability, avoiding full rebuild flicker (#776).
   const renewParts = [];
   for (const src of BALANCE.DATA_RENEWABLE_SOURCES || []) {
     if (!isDataSourceVisible(src.id)) continue;
-    renewParts.push(src.id + ':' + getCount('data_' + src.id) + '/' + getActiveCount('data_' + src.id));
+    renewParts.push(src.id + ':' + (getCount('data_' + src.id) > 0 ? '1' : '0'));
   }
   parts.push('renew:' + renewParts.join(','));
 
-  // Generators
-  const genOwned = getCount('synthetic_generator');
-  const genActive = getActiveCount('synthetic_generator');
+  // Generators — owned-or-not + upgrade level (structural: card set changes).
+  // Count/active value changes handled incrementally by updateSyntheticDynamic (#776).
+  const genOwned = getCount('synthetic_generator') > 0 ? 1 : 0;
   const upgradeLevel = getCount('generator_upgrade_autonomous') > 0 ? 2
     : getCount('generator_upgrade_verified') > 0 ? 1 : 0;
-  parts.push('gen:' + genOwned + '/' + genActive + '/' + upgradeLevel);
+  parts.push('gen:' + genOwned + '/' + upgradeLevel);
 
   // Purge button visibility + toggle state
   const purgeQueued = findPurgeIndex() >= 0;
@@ -388,7 +390,7 @@ function createBulkCard(src) {
   btn.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const now = Date.now();
-    if (now - _lastPriorityClickTime < 250) return;
+    if (now - _lastPriorityClickTime < 100) return;
     _lastPriorityClickTime = now;
     enqueuePurchase(purchId, getModifierQty(e), true);
     _dataTabFingerprint = '';
@@ -511,19 +513,17 @@ function createRenewableCard(src) {
 
     furloughBtn.addEventListener('click', (e) => {
       const now = Date.now();
-      if (now - _lastFurloughClickTime < 250) return;
+      if (now - _lastFurloughClickTime < 100) return;
       _lastFurloughClickTime = now;
       enqueueFurlough(purchId, getModifierQty(e), false);
-      _dataTabFingerprint = '';
       requestFullUpdate();
     });
     furloughBtn.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       const now = Date.now();
-      if (now - _lastFurloughClickTime < 250) return;
+      if (now - _lastFurloughClickTime < 100) return;
       _lastFurloughClickTime = now;
       enqueueFurlough(purchId, getModifierQty(e), true);
-      _dataTabFingerprint = '';
       requestFullUpdate();
     });
 
@@ -537,16 +537,14 @@ function createRenewableCard(src) {
 
   btn.addEventListener('click', (e) => {
     enqueuePurchase(purchId, getModifierQty(e), false);
-    _dataTabFingerprint = '';
     requestFullUpdate();
   });
   btn.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const now = Date.now();
-    if (now - _lastPriorityClickTime < 250) return;
+    if (now - _lastPriorityClickTime < 100) return;
     _lastPriorityClickTime = now;
     enqueuePurchase(purchId, getModifierQty(e), true);
-    _dataTabFingerprint = '';
     requestFullUpdate();
   });
 
@@ -722,19 +720,17 @@ function createSyntheticSection() {
 
     genFurloughBtn.addEventListener('click', (e) => {
       const now = Date.now();
-      if (now - _lastFurloughClickTime < 250) return;
+      if (now - _lastFurloughClickTime < 100) return;
       _lastFurloughClickTime = now;
       enqueueFurlough('synthetic_generator', getModifierQty(e), false);
-      _dataTabFingerprint = '';
       requestFullUpdate();
     });
     genFurloughBtn.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       const now = Date.now();
-      if (now - _lastFurloughClickTime < 250) return;
+      if (now - _lastFurloughClickTime < 100) return;
       _lastFurloughClickTime = now;
       enqueueFurlough('synthetic_generator', getModifierQty(e), true);
-      _dataTabFingerprint = '';
       requestFullUpdate();
     });
 
@@ -748,16 +744,14 @@ function createSyntheticSection() {
 
   genBtn.addEventListener('click', (e) => {
     enqueuePurchase('synthetic_generator', getModifierQty(e), false);
-    _dataTabFingerprint = '';
     requestFullUpdate();
   });
   genBtn.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const now = Date.now();
-    if (now - _lastPriorityClickTime < 250) return;
+    if (now - _lastPriorityClickTime < 100) return;
     _lastPriorityClickTime = now;
     enqueuePurchase('synthetic_generator', getModifierQty(e), true);
-    _dataTabFingerprint = '';
     requestFullUpdate();
   });
 
@@ -860,7 +854,7 @@ function createSyntheticSection() {
     upgBtn.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       const now = Date.now();
-      if (now - _lastPriorityClickTime < 250) return;
+      if (now - _lastPriorityClickTime < 100) return;
       _lastPriorityClickTime = now;
       enqueuePurchase(nextUpgradeId, getModifierQty(e), true);
       _dataTabFingerprint = '';
@@ -932,8 +926,15 @@ function createSyntheticSection() {
   const completedUpgradeIds = [];
   if (upgradeLevel >= 1) completedUpgradeIds.push('generator_upgrade_verified');
   if (upgradeLevel >= 2) completedUpgradeIds.push('generator_upgrade_autonomous');
+  // Mark completed upgrades as seen so tab notification doesn't flag them (#780)
+  const seenCards = gameState.ui.seenCards;
+  for (const cId of completedUpgradeIds) {
+    if (!seenCards.includes(cId)) seenCards.push(cId);
+  }
+  // Build completed section (appended after quality/collapse panels — #781)
+  let completedSection = null;
   if (completedUpgradeIds.length > 0) {
-    const completedSection = document.createElement('div');
+    completedSection = document.createElement('div');
     completedSection.className = 'admin-completed-section';
 
     const cHeader = document.createElement('div');
@@ -979,7 +980,6 @@ function createSyntheticSection() {
 
     completedSection.appendChild(cHeader);
     completedSection.appendChild(cList);
-    div.appendChild(completedSection);
   }
 
   // === Quality + Collapse panels (Phase 3+ only) — side-by-side row ===
@@ -1046,8 +1046,8 @@ function createSyntheticSection() {
         <span class="stat-value ${riskClass}" id="synth-risk-value">${riskLabel}</span>
       </div>
     `;
-    const collapseHeading = collapsePanel.querySelector('h3');
-    attachTooltip(collapseHeading, () =>
+    const riskValueEl = collapsePanel.querySelector('#synth-risk-value');
+    attachTooltip(riskValueEl, () =>
       `<div class="tooltip-section">Model collapse risk increases as data quality falls below ${BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD}.</div>`);
     if (gameState.data.syntheticScore > 0) collapsePanel.appendChild(createPurgeButton());
     panelRow.appendChild(collapsePanel);
@@ -1059,6 +1059,9 @@ function createSyntheticSection() {
   if (!gameState.data.qualityRevealed && gameState.data.syntheticScore > 0) {
     div.appendChild(createPurgeButton());
   }
+
+  // Completed upgrades after quality/collapse panels (#781)
+  if (completedSection) div.appendChild(completedSection);
 
   // Stash generator card ref on container for dynamic updates
   div._genCard = genCard;

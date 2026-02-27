@@ -46,6 +46,9 @@ export function createDefaultGameState() {
       totalResearchEarned: 0,
       totalPlaytime: 0,
       prestigeResets: 0,
+      peakFundingRate: 0,
+      peakResearchRate: 0,
+      dataCollapses: 0,
     },
 
     // Prestige upgrades (separate per arc)
@@ -255,8 +258,7 @@ export function createDefaultGameState() {
 
     // Focus Queue
     focusQueue: [],           // Ordered list of queue items
-    focusSlots: 1,            // Active parallel slots (1-5)
-    totalEfficiency: 1.0,     // Total efficiency pool (divided among active slots)
+    focusSpeed: 1.0,          // Speed multiplier for queue processing
     opsBonus: 0,              // Legacy — replaced by ceoFocus.buildup.operations
     opsMaxBonus: 0.25,        // Legacy — replaced by ceoFocus ops cap
     staffingSpeedMultiplier: 1.0, // Focus queue speed for personnel/compute (from milestones)
@@ -345,6 +347,7 @@ export function createDefaultGameState() {
     endingTriggered: null,       // Ending ID when triggered, null otherwise
     endingVariant: null,         // Ending variant string
     endingTime: null,            // Date.now() when ending triggered
+    endingsSeen: [],             // Array of ending IDs seen across all runs (survives extinction reset)
 
     // Bankruptcy
     bankrupted: false,
@@ -561,15 +564,20 @@ export function loadGame() {
 
       // Save migration: focus queue fields (added in focus system update)
       if (loaded.focusQueue === undefined) gameState.focusQueue = [];
-      if (loaded.focusSlots === undefined) gameState.focusSlots = 1;
       if (loaded.opsBonus === undefined) gameState.opsBonus = 0;
       if (loaded.opsMaxBonus === undefined) gameState.opsMaxBonus = 0.25;
       if (loaded.totalEquitySold === undefined) gameState.totalEquitySold = 0;
       if (loaded.targetAllocation === undefined) gameState.targetAllocation = null;
       if (loaded.feedbackAccumulator === undefined) gameState.feedbackAccumulator = 0;
       if (loaded.disbursements === undefined) gameState.disbursements = [];
-      if (loaded.totalEfficiency === undefined) gameState.totalEfficiency = 1.0;
       if (loaded.staffingSpeedMultiplier === undefined) gameState.staffingSpeedMultiplier = 1.0;
+      // Migrate old saves: totalEfficiency → focusSpeed, drop focusSlots
+      if (loaded.totalEfficiency !== undefined && loaded.focusSpeed === undefined) {
+        gameState.focusSpeed = loaded.totalEfficiency;
+      } else if (loaded.focusSpeed === undefined) {
+        gameState.focusSpeed = 1.0;
+      }
+      delete gameState.focusSlots;
 
       // Save migration: CEO Focus (replaces ops bonus)
       if (loaded.ceoFocus === undefined) {
@@ -880,10 +888,22 @@ export function loadGame() {
         }
       }
 
+      // Save migration: endingsSeen (tracks endings across runs)
+      if (!loaded.endingsSeen) {
+        gameState.endingsSeen = [];
+      }
+
       // Save migration: everUnlockedSections (prestige UI persistence)
       if (!loaded.ui?.everUnlockedSections) {
         if (!gameState.ui) gameState.ui = createDefaultGameState().ui;
         gameState.ui.everUnlockedSections = [];
+      }
+
+      // Save migration: lifetimeAllTime new fields (peaks, dataCollapses)
+      if (gameState.lifetimeAllTime) {
+        if (gameState.lifetimeAllTime.peakFundingRate === undefined) gameState.lifetimeAllTime.peakFundingRate = 0;
+        if (gameState.lifetimeAllTime.peakResearchRate === undefined) gameState.lifetimeAllTime.peakResearchRate = 0;
+        if (gameState.lifetimeAllTime.dataCollapses === undefined) gameState.lifetimeAllTime.dataCollapses = 0;
       }
 
       // Save migration: computeEfficiency → revenueMultiplier rename

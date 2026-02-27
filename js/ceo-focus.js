@@ -63,14 +63,10 @@ export function isQueueEmpty() {
   return gameState.focusQueue.length === 0;
 }
 
-/** CEO is idle when queue is empty or all active-slot items are paused (e.g. insufficient funds) */
+/** CEO is idle when queue is empty or the active item is paused (e.g. insufficient funds) */
 function isEffectivelyIdle() {
   if (gameState.focusQueue.length === 0) return true;
-  const activeCount = Math.min(gameState.focusSlots, gameState.focusQueue.length);
-  for (let i = 0; i < activeCount; i++) {
-    if (!gameState.focusQueue[i].paused) return false;
-  }
-  return true;
+  return gameState.focusQueue[0].paused === true;
 }
 
 function isFundraiseActive() {
@@ -93,7 +89,7 @@ export function processCEOFocus(deltaTime) {
       // Build up — IR benefits from focused efficiency
       const baseTime = id === 'ir' ? IR_BUILDUP_TIME : BUILDUP_TIME;
       const rate = deltaTime / baseTime;
-      const effectiveRate = id === 'ir' ? rate * Math.sqrt(gameState.totalEfficiency || 1) : rate;
+      const effectiveRate = id === 'ir' ? rate * Math.sqrt(gameState.focusSpeed || 1) : rate;
       buildup[id] = Math.min(1, (buildup[id] || 0) + effectiveRate);
     } else {
       // Decay — special case: IR paused during active fundraise
@@ -128,7 +124,7 @@ export function computeEffects() {
   const idle = isEffectivelyIdle();
   const selected = focus.selectedActivity;
   const fundraiseCount = focus.completedFundraiseCount || 0;
-  const efficiency = idle ? gameState.totalEfficiency : 1.0;
+  const efficiency = idle ? gameState.focusSpeed : 1.0;
 
   // Grant Writing: $1000/s base × 3^fundraiseCount × efficiency (only when idle + selected)
   const grantsActive = idle && selected === 'grants';
@@ -150,8 +146,12 @@ export function computeEffects() {
   if (hasProcessOpt) opsCap += 0.10;
   const opsBonus = opsFloor + (opsCap - opsFloor) * (buildup.operations || 0);
 
-  // Operations: automation throughput bonus (scales linearly with buildup, no floor/cap modifiers)
-  const opsAutomationBonus = 0.5 * (buildup.operations || 0);
+  // Operations: automation throughput bonus (mirrors cost reduction structure)
+  let autoFloor = 0;
+  let autoCap = 0.50;
+  if (hasCOO) { autoFloor += 0.125; autoCap += 0.125; }
+  if (hasProcessOpt) autoCap += 0.25;
+  const opsAutomationBonus = autoFloor + (autoCap - autoFloor) * (buildup.operations || 0);
 
   // Investor Relations: bonus to next fundraise
   // 20K/s base growth rate, cap = 2.4M; 4x per fundraise after the one that unlocks IR
@@ -161,6 +161,18 @@ export function computeEffects() {
   const irFundraiseCap = IR_CAP_BASE * Math.pow(8, irFundraiseScaling);
   const irFundraiseBonus = irFundraiseCap * irBuildup;
   const irMultFraction = 0.20 * irBuildup;  // 20% of base multiplier at full buildup, bypasses cap
+
+  // Estimate total IR raise bonus for display (fixed + mult-based revenue for next round)
+  let irTotalEstimate = irFundraiseBonus;
+  const nextRound = Object.entries(FUNDRAISE_ROUNDS).find(
+    ([rid]) => gameState.fundraiseRounds[rid]?.available && !gameState.fundraiseRounds[rid]?.raised
+  );
+  if (nextRound && irMultFraction > 0) {
+    const [, round] = nextRound;
+    const annualRevenue = (gameState.computed?.revenue?.annual || 0);
+    const currentMult = gameState.fundraiseRounds[nextRound[0]]?.currentMultiplier ?? round.startingMultiplier;
+    irTotalEstimate += annualRevenue * (irMultFraction * currentMult) * round.equityPercent;
+  }
 
   // Public Positioning: acquisition growth + market edge preservation + bonus revenue
   const ppBuildup = buildup.public_positioning || 0;
@@ -174,16 +186,19 @@ export function computeEffects() {
     grantRate,
     grantBaseRate,
     efficiency,
-    potentialEfficiency: gameState.totalEfficiency,
+    potentialEfficiency: gameState.focusSpeed,
     flatRP,
     personnelMultiplier,
     opsBonus,
     opsCap,
     opsFloor,
     opsAutomationBonus,
+    autoFloor,
+    autoCap,
     irFundraiseBonus,
     irFundraiseCap,
     irMultFraction,
+    irTotalEstimate,
     acquiredDemandGrowthMultiplier,
     edgeDecayReduction,
     bonusRevenueMultiplier,

@@ -237,7 +237,7 @@ export const capabilitiesTrack = {
       requiresAlignment: 30,
       effects: {
         tokenWeightMultiplier: 0.55,
-        focusEfficiencyMultiplier: 1.5,
+        focusSpeedMultiplier: 1.5,
         capFeedbackRate: 0.001,    // T7: 0.10%/s
       },
       hiddenAlignmentEffect: -6,  // Autonomous systems reduce human oversight
@@ -255,8 +255,7 @@ export const capabilitiesTrack = {
       requires: ['autonomous_research'],
       requiresAlignment: 50,
       effects: {
-        focusEfficiencyMultiplier: 1.5,
-        focusSlots: 2,
+        focusSpeedMultiplier: 1.5,
         capFeedbackRate: 0.002,    // T8: 0.20%/s — stretched for Phase 3 pacing (was 0.005)
       },
       hiddenAlignmentEffect: -8,  // Self-modification is inherently risky even with sandboxes

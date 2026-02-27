@@ -114,15 +114,6 @@ function renderStatsContent() {
         <span class="stats-item-value">${formatNumber(lt.peakResearchRate || 0)}${getRateUnit()}</span>
       </div>`;
 
-  const { discovered, total } = getFlavorStats();
-  if (discovered > 0) {
-    html += `
-      <div class="stats-item flavor-stat-item">
-        <span class="stats-item-label">Flavor</span>
-        <span class="stats-item-value flavor-stat-value" style="cursor:help">${discovered} / ${total}</span>
-      </div>`;
-  }
-
   if ((lt.dataCollapses || 0) > 0) {
     html += `
       <div class="stats-item">
@@ -141,11 +132,14 @@ function renderStatsContent() {
 
   html += `</div>`;
 
-  // All-time section (only show if there's meaningful data beyond current run)
-  if ((at.prestigeResets || 0) > 0 || (at.totalPlaytime || 0) > gameState.timeElapsed + 60) {
-    html += `
+  const { discovered, total } = getFlavorStats();
+
+  // All-time section — always shown (flavor is lifetime-only)
+  html += `
     <div class="stats-section">
-      <div class="stats-section-header">ALL TIME</div>
+      <div class="stats-section-header">ALL TIME</div>`;
+
+  html += `
       <div class="stats-item">
         <span class="stats-item-label">Total Playtime</span>
         <span class="stats-item-value">${formatTime(at.totalPlaytime || 0)}</span>
@@ -155,11 +149,60 @@ function renderStatsContent() {
         <span class="stats-item-value">${formatFunding(at.totalFundingEarned || 0)}</span>
       </div>
       <div class="stats-item">
-        <span class="stats-item-label">Prestige Resets</span>
-        <span class="stats-item-value">${at.prestigeResets || 0}</span>
-      </div>
-    </div>`;
+        <span class="stats-item-label">Total Research Earned</span>
+        <span class="stats-item-value">${formatNumber(at.totalResearchEarned || 0)}</span>
+      </div>`;
+
+  if ((at.peakFundingRate || 0) > 0) {
+    html += `
+      <div class="stats-item">
+        <span class="stats-item-label">Peak Income (Best Ever)</span>
+        <span class="stats-item-value">${formatFunding(at.peakFundingRate)}${getRateUnit()}</span>
+      </div>`;
   }
+
+  if ((at.peakResearchRate || 0) > 0) {
+    html += `
+      <div class="stats-item">
+        <span class="stats-item-label">Peak Research (Best Ever)</span>
+        <span class="stats-item-value">${formatNumber(at.peakResearchRate)}${getRateUnit()}</span>
+      </div>`;
+  }
+
+  if ((at.prestigeResets || 0) > 0) {
+    html += `
+      <div class="stats-item">
+        <span class="stats-item-label">Prestige Resets</span>
+        <span class="stats-item-value">${at.prestigeResets}</span>
+      </div>`;
+  }
+
+  if ((at.dataCollapses || 0) > 0) {
+    html += `
+      <div class="stats-item">
+        <span class="stats-item-label">Data Collapses</span>
+        <span class="stats-item-value">${at.dataCollapses}</span>
+      </div>`;
+  }
+
+  if (discovered > 0) {
+    html += `
+      <div class="stats-item flavor-stat-item">
+        <span class="stats-item-label">Flavors Tasted</span>
+        <span class="stats-item-value flavor-stat-value" style="cursor:help">${discovered} / ${total}</span>
+      </div>`;
+  }
+
+  const endingsSeen = gameState.endingsSeen || [];
+  if (endingsSeen.length > 0) {
+    html += `
+      <div class="stats-item">
+        <span class="stats-item-label">Endings Seen</span>
+        <span class="stats-item-value">${endingsSeen.length} / 5</span>
+      </div>`;
+  }
+
+  html += `</div>`;
 
   statsGrid.innerHTML = html;
 
@@ -167,9 +210,9 @@ function renderStatsContent() {
   const flavorValEl = statsGrid.querySelector('.flavor-stat-value');
   if (flavorValEl) {
     attachTooltip(flavorValEl, () => {
-      // Easter egg: hovering the stat itself counts as a bonus discovery
       const disc = gameState.ui.discoveredFlavor;
-      if (!disc.includes('__flavor_stat_egg__')) {
+      // Easter egg: hovering the stat counts as a bonus discovery — only at 100%
+      if (disc.length >= total && !disc.includes('__flavor_stat_egg__')) {
         disc.push('__flavor_stat_egg__');
         flavorValEl.textContent = `${disc.length} / ${total}`;
       }

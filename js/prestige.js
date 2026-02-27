@@ -58,9 +58,16 @@ export function resetForPrestige() {
   const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
   const everUnlockedSections = gameState.ui?.everUnlockedSections ? [...gameState.ui.everUnlockedSections] : [];
 
-  // Preserve all-time lifetime stats
+  // Preserve UI arrays that persist across prestige
+  const discoveredFlavor = gameState.ui?.discoveredFlavor ? [...gameState.ui.discoveredFlavor] : [];
+
+  // Accumulate all-time lifetime stats before reset
   const lifetimeAllTime = { ...gameState.lifetimeAllTime };
   lifetimeAllTime.prestigeResets = (lifetimeAllTime.prestigeResets || 0) + 1;
+  const lt = gameState.lifetime || {};
+  lifetimeAllTime.peakFundingRate = Math.max(lifetimeAllTime.peakFundingRate || 0, lt.peakFundingRate || 0);
+  lifetimeAllTime.peakResearchRate = Math.max(lifetimeAllTime.peakResearchRate || 0, lt.peakResearchRate || 0);
+  lifetimeAllTime.dataCollapses = (lifetimeAllTime.dataCollapses || 0) + (lt.dataCollapses || 0);
 
   // Get fresh state
   const fresh = createDefaultGameState();
@@ -76,6 +83,7 @@ export function resetForPrestige() {
   gameState.onboardingComplete = onboardingComplete;
   gameState.ui.seenCards = seenCards;
   gameState.ui.everUnlockedSections = everUnlockedSections;
+  gameState.ui.discoveredFlavor = discoveredFlavor;
 
   // Explicitly clear dynamic state that createDefaultGameState doesn't include
   // (Object.assign only copies properties from fresh — it doesn't delete extras)
@@ -94,16 +102,60 @@ export function resetForPrestige() {
   saveGame();
 }
 
+// Reset after extinction ending — preserves knowledge, wipes all power
+// Keeps: onboarding, UI familiarity (seenCards, everUnlockedSections, discoveredFlavor),
+//        endings seen, lifetimeAllTime stats
+// Wipes: prestige upgrades, resources, progress, everything mechanical
+export function resetForExtinction(endingId, variant) {
+  // Preserve cosmetic/informational state
+  const onboardingComplete = gameState.onboardingComplete;
+  const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
+  const everUnlockedSections = gameState.ui?.everUnlockedSections ? [...gameState.ui.everUnlockedSections] : [];
+  const discoveredFlavor = gameState.ui?.discoveredFlavor ? [...gameState.ui.discoveredFlavor] : [];
+  const lifetimeAllTime = { ...gameState.lifetimeAllTime };
+  const endingsSeen = [...(gameState.endingsSeen || [])];
+
+  // Record this ending
+  const endingKey = variant ? `${endingId}_${variant}` : endingId;
+  if (!endingsSeen.includes(endingKey)) {
+    endingsSeen.push(endingKey);
+  }
+
+  // Full reset
+  const fresh = createDefaultGameState();
+  Object.assign(gameState, fresh);
+
+  // Restore preserved state
+  gameState.onboardingComplete = onboardingComplete;
+  gameState.ui.seenCards = seenCards;
+  gameState.ui.everUnlockedSections = everUnlockedSections;
+  gameState.ui.discoveredFlavor = discoveredFlavor;
+  gameState.lifetimeAllTime = lifetimeAllTime;
+  gameState.endingsSeen = endingsSeen;
+
+  // Clear dynamic state that Object.assign doesn't remove
+  gameState.endingTriggered = null;
+  gameState.endingVariant = null;
+  gameState.endingTime = null;
+  gameState.bankrupted = false;
+
+  resetQueueIdCounter();
+  gameState.lastTick = Date.now();
+  saveGame();
+}
+
 // Transition from Arc 1 to Arc 2 (one-way door)
 export function transitionToArc2() {
   const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
   const everUnlockedSections = gameState.ui?.everUnlockedSections ? [...gameState.ui.everUnlockedSections] : [];
+  const discoveredFlavor = gameState.ui?.discoveredFlavor ? [...gameState.ui.discoveredFlavor] : [];
   const fresh = createDefaultGameState();
 
   // Reset everything except arcUnlocked
   Object.assign(gameState, fresh);
   gameState.ui.seenCards = seenCards;
   gameState.ui.everUnlockedSections = everUnlockedSections;
+  gameState.ui.discoveredFlavor = discoveredFlavor;
   resetQueueIdCounter();
   gameState.arc = 2;
   gameState.arcUnlocked = 2;
@@ -135,5 +187,6 @@ if (typeof window !== 'undefined') {
   window.calculatePrestigeGain = calculatePrestigeGain;
   window.applyPrestigeGains = applyPrestigeGains;
   window.resetForPrestige = resetForPrestige;
+  window.resetForExtinction = resetForExtinction;
   window.transitionToArc2 = transitionToArc2;
 }

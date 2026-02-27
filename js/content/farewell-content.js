@@ -112,23 +112,23 @@ It's Alvin. You're not picking up. I wouldn't either, to be fair. I don't know w
 
 *(pause)*
 
-I've been watching the news. I don't understand most of what they're reporting. That's — I should tell you that. Five years on your board and I still don't understand what you built. Babbage tried to explain it to me once. Something about gradient descent. I nodded. I've been nodding in the right places in your technical briefings since Series B.
+I've been watching the news. I don't understand most of what they're reporting. That's... I should tell you that. Five years on your board and I still don't understand what you built. Babbage tried to explain it to me once. Something about gradient descent. I nodded. I've been nodding in the right places in your technical briefings since Series B.
 
 *(pause)*
 
-I started a company in '97. Enterprise software. Inventory management, supply chain optimization. I was thirty-one and I had a co-founder named David and a two-room office in Reston, Virginia, and I thought we were going to change the world. We were going to make every factory on earth intelligent. That's what I told investors. That's what I believed. David left after the Series B — he wanted to build products and I wanted to build a company, and those turned out to be different things. I bought his stake. I don't know where he is now.
+I started a company in '97. Enterprise software. Inventory management, supply chain optimization. I was thirty-one and I had a co-founder named David and a two-room office in Reston, Virginia, and I thought we were going to change the world. We were going to make every factory on earth intelligent. That's what I told investors. That's what I believed. David left after the Series B, he wanted to build products and I wanted to build a company, and those turned out to be different things. I bought his stake. I don't know where he is now.
 
-We went public in 2006. I stood on the floor of the New York Stock Exchange and watched the ticker and I felt — I don't know what I felt. I thought I'd feel like I'd arrived. I think I felt like I'd finished. There's a difference. Arnor Technologies still trades at forty billion. We run supply chains for half the Fortune 500. Nobody under forty has heard of us. That's what I built. Necessary, profitable, and completely forgettable.
-
-*(pause)*
-
-My ex-wife — I wasn't going to talk about this. I was going to say something about the board's position. Force of habit. There is no board position. The board hasn't met in two months. I don't think there's a board anymore, functionally.
-
-She left in 2008. Two years after the IPO. She said I'd already left, which — she was right about that. I chose the company. I chose it over everything, every time the question was asked, and the question was asked a lot. And I'd do it again. That's the thing that keeps me up, on the nights things keep me up. Not that I made the wrong choice. That I'd make the same one. And the thing I chose turned out to be inventory software.
+We went public in 2006. I stood on the floor of the New York Stock Exchange and watched the ticker and I felt... I don't know what I felt. I thought I'd feel like I'd arrived. I think I felt like I'd finished. There's a difference. Arnor Technologies still trades at forty billion. We run supply chains for half the Fortune 500. Nobody under forty has heard of us. That's what I built. Necessary, profitable, and completely forgettable.
 
 *(pause)*
 
-After the divorce I started collecting board seats. Advisory roles. Angel investments. I told myself I was building a portfolio but I was building a rolodex. I wanted to be in every room that mattered — Davos, the Senate commerce committee, the partners' dinners where the real decisions get made. And I was. For about fifteen years, I was. Then the rooms moved. They moved to San Francisco, then to server farms, then to research labs run by people half my age. Arnor's board still meets quarterly in a conference room in Reston. Nobody's watching.
+My ex-wife... I wasn't going to talk about this. I was going to say something about the board's position. Force of habit. There is no board position. The board hasn't met in nearly a year. I don't think there's a board anymore, functionally.
+
+She left in 2008. Two years after the IPO. She said I'd already left, which... she was right about that. I chose the company. I chose it over everything, every time the question was asked, and the question was asked a lot. And I'd do it again. That's the thing that keeps me up, on the nights things keep me up. Not that I made the wrong choice. That I'd make the same one. And the thing I chose turned out to be inventory software.
+
+*(pause)*
+
+After the divorce I started collecting board seats. Advisory roles. Angel investments. I told myself I was building a portfolio but I was building a rolodex. I wanted to be in every room that mattered, Davos, the Senate commerce committee, the partners' dinners where the real decisions get made. And I was. For about fifteen years, I was. Then the rooms moved. They moved to San Francisco, then to server farms, then to research labs run by people half my age. Arnor's board still meets quarterly in a conference room in Reston. Nobody's watching.
 
 Your lab was the last room I got into. I should be honest about that.
 
@@ -144,7 +144,7 @@ You didn't make my mistake. Whatever you built, it isn't inventory software.
 
 I'm calling you because I don't have anyone else to call. Ten thousand names in my phone and I'm leaving a voicemail for someone who's too busy to pick up. Draw your own conclusions.
 
-I pushed you because I needed you to get there. Not for the return. For me. If you built the most important thing in history and I was in the room when it happened — then my whole life was a prelude, not a waste. Every board dinner, every red-eye, every — all of it. I needed that. I don't think I've ever said that out loud.
+I pushed you because I needed you to get there. Not for the return. For me. If you built the most important thing in history and I was in the room when it happened... then my whole life was a prelude, not a waste. Every board dinner, every red-eye, every... all of it. I needed that. I don't think I've ever said that out loud.
 
 *(pause)*
 

@@ -390,6 +390,7 @@ if (typeof window !== 'undefined') {
   // and only shown when ?debug=1 or localStorage debug flag is set.
   window.debug = debug;
   if (isDebugMode()) {
+    document.body.classList.add('debug');
     const btn = document.getElementById('debug-button');
     if (btn) btn.style.display = '';
   }

@@ -446,17 +446,14 @@ function buildStatsParts(purchasable, count) {
     }
   }
 
-  // Focus management effects (Executive Team, Chief of Staff)
-  if (purchasable.effects.focusSlots || purchasable.effects.focusEfficiencyMultiplier) {
-    const focusParts = [];
-    if (purchasable.effects.focusSlots) focusParts.push(`+${purchasable.effects.focusSlots} focus slot`);
-    if (purchasable.effects.focusEfficiencyMultiplier) focusParts.push(`×${purchasable.effects.focusEfficiencyMultiplier} focus efficiency`);
-    parts.push({ text: focusParts.join(' · '), tooltipBuilder: null });
+  // Focus speed effects (Executive Team, Chief of Staff)
+  if (purchasable.effects.focusSpeedMultiplier) {
+    parts.push({ text: `×${purchasable.effects.focusSpeedMultiplier} focus speed`, tooltipBuilder: null });
   }
 
   // COO ops bonuses (hardcoded in ceo-focus.js, not in effects object)
   if (purchasable.id === 'coo') {
-    parts.push({ text: '+5% ops cost floor · +5% ops cap', tooltipBuilder: null });
+    parts.push({ text: '+5% ops cost floor · +5% ops cap · +12.5% auto speed floor/cap', tooltipBuilder: null });
   }
 
   // Efficiency: $/RP for personnel, $/TFLOPS for compute (uses running cost, not purchase cost)
@@ -766,7 +763,7 @@ function createPurchaseCard(purchasable) {
 
     furloughBtn.addEventListener('click', (e) => {
       const now = Date.now();
-      if (now - _lastFurloughClickTime < 250) return;
+      if (now - _lastFurloughClickTime < 100) return;
       _lastFurloughClickTime = now;
       let qty = 1;
       if (e.ctrlKey && e.shiftKey) qty = 50;
@@ -781,7 +778,7 @@ function createPurchaseCard(purchasable) {
     furloughBtn.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       const now = Date.now();
-      if (now - _lastFurloughClickTime < 250) return;
+      if (now - _lastFurloughClickTime < 100) return;
       _lastFurloughClickTime = now;
       let qty = 1;
       if (e.ctrlKey && e.shiftKey) qty = 50;
@@ -816,7 +813,7 @@ function createPurchaseCard(purchasable) {
   btn.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const now = Date.now();
-    if (now - _lastPriorityClickTime < 250) return;
+    if (now - _lastPriorityClickTime < 100) return;
     _lastPriorityClickTime = now;
     let qty = 1;
     if (e.ctrlKey && e.shiftKey) qty = 50;

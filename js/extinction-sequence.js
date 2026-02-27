@@ -2,13 +2,12 @@
 // Extinction Sequence - Variable pacing based on hidden alignment
 // Reckless players: fast, brutal (~30s). Safety-conscious: slow, tragic (~90s).
 
-import { gameState, resetGame } from './game-state.js';
-import { transitionToArc2 } from './prestige.js';
+import { gameState } from './game-state.js';
+import { transitionToArc2, resetForExtinction } from './prestige.js';
 import { applyDebugSettings, isDebugMode } from './debug-commands.js';
 import { addNewsItem, clearNewsFeed } from './news-feed.js';
 import { EXTINCTION_TIMING, ALIGNMENT } from '../data/balance.js';
 import { arc1Endings, triggerEnding } from './endings.js';
-import { resetQueueIdCounter } from './focus-queue.js';
 import { resetTriggeredMessages } from './messages.js';
 import { extinctionNewsByTier } from './content/news-content.js';
 
@@ -29,6 +28,7 @@ export function getExtinctionNewsForTier(tier) {
 
 export function triggerExtinctionSequence() {
   if (sequenceActive) return;
+  restoreNormalPacing(); // Ensure debug fast mode doesn't leak
 
   // During fast-forward, skip cinematic and directly transition
   if (gameState._fastForwarding) {
@@ -398,9 +398,10 @@ function showTerminalPrompt(promptBlock, overlay) {
 
   function activateOption(action) {
     if (action === 'new_game') {
-      resetGame();
+      const endingId = gameState.endingTriggered;
+      const variant = gameState.endingVariant;
+      resetForExtinction(endingId, variant);
       applyDebugSettings();
-      resetQueueIdCounter();
       resetTriggeredMessages();
       cleanup();
       location.reload();

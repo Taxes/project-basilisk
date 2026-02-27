@@ -204,43 +204,34 @@ export function processQueue(deltaTime) {
   if (!gameState.computed) gameState.computed = {};
   gameState.computed.capex = { hiring: 0, infrastructure: 0 };
 
-  const slots = gameState.focusSlots;
-  let activeCount = Math.min(slots, gameState.focusQueue.length);
-  const perSlotEfficiency = activeCount > 0
-    ? gameState.totalEfficiency / activeCount
-    : gameState.totalEfficiency;
-  let _activeSlotsUsed = 0;
+  const speed = gameState.focusSpeed;
 
-  for (let i = 0; i < activeCount && i < gameState.focusQueue.length; i++) {
-    const item = gameState.focusQueue[i];
-    const effectiveDelta = deltaTime * perSlotEfficiency;
+  if (gameState.focusQueue.length > 0) {
+    const item = gameState.focusQueue[0];
+    const effectiveDelta = deltaTime * speed;
 
-    const completed = processQueueItem(item, effectiveDelta, deltaTime, perSlotEfficiency);
+    const completed = processQueueItem(item, effectiveDelta, deltaTime, speed);
     if (completed) {
-      gameState.focusQueue.splice(i, 1);
-      mergeAdjacentItems(i);
-      i--;
-      activeCount = Math.min(activeCount, gameState.focusQueue.length);
-    } else {
-      _activeSlotsUsed++;
+      gameState.focusQueue.splice(0, 1);
+      mergeAdjacentItems(0);
     }
   }
 
   processCEOFocus(deltaTime);
 }
 
-function processQueueItem(item, effectiveDelta, deltaTime, perSlotEfficiency) {
+function processQueueItem(item, effectiveDelta, deltaTime, speed) {
   switch (item.type) {
-    case 'purchase':        return processPurchaseItem(item, effectiveDelta, deltaTime, perSlotEfficiency);
-    case 'fundraise':       return processFundraiseItem(item, effectiveDelta, perSlotEfficiency);
+    case 'purchase':        return processPurchaseItem(item, effectiveDelta, deltaTime, speed);
+    case 'fundraise':       return processFundraiseItem(item, effectiveDelta, speed);
     case 'culture':         return processCultureItem(item, effectiveDelta);
     case 'purge_synthetic': return processPurgeItem(item, effectiveDelta);
-    case 'furlough':        return processFurloughItem(item, effectiveDelta, perSlotEfficiency);
+    case 'furlough':        return processFurloughItem(item, effectiveDelta, speed);
     default:                return true;
   }
 }
 
-function processPurchaseItem(item, effectiveDelta, deltaTime, perSlotEfficiency) {
+function processPurchaseItem(item, effectiveDelta, deltaTime, speed) {
   const purchasable = getPurchasableById(item.target);
   if (!purchasable) return true; // Invalid item, remove it
 
@@ -254,9 +245,9 @@ function processPurchaseItem(item, effectiveDelta, deltaTime, perSlotEfficiency)
   }
 
   if (purchasable.category === 'personnel' || purchasable.category === 'compute') {
-    duration = item.duration / getStaffingSpeedMultiplier();
+    duration = duration / getStaffingSpeedMultiplier();
   } else if (purchasable.category === 'data') {
-    duration = item.duration * getFundraiseSpeedMultiplier();
+    duration = duration * getFundraiseSpeedMultiplier();
   }
 
   // Lock in unit cost at start of each new unit
@@ -315,7 +306,7 @@ function processPurchaseItem(item, effectiveDelta, deltaTime, perSlotEfficiency)
   item.progress += progressDelta;
   item.paused = false;
   item.fundingStableSince = null;
-  item.effectiveRemaining = duration * (1 - item.progress) / perSlotEfficiency;
+  item.effectiveRemaining = duration * (1 - item.progress) / speed;
 
   // Check for unit completion
   while (item.progress >= 1.0 && item.completed < item.quantity) {
@@ -335,11 +326,11 @@ function processPurchaseItem(item, effectiveDelta, deltaTime, perSlotEfficiency)
   return item.completed >= item.quantity;
 }
 
-function processFundraiseItem(item, effectiveDelta, perSlotEfficiency) {
+function processFundraiseItem(item, effectiveDelta, speed) {
   // Apply fundraise speed multiplier (legal team + AI legal assistant)
   const duration = item.duration * getFundraiseSpeedMultiplier();
   item.progress += effectiveDelta / duration;
-  item.effectiveRemaining = duration * (1 - item.progress) / perSlotEfficiency;
+  item.effectiveRemaining = duration * (1 - item.progress) / speed;
   if (item.progress >= 1.0) {
     completeFundraise(item);
     return true;
@@ -354,7 +345,7 @@ function processPurgeItem(item, effectiveDelta) {
   return false;
 }
 
-function processFurloughItem(item, effectiveDelta, perSlotEfficiency) {
+function processFurloughItem(item, effectiveDelta, speed) {
   // Apply same speed as hiring/procurement
   const purchasable = getPurchasableById(item.target);
   let duration = item.duration;
@@ -362,7 +353,7 @@ function processFurloughItem(item, effectiveDelta, perSlotEfficiency) {
     duration = item.duration / getStaffingSpeedMultiplier();
   }
   item.progress += effectiveDelta / duration;
-  item.effectiveRemaining = duration * (1 - item.progress) / perSlotEfficiency;
+  item.effectiveRemaining = duration * (1 - item.progress) / speed;
 
   // Handle unit completion (loop for quantity > 1, matching purchase behavior)
   while (item.progress >= 1.0 && item.completed < item.quantity) {
@@ -379,11 +370,8 @@ function processFurloughItem(item, effectiveDelta, perSlotEfficiency) {
     // Reverse focus effects while furloughed (e.g. chief_of_staff, executive_team)
     if (purchasable) {
       const effects = purchasable.effects || {};
-      if (effects.focusSlots) {
-        gameState.focusSlots = Math.max(1, gameState.focusSlots - effects.focusSlots);
-      }
-      if (effects.focusEfficiencyMultiplier) {
-        gameState.totalEfficiency /= effects.focusEfficiencyMultiplier;
+      if (effects.focusSpeedMultiplier) {
+        gameState.focusSpeed /= effects.focusSpeedMultiplier;
       }
     }
   }
@@ -427,11 +415,8 @@ function executeProgressivePurchaseUnit(purchasableId, _lockedCost) {
     const purchasable = getPurchasableById(purchasableId);
     if (purchasable) {
       const effects = purchasable.effects || {};
-      if (effects.focusSlots) {
-        gameState.focusSlots += effects.focusSlots;
-      }
-      if (effects.focusEfficiencyMultiplier) {
-        gameState.totalEfficiency *= effects.focusEfficiencyMultiplier;
+      if (effects.focusSpeedMultiplier) {
+        gameState.focusSpeed *= effects.focusSpeedMultiplier;
       }
     }
     return true;  // Success, no cost (already handled)
@@ -452,11 +437,8 @@ function executeProgressivePurchaseUnit(purchasableId, _lockedCost) {
 
   // Focus effects from purchasable data
   const effects = purchasable.effects || {};
-  if (effects.focusSlots) {
-    gameState.focusSlots += effects.focusSlots;
-  }
-  if (effects.focusEfficiencyMultiplier) {
-    gameState.totalEfficiency *= effects.focusEfficiencyMultiplier;
+  if (effects.focusSpeedMultiplier) {
+    gameState.focusSpeed *= effects.focusSpeedMultiplier;
   }
 
   return true;
@@ -488,7 +470,8 @@ export function calculateFundraisePreview(round, annualRevenue, multiplier, base
   const irMaxRaise = round.maxRaise ? round.maxRaise * (1 + BALANCE.IR_MAX_OVERSHOOT) : Infinity;
   const raiseAmount = Math.min(irMaxRaise, cappedAmount + totalIrExtra);
   let effectiveEquity = round.equityPercent;
-  const totalUncapped = uncappedAmount + totalIrExtra;
+  // Cap the uncapped total at the overshoot limit so IR can't inflate valuations beyond 25%
+  const totalUncapped = Math.min(uncappedAmount + totalIrExtra, irMaxRaise);
   if (round.maxRaise && totalUncapped > round.maxRaise) {
     effectiveEquity = round.equityPercent * (round.maxRaise / totalUncapped);
   }

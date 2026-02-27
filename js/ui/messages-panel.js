@@ -32,6 +32,7 @@ function getChoiceEffectsTooltipHTML(optionId) {
         let html = '';
         for (const e of option.effects) {
           if (e.minPhase && gameState.phase < e.minPhase) continue;
+          if (e.minArc && gameState.arc < e.minArc) continue;
           const cls = e.type === 'positive' ? ' class="positive"' : '';
           html += `<div class="tooltip-row"><span${cls}>${e.label}</span></div>`;
         }
@@ -50,7 +51,9 @@ function getChoiceEffects(optionId) {
   for (const choice of strategicChoiceDefinitions) {
     for (const option of choice.options) {
       if (option.id === optionId && option.effects) {
-        return option.effects.filter(e => !e.minPhase || gameState.phase >= e.minPhase);
+        return option.effects.filter(e =>
+          (!e.minPhase || gameState.phase >= e.minPhase) &&
+          (!e.minArc || gameState.arc >= e.minArc));
       }
     }
   }
@@ -125,16 +128,18 @@ function createMessageListItem(msg, sectionId) {
     item.classList.add('selected');
   }
 
-  // Tag — archive uses context-specific labels
+  // Tag — consistent labels across all views
   const tag = document.createElement('span');
-  if (sectionId === 'archive') {
-    if (msg.type === 'action') {
-      tag.className = 'message-tag decision';
-      tag.textContent = 'DECISION';
-    } else {
-      tag.className = 'message-tag note';
-      tag.textContent = 'NOTE';
-    }
+  const isTutorial = msg.tags && msg.tags.includes('tutorial');
+  if (sectionId === 'archive' && msg.type === 'action') {
+    tag.className = 'message-tag decision';
+    tag.textContent = 'DECISION';
+  } else if (isTutorial) {
+    tag.className = 'message-tag ref';
+    tag.textContent = 'REF';
+  } else if (msg.type === 'info') {
+    tag.className = 'message-tag note';
+    tag.textContent = 'NOTE';
   } else {
     tag.className = `message-tag ${msg.type}`;
     tag.textContent = getTagLabel(msg.type);
@@ -484,7 +489,7 @@ export function renderDashboardFeed() {
       item.classList.add('tutorial');
     }
 
-    // Unread state: actions use actionTaken, info uses read, news never unread
+    // Unread state: actions use actionTaken, info/tutorial use read, news never unread
     if (msg.type === 'action' && !msg.actionTaken) {
       item.classList.add('unread');
     } else if (msg.type === 'info' && !msg.read) {
@@ -511,10 +516,18 @@ export function renderDashboardFeed() {
       });
     }
 
-    // Tag
+    // Tag — consistent with messages pane
     const tag = document.createElement('span');
-    tag.className = `message-tag ${msg.type}`;
-    tag.textContent = isTutorial ? 'TIP' : getTagLabelShort(msg.type);
+    if (isTutorial) {
+      tag.className = 'message-tag ref';
+      tag.textContent = 'REF';
+    } else if (msg.type === 'info') {
+      tag.className = 'message-tag note';
+      tag.textContent = 'NOTE';
+    } else {
+      tag.className = `message-tag ${msg.type}`;
+      tag.textContent = getTagLabelShort(msg.type);
+    }
     item.appendChild(tag);
 
     // Subject

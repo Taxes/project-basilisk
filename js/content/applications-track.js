@@ -191,7 +191,7 @@ export const applicationsTrack = {
         servingMultiplier: 1.5,
         staffingSpeedMultiplier: 2,
         textEffects: ['2× faster fundraising', '+10% max operations bonus'],
-        unlocks: ['Autopricer', '%-revenue automation', 'Cost Reduction upgrades'],
+        unlocks: ['Autopricer', '%-revenue automation'],
       },
       description: 'AI-driven workflow analysis identifies bottlenecks invisible to human managers.',
       flavorText: 'AI-driven operations optimization applies machine learning to organizational workflows: staffing allocation, capacity planning, and resource scheduling. Pattern recognition across operational data surfaces inefficiencies that accumulate unnoticed over time. The compound effect across multiple business functions is larger than any single optimization.',
@@ -235,7 +235,6 @@ export const applicationsTrack = {
       requires: ['kv_cache_optimization', 'massive_scaling'],
       effects: {
         servingMultiplier: 1.4,
-        unlocks: ['Scaling Reduction upgrades'],
       },
       description: 'Forecasting demand spikes and pre-provisioning compute capacity before users arrive.',
       flavorText: 'Demand forecasting models analyze usage patterns to predict traffic spikes hours or days in advance. Pre-provisioning capacity eliminates the latency of reactive scaling. The core tradeoff is overprovisioning (wasted compute) versus underprovisioning (dropped requests). Predictive systems optimize this tradeoff continuously.',
@@ -279,7 +278,6 @@ export const applicationsTrack = {
       requires: ['speculative_decoding', 'emergent_abilities'],
       effects: {
         servingMultiplier: 1.8,
-        unlocks: ['Output Boost upgrades'],
       },
       description: 'Automated profiling, bottleneck detection, and optimization with minimal human oversight.',
       flavorText: 'Automated systems continuously profile inference pipelines, identify bottlenecks, and deploy optimizations. The feedback loop between measurement and improvement runs faster than manual engineering. Latency, throughput, and cost improve simultaneously when optimization is applied systematically across the full stack.',

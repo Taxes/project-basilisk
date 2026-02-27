@@ -595,7 +595,7 @@ export const kenJobApplicationMessage = {
 
 Well, it turns out the market for highly bespoke AI research startup lab operations software is not super large. You're my biggest customer by far, and unfortunately, I gave it to you for free. Oops.
 
-Anyways, I've been doing my own AI work on the side, and I think I could be useful on the research and product side too. If you're hiring... [you know how to reach me](#ken-email).
+Anyways, I've been doing my own AI work on the side, and I think I could be useful on the research and product side too. If you're hiring... you know how to [reach me](#ken-email).
 
 Totally fine if not. I'll keep the dashboard running either way.`,
   signature: '– Ken',

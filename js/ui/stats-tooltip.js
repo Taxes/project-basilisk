@@ -47,6 +47,27 @@ function positionTooltip(targetEl, position) {
   const tooltip = ensureTooltip();
   const rect = targetEl.getBoundingClientRect();
 
+  if (position === 'above') {
+    tooltip.style.left = `${rect.left}px`;
+    tooltip.style.top = `${rect.top}px`; // temporary; adjusted in rAF
+
+    requestAnimationFrame(() => {
+      const tooltipRect = tooltip.getBoundingClientRect();
+      tooltip.style.top = `${rect.top - tooltipRect.height - 8}px`;
+
+      // Flip below if clipping top edge
+      if (rect.top - tooltipRect.height - 8 < 10) {
+        tooltip.style.top = `${rect.bottom + 8}px`;
+      }
+
+      // Clamp to right edge
+      if (tooltipRect.right > window.innerWidth - 10) {
+        tooltip.style.left = `${window.innerWidth - tooltipRect.width - 10}px`;
+      }
+    });
+    return;
+  }
+
   if (position === 'right') {
     // Position to the right of the target
     tooltip.style.top = `${rect.top}px`;
@@ -323,7 +344,10 @@ function buildAGITooltip() {
   const seriesARaised = gameState.fundraiseRounds?.series_a?.raised === true;
 
   let html = '<div class="tooltip-header"><span>AGI Progress</span>';
-  html += `<span class="tooltip-value">${progress.toFixed(1)}%</span></div>`;
+  if (gameState.debug) {
+    html += `<span class="tooltip-value">${progress.toFixed(1)}%</span>`;
+  }
+  html += '</div>';
   html += '<div class="tooltip-section">';
   html += '<div>Your lab\'s progress toward artificial general intelligence. Driven by research breakthroughs — each capability you unlock pushes the needle forward.</div>';
   html += '</div>';
@@ -331,7 +355,9 @@ function buildAGITooltip() {
   if (seriesARaised) {
     html += '<div class="tooltip-section">';
     html += '<div class="tooltip-section-header">Rival Lab</div>';
-    html += `<div class="tooltip-row"><span>Their progress</span><span>${cp.toFixed(1)}%</span></div>`;
+    if (gameState.debug) {
+      html += `<div class="tooltip-row"><span>Their progress</span><span>${cp.toFixed(1)}%</span></div>`;
+    }
     html += '<div class="dim" style="margin-top:4px">A competing lab racing to AGI independently. If they get there first, you lose control of the outcome.</div>';
     html += '</div>';
   }

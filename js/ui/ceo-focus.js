@@ -68,8 +68,8 @@ function formatActivityValue(computed) {
       return [rpPart, multPart].filter(Boolean).join(' \u2502 ') || 'Idle to activate';
     }
     case 'ir': {
-      const bonus = computed.irFundraiseBonus;
-      return bonus > 0 ? `+${formatFunding(bonus)}/raise` : '\u2014';
+      const total = computed.irTotalEstimate || computed.irFundraiseBonus;
+      return total > 0 ? `+${formatFunding(total)}/raise` : '\u2014';
     }
     case 'operations':
       return `-${Math.round(computed.opsBonus * 100)}% running costs`;
@@ -168,8 +168,10 @@ function formatOptionValue(activityId, computed) {
     }
     case 'research':
       return `+${Math.round((computed.personnelMultiplier - 1) * 100)}% org`;
-    case 'ir':
-      return computed.irFundraiseBonus > 0 ? `+${formatFunding(computed.irFundraiseBonus)}` : '\u2014';
+    case 'ir': {
+      const total = computed.irTotalEstimate || computed.irFundraiseBonus;
+      return total > 0 ? `+${formatFunding(total)}` : '\u2014';
+    }
     case 'operations': {
       const pct = Math.round(computed.opsBonus * 100);
       return pct > 0 ? `${pct}%` : `${Math.round(computed.opsFloor * 100)}% base`;
@@ -249,9 +251,14 @@ const ACTIVITY_TOOLTIPS = {
     html += '<div class="tooltip-row"><span>Streamline operations to reduce ongoing costs and speed up hiring and procurement.</span></div>';
     html += `<div class="tooltip-row"><span>Running costs</span><span>-${pct}% (max ${capPct}%)</span></div>`;
     const autoPct = Math.round((computed.opsAutomationBonus || 0) * 100);
-    html += `<div class="tooltip-row"><span>Automation speed</span><span>+${autoPct}% (max +50%)</span></div>`;
-    if (floorPct > 0) {
-      html += `<div class="tooltip-row"><span>Baseline (from COO)</span><span>${floorPct}%</span></div>`;
+    const autoCapPct = Math.round((computed.autoCap || 0.5) * 100);
+    html += `<div class="tooltip-row"><span>Automation speed</span><span>+${autoPct}% (max +${autoCapPct}%)</span></div>`;
+    const autoFloorPct = Math.round((computed.autoFloor || 0) * 100);
+    if (floorPct > 0 || autoFloorPct > 0) {
+      const parts = [];
+      if (floorPct > 0) parts.push(`-${floorPct}% costs`);
+      if (autoFloorPct > 0) parts.push(`+${autoFloorPct}% auto speed`);
+      html += `<div class="tooltip-row"><span>Baseline (from COO)</span><span>${parts.join(' · ')}</span></div>`;
     }
     html += '<div class="tooltip-row dim"><span>Cap increases with COO and Process Optimization</span></div>';
     html += buildupTimeEstimate('operations', computed) || '';

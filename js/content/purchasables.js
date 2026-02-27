@@ -64,8 +64,7 @@ export const purchasables = [
     baseCost: { funding: 5000000 },
     maxPurchases: 1,
     effects: {
-      focusSlots: 1,
-      focusEfficiencyMultiplier: 1.67,
+      focusSpeedMultiplier: 1.67,
     },
     salary: 10000,
     category: "personnel",
@@ -134,8 +133,7 @@ export const purchasables = [
 
     maxPurchases: 1,
     effects: {
-      focusSlots: 1,
-      focusEfficiencyMultiplier: 1.8,
+      focusSpeedMultiplier: 1.8,
     },
     salary: 1000,
     category: 'personnel',
@@ -302,7 +300,7 @@ export const purchasables = [
     effects: {},
     salary: 0,
     category: 'admin',
-    requires: { capability: 'predictive_scaling', track: 'applications' },
+    requires: { capability: 'multimodal_products', track: 'applications' },
     focusDuration: 15,
     flavorText: 'It turns out that AI has unlimited capacity for asking, "so, tell me about your background."',
   },

@@ -158,13 +158,9 @@ function applyMilestoneEffects(trackId, capabilityId) {
     gameState.staffingSpeedMultiplier *= capability.effects.staffingSpeedMultiplier;
   }
 
-  // Focus efficiency from milestones (multiplicative)
-  if (capability.effects?.focusEfficiencyMultiplier) {
-    gameState.totalEfficiency *= capability.effects.focusEfficiencyMultiplier;
-  }
-  // Focus slots from milestones (additive)
-  if (capability.effects?.focusSlots) {
-    gameState.focusSlots += capability.effects.focusSlots;
+  // Focus speed from milestones (multiplicative)
+  if (capability.effects?.focusSpeedMultiplier) {
+    gameState.focusSpeed *= capability.effects.focusSpeedMultiplier;
   }
 
   // Trigger news

@@ -342,7 +342,7 @@ export function updateFundingDisplay() {
   const dataRow = $('data-cost-row');
   const dataCostEl = $('data-running-cost');
   setLedgerRowVisible(dataRow, dataCost > 0);
-  if (dataCost > 0 && dataCostEl) dataCostEl.textContent = formatLedgerValue(-dataCost);
+  if (dataCostEl) dataCostEl.textContent = formatLedgerValue(-dataCost);
   setSubtotal('opex-subtotal', -opexTotal);
 
   // --- Operating Profit ---
@@ -363,7 +363,7 @@ export function updateFundingDisplay() {
   const interestRow = $('interest-row');
   const interestCostEl = $('interest-cost');
   setLedgerRowVisible(interestRow, interestCost > 0);
-  if (interestCost > 0 && interestCostEl) interestCostEl.textContent = formatLedgerValue(-interestCost);
+  if (interestCostEl) interestCostEl.textContent = formatLedgerValue(-interestCost);
 
   // --- Net Income ---
   setSubtotal('net-income', netIncome);
@@ -414,12 +414,12 @@ export function updateFundingDisplay() {
   const capexHiringRow = $('capex-hiring-row');
   const capexHiringEl = $('capex-hiring-cost');
   setLedgerRowVisible(capexHiringRow, capexHiring > 0);
-  if (capexHiring > 0 && capexHiringEl) capexHiringEl.textContent = formatLedgerValue(-capexHiring);
+  if (capexHiringEl) capexHiringEl.textContent = formatLedgerValue(-capexHiring);
 
   const capexInfraRow = $('capex-infra-row');
   const capexInfraEl = $('capex-infra-cost');
   setLedgerRowVisible(capexInfraRow, capexInfra > 0);
-  if (capexInfra > 0 && capexInfraEl) capexInfraEl.textContent = formatLedgerValue(-capexInfra);
+  if (capexInfraEl) capexInfraEl.textContent = formatLedgerValue(-capexInfra);
   setSubtotal('capex-subtotal', -capexTotal);
 
   // --- Free Cash Flow ---
@@ -602,7 +602,7 @@ function buildPricingTooltip(rowType) {
   } else if (rowType === 'market-expansion') {
     return '<div class="tooltip-row">Compounding demand multiplier from AI Market Expansion. Grows each tick, increasing total addressable demand.</div>';
   } else if (rowType === 'price-drift') {
-    return '<div class="tooltip-row">Actual price drifts toward target at up to 1.5%/s. Use +/\u2212 to set a new target.</div>';
+    return '<div class="tooltip-row">Actual price drifts toward target at up to <span style="white-space:nowrap">1.5%/s.</span> Use +/\u2212 to set a new target.</div>';
   }
   return '';
 }
@@ -735,8 +735,8 @@ export function initTokenPricing() {
   // Throttle: ignore clicks within 100ms to prevent hardware double-click mice
   let _lastPriceClickTime = 0;
 
-  attachTooltip(priceDown, () => 'Decrease price by 5%');
-  attachTooltip(priceUp, () => 'Increase price by 5%');
+  attachTooltip(priceDown, () => 'Decrease price by 5%', { position: 'above' });
+  attachTooltip(priceUp, () => 'Increase price by 5%', { position: 'above' });
 
   if (priceDown) {
     priceDown.addEventListener('click', () => {
@@ -745,6 +745,7 @@ export function initTokenPricing() {
       _lastPriceClickTime = now;
       const currentTarget = gameState.resources.targetPrice ?? gameState.resources.tokenPrice;
       gameState.resources.targetPrice = Math.max(0.01, Math.round(currentTarget * 0.95 * 100) / 100);
+      updateTokenEconomicsDisplay();
     });
   }
 
@@ -755,6 +756,7 @@ export function initTokenPricing() {
       _lastPriceClickTime = now;
       const currentTarget = gameState.resources.targetPrice ?? gameState.resources.tokenPrice;
       gameState.resources.targetPrice = Math.min(1000, Math.round(currentTarget * 1.05 * 100) / 100);
+      updateTokenEconomicsDisplay();
     });
   }
 }

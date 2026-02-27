@@ -606,11 +606,8 @@ function formatResearchEffects(capability) {
   if (effects?.staffingSpeedMultiplier) {
     formatted.push({ text: `\u00d7${effects.staffingSpeedMultiplier} staffing speed`, positive: true });
   }
-  if (effects?.focusEfficiencyMultiplier) {
-    formatted.push({ text: `\u00d7${effects.focusEfficiencyMultiplier} focus efficiency`, positive: true });
-  }
-  if (effects?.focusSlots) {
-    formatted.push({ text: `+${effects.focusSlots} focus slots`, positive: true });
+  if (effects?.focusSpeedMultiplier) {
+    formatted.push({ text: `\u00d7${effects.focusSpeedMultiplier} focus speed`, positive: true });
   }
   if (effects?.alignmentBonus) {
     formatted.push({ text: `+${effects.alignmentBonus} alignment`, positive: true });

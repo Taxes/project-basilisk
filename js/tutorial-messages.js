@@ -650,9 +650,9 @@ Onboarding package below. Worth your time. – Alvin
 
 ---
 
-Congratulations on closing your Series A. As part of our standard onboarding for new portfolio companies, please find our post-Series A operating guide below. This is adapted from Meridian Ventures' general partner playbook and reflects best practices across our portfolio. Don't hesitate to reach out with any questions.
+Congratulations on closing your Series A. As part of our standard onboarding for new portfolio companies, please find our post-Series A operating guide below. This is adapted from Crabapple Capital's general partner playbook and reflects best practices across our portfolio. Don't hesitate to reach out with any questions.
 
-**MERIDIAN VENTURES — POST-SERIES A OPERATING GUIDE**
+**CRABAPPLE CAPITAL — POST-SERIES A OPERATING GUIDE**
 
 *The following recommendations reflect patterns observed across 40+ portfolio companies at this stage of growth.*
 
@@ -666,7 +666,7 @@ At Series A funding levels, every partnership agreement, data licensing deal, an
 The most common Series A mistake is waiting too long to hire operational leadership. A Chief Operating Officer should be your first executive hire: someone who owns the day-to-day so the CEO can own the direction. Additionally, consider formalizing your executive team with a focus on investor relations. The rapport you build with your backers now has a direct impact on Series B terms and timing.
 
 **4. Competitive Positioning**
-Post-Series A, you are visible. Other companies in your space are raising similar rounds, recruiting from the same talent pool, and tracking your progress. We recommend establishing a regular cadence for competitive intelligence. Even informal monitoring is better than none. Meridian provides quarterly competitive briefings to all portfolio companies; your board representative can coordinate.
+Post-Series A, you are visible. Other companies in your space are raising similar rounds, recruiting from the same talent pool, and tracking your progress. We recommend establishing a regular cadence for competitive intelligence. Even informal monitoring is better than none. Crabapple provides quarterly competitive briefings to all portfolio companies; your board representative can coordinate.
 
 **5. Board Reporting**
 The board expects quarterly updates covering: headcount, burn rate, research milestones, and product roadmap. We are format-agnostic. Substance matters; presentation does not.`,
@@ -686,7 +686,7 @@ The board expects quarterly updates covering: headcount, burn rate, research mil
     group: 'progression',
     key: 'shapley_series_b',
     sender: senders.shapley,
-    subject: 'Series B — Meridian Growth Playbook',
+    subject: 'Series B — Crabapple Growth Playbook',
     body: `Nicely done. Faster than I expected.
 
 Your CSO request went through. I've put forward a Dr. Eliza Chen. Computer science from MIT, philosophy from Oxford. Unusual combination. See what you think.
@@ -695,9 +695,9 @@ You're going to start getting press calls. Take them seriously. At this stage, y
 
 ---
 
-Congratulations on closing your Series B. Attached is the next section of the Meridian operating guide, covering public positioning strategy.
+Congratulations on closing your Series B. Attached is the next section of the Crabapple operating guide, covering public positioning strategy.
 
-**MERIDIAN VENTURES — SERIES B GROWTH PLAYBOOK: PUBLIC POSITIONING**
+**CRABAPPLE CAPITAL — SERIES B GROWTH PLAYBOOK: PUBLIC POSITIONING**
 
 *At Series B, your company transitions from "interesting startup" to "company people have heard of." Managing that transition deliberately is one of the highest-leverage activities available to the CEO.*
 
@@ -745,16 +745,16 @@ I'm looking forward to working with you.`,
     group: 'progression',
     key: 'shapley_series_c',
     sender: senders.shapley,
-    subject: 'Series C — Meridian Scaling Playbook',
+    subject: 'Series C — Crabapple Scaling Playbook',
     body: `The board reviewed OpenBrain's latest public filing before your round closed. They're scaling faster than our projections assumed.
 
 You have the capital now. Your valuation is approaching what my company trades at. We took twenty years to get there. The question isn't whether you can compete. It's whether you will. The playbook below covers the mechanics. The urgency is yours to supply. – Alvin
 
 ---
 
-Congratulations on closing your Series C. Below is the final section of the Meridian operating guide, covering scaling strategy for growth-stage AI companies.
+Congratulations on closing your Series C. Below is the final section of the Crabapple operating guide, covering scaling strategy for growth-stage AI companies.
 
-**MERIDIAN VENTURES — SERIES C SCALING PLAYBOOK**
+**CRABAPPLE CAPITAL — SERIES C SCALING PLAYBOOK**
 
 *Series C marks the transition from "growing company" to "market leader or irrelevant." Capital is no longer the constraint. Execution is.*
 

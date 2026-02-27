@@ -831,35 +831,23 @@ export function updateQueueDisplay() {
   const clearBtn = $('clear-queue-btn');
   if (!container) return;
 
-  // Update queue title with efficiency info
+  // Update queue title with speed info
   const titleEl = $('queue-title');
   if (titleEl) {
-    const eff = Math.round(gameState.totalEfficiency * 100);
-    if (eff > 100) {
-      titleEl.textContent = `FOCUS QUEUE [${eff}% eff]`;
+    const speed = Math.round(gameState.focusSpeed * 100);
+    if (speed > 100) {
+      titleEl.textContent = `FOCUS QUEUE [${speed}% speed]`;
     } else {
       titleEl.textContent = 'FOCUS QUEUE';
     }
     if (!titleEl._tooltipAttached) {
       titleEl._tooltipAttached = true;
       attachTooltip(titleEl, () => {
-        const slots = gameState.focusSlots;
-        const pool = gameState.totalEfficiency;
-        const activeCount = Math.min(slots, gameState.focusQueue.length);
-        const perSlot = activeCount > 0 ? pool / activeCount : pool;
+        const speed = Math.round(gameState.focusSpeed * 100);
         let html = '<div class="tooltip-header">Focus Queue</div>';
         html += '<div class="tooltip-section">';
-        html += `<div class="tooltip-row"><span>Slots</span><span>${activeCount} / ${slots}</span></div>`;
-        html += `<div class="tooltip-row"><span>Efficiency pool</span><span>${Math.round(pool * 100)}%</span></div>`;
-        if (activeCount > 1) {
-          html += `<div class="tooltip-row"><span>Per-slot efficiency</span><span>${Math.round(perSlot * 100)}%</span></div>`;
-        }
+        html += `<div class="tooltip-row"><span>Focus Speed</span><span>${speed}%</span></div>`;
         html += '</div>';
-        if (activeCount > 1) {
-          html += '<div class="tooltip-section">';
-          html += '<div class="tooltip-row dim"><span>Pool is split across active slots</span></div>';
-          html += '</div>';
-        }
         return html;
       });
     }
@@ -891,7 +879,7 @@ export function updateQueueDisplay() {
   if (emptyMsg) emptyMsg.classList.add('hidden');
   if (clearBtn) clearBtn.classList.remove('hidden');
 
-  const activeCount = Math.min(gameState.focusSlots, queue.length);
+  const activeCount = queue.length > 0 ? 1 : 0;
   const queueIds = queue.map(i => i.id);
   const pausedStates = queue.map(i => i.paused);
 

@@ -603,7 +603,7 @@ export function initializeUI() {
     hardResetBtn.addEventListener('click', () => {
       const msg = isDebugMode()
         ? 'Reset game?'
-        : 'HARD RESET: This permanently deletes ALL progress, including prestige bonuses. There is no undo. Are you sure?';
+        : 'HARD RESET: This permanently deletes ALL progress, including lifetime stats, prestige bonuses, and unlocks. There is no undo. Are you sure?';
       if (confirm(msg)) {
         resetGame();
         applyDebugSettings();

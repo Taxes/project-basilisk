@@ -104,7 +104,7 @@ export const strategicChoiceDefinitions = [
         name: 'Careful Validation',
         description: 'Validate before shipping. Fewer incidents, clearer conscience.',
         effects: [
-          { label: '-30% incident rate', type: 'positive', minPhase: 2 },
+          { label: '-30% incident rate', type: 'positive', minArc: 2 },
           { label: 'Sleep a bit better at night', type: 'positive' },
         ],
         bestWhen: 'Strong market position, playing for safety',

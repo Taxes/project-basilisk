@@ -43,6 +43,12 @@ body[data-arc="2"] .arc-1-hidden {
   display: flex;
   gap: 8px;
   align-items: center;
+  min-width: 520px;
+  justify-content: flex-end;
+}
+
+.debug .header-actions {
+  min-width: 700px;
 }
 
 #game-date {
@@ -1045,13 +1051,6 @@ body[data-arc="2"] .arc-1-hidden {
   font-size: 12px;
 }
 
-.compact-purchase-card button.cooldown {
-  background: var(--surface-sunken);
-  color: var(--text-dim);
-  border-color: var(--border);
-  min-width: 40px;
-}
-
 /* Furlough button */
 .furlough-btn {
   /* Positioned via gap in purchase-header-actions */
@@ -1111,7 +1110,6 @@ body[data-arc="2"] .arc-1-hidden {
 .compact-research-card {}
 
 .compact-research-card.available {
-  border-left: 3px solid var(--warning);
 }
 
 .compact-research-card .research-header {
@@ -1167,11 +1165,9 @@ body[data-arc="2"] .arc-1-hidden {
 }
 
 .compact-research-card.approaching {
-  border-left: 3px solid var(--text-dim);
 }
 
 .compact-research-card.completed {
-  border-left: 3px solid var(--positive);
   opacity: 0.7;
 }
 
@@ -1749,11 +1745,11 @@ body[data-arc="2"] #research-section .scrollable-section {
 
 /* Phase 2→3: dimmer overall — the brightness is draining */
 .phase-ominous .phase-narrative p:first-child {
-  color: rgba(240, 173, 78, 0.9);
+  color: rgba(240, 173, 78, 1);
 }
 
 .phase-ominous .phase-narrative p:last-child {
-  color: rgba(240, 173, 78, 0.6);
+  color: rgba(240, 173, 78, 1);
 }
 
 /* Phase modal border tint */
@@ -2086,36 +2082,7 @@ body[data-arc="2"] #research-section .scrollable-section {
 
 /* (Old .infra-tabs / .infra-tab rules removed — Build/Upgrades tab bar is gone) */
 
-/* Global Cooldown Bar */
-.cooldown-bar {
-  height: 0;
-  background: var(--border);
-  overflow: hidden;
-}
 
-.cooldown-bar.active {
-  height: 3px;
-  margin-bottom: 0.5rem;
-}
-
-.cooldown-bar::after {
-  content: '';
-  display: block;
-  height: 100%;
-  width: 0%;
-  background: var(--accent);
-  transition: width 0.1s linear;
-}
-
-.cooldown-bar.active::after {
-  width: 100%;
-  animation: cooldown-drain 1s linear forwards;
-}
-
-@keyframes cooldown-drain {
-  from { width: 100%; }
-  to { width: 0%; }
-}
 
 /* Upgrade Cards */
 .upgrade-card {
@@ -3616,6 +3583,23 @@ input[type="checkbox"].terminal-checkbox:checked::after,
   border-color: var(--text-secondary, var(--border));
 }
 
+.message-tag.ref {
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+
+/* REF tags use accent in the dashboard feed */
+.dashboard-feed-item .message-tag.ref {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* NOTE tags use accent in the dashboard feed */
+.dashboard-feed-item .message-tag.note {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .message-subject-preview {
   flex: 1;
   font-size: 0.85rem;
@@ -3924,16 +3908,32 @@ input[type="checkbox"].terminal-checkbox:checked::after,
   color: var(--text);
 }
 
-/* Tutorial messages stand out with highlight styling */
+/* Tutorial messages: read state — transparent bg, accent border/text */
 .dashboard-feed-item.tutorial {
-  background: rgba(100, 200, 255, 0.08);
+  background: transparent;
+  border-left-color: var(--accent);
 }
 
 .dashboard-feed-item.tutorial .feed-subject {
-  color: var(--text);
+  color: var(--accent);
 }
 
 .dashboard-feed-item.tutorial .message-tag {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: transparent;
+}
+
+/* Tutorial messages: unread state — highlighted */
+.dashboard-feed-item.tutorial.unread {
+  background: rgba(100, 200, 255, 0.08);
+}
+
+.dashboard-feed-item.tutorial.unread .feed-subject {
+  color: var(--text);
+}
+
+.dashboard-feed-item.tutorial.unread .message-tag {
   background: var(--accent);
   color: var(--bg);
 }
