@@ -1,6 +1,6 @@
 /* global gtag */
 // Funnel telemetry — thin wrapper around gtag().
-// GA config in index.html already skips localhost, so no hostname check needed here.
+// GA config in index.html already skips localhost and ?debug, so no check needed here.
 
 import { gameState } from './game-state.js';
 
