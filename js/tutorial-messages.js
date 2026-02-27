@@ -40,7 +40,7 @@ I dug up some notes from an orientation I used to give new lab directors. A bit 
 **When in doubt, gun for your next breakthrough.** Reaching major research milestones tends to open doors and opportunities.`,
     signature: '– Prof. Shannon',
     tags: ['tutorial', 'welcome'],
-    trigger: () => gameState.timeElapsed >= 30000 && gameState.timeElapsed < 60000,
+    trigger: () => gameState.timeElapsed < 1000,
   },
 
   {
