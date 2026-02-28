@@ -30,7 +30,7 @@ export const arc1Endings = {
               'I have seen this happen before, to people smarter than either of us. The science was there. The funding wasn\'t. Those are different problems, and solving one doesn\'t solve the other.',
               'Take what you\'ve learned. It\'s worth more than you think.',
             ],
-            signature: '\u2013 James',
+            signature: '\u2013 Prof. Shannon',
           },
           {
             narrative: [
@@ -54,7 +54,7 @@ export const arc1Endings = {
               'I have seen this happen before, to people smarter than either of us. The science was there. The funding wasn\'t. Those are different problems, and solving one doesn\'t solve the other.',
               'Take what you\'ve learned. It\'s worth more than you think.',
             ],
-            signature: '\u2013 James',
+            signature: '\u2013 Prof. Shannon',
           },
         ];
       return variants[Math.floor(Math.random() * variants.length)];
@@ -87,7 +87,7 @@ export const arc1Endings = {
             'It was always going to be a race, and races have losers. That is not a judgement on the work, or on you.',
             'Someone else got there first. The question now is what they do with it, and whether anyone thought to ask.',
           ],
-          signature: '\u2013 James',
+          signature: '\u2013 Prof. Shannon',
         };
       }
 
@@ -107,7 +107,7 @@ export const arc1Endings = {
             'It was always going to be a race, and races have losers. That is not a judgement on the work, or on you.',
             'Someone else got there first. The question now is what they do with it, and whether anyone thought to ask.',
           ],
-          signature: '\u2013 James',
+          signature: '\u2013 Prof. Shannon',
         };
       }
 
@@ -448,15 +448,23 @@ export function triggerEnding(endingId, variant = null) {
   const strategicChoicesMade = Object.entries(gameState.strategicChoices || {})
     .filter(([, v]) => v.selected)
     .map(([id, v]) => `${id}:${v.selected}`);
-  milestone('ending_reached', {
+  const analyticsPayload = {
     ending_id: endingId,
     alignment_score: gameState.alignment?.total ?? gameState.hiddenAlignment ?? 0,
-    archetype: getArchetype(ending.tier || 'silver'),
-    personality_passive_active: gameState.personality?.passiveActive ?? 0,
-    personality_pluralist_optimizer: gameState.personality?.pluralistOptimizer ?? 0,
     strategic_choices: strategicChoicesMade,
     arc: gameState.arc,
-  }, undefined, { sendImmediately: true });
+  };
+  // Variant (extinction narrative path) — only present for endings that have one
+  if (variant) {
+    analyticsPayload.ending_variant = variant;
+  }
+  // Arc 2+ properties — personality and archetype aren't tracked in Arc 1
+  if (gameState.arc >= 2) {
+    analyticsPayload.archetype = getArchetype(ending.tier || 'silver');
+    analyticsPayload.personality_passive_active = gameState.personality?.passiveActive ?? 0;
+    analyticsPayload.personality_pluralist_optimizer = gameState.personality?.pluralistOptimizer ?? 0;
+  }
+  milestone('ending_reached', analyticsPayload, undefined, { sendImmediately: true });
   gameState.endingVariant = variant;
   gameState.endingTime = Date.now();
 

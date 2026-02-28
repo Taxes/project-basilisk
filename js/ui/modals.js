@@ -3,18 +3,20 @@
 import { gameState, resetGame, saveGame, prepareSaveData } from '../game-state.js';
 import { getAllPurchasables } from '../content/purchasables.js';
 import LZString from '../../vendor/lz-string.min.js';
-import { tracks } from '../capabilities.js';
+import { tracks, isCapabilityUnlocked } from '../capabilities.js';
 import { applyChoiceEffects } from '../events.js';
 import { getEndingById, getEndingStats, triggerEnding, getEndingNarrative, getPersonalityEpilogue } from '../endings.js';
+import { milestone } from '../analytics.js';
+import { getArchetype } from '../personality.js';
 import { calculatePrestigeGain, applyPrestigeGains, resetForPrestige } from '../prestige.js';
 import { resetQueueIdCounter } from '../focus-queue.js';
 import { resetTriggeredMessages, hasMessageBeenTriggered } from '../messages.js';
 import { triggerExtinctionSequence } from '../extinction-sequence.js';
+import { checkPhaseCompletion } from '../phase-completion.js';
 import { formatNumber, formatFunding, formatPercent, formatTime, getRateUnit } from '../utils/format.js';
 import { changelog } from '../changelog.js';
 import { VERSION } from '../version.js';
 import { attachTooltip } from './stats-tooltip.js';
-import { showNarrativeModal } from '../narrative-modal.js';
 import { $ } from '../utils/dom-cache.js';
 import { resumeTutorial, restartTutorial, disableTutorial } from '../tutorial-state.js';
 import { requestFullUpdate } from './signals.js';
@@ -657,27 +659,25 @@ export function initDebugModal() {
   });
 
   document.getElementById('debug-phase1-modal')?.addEventListener('click', () => {
-    showNarrativeModal({
-      title: 'The Transformer Era',
-      narrative: `
-        <p>I remember when scaling laws were a hypothesis. You just proved them. Every variable snaps into place — compute, data, parameters — and the curve keeps going up. I haven't seen results this clean since the early connectionist work.</p>
-        <p>The foundation model era starts here. I want to be honest with you: from this point, the models get big enough that surprises become the norm. That's exciting. It should also make you careful.</p>
-      `,
-      phaseClass: 'phase-forward',
-      buttonText: 'Enter the Foundation Model Era',
-    });
+    // Force preconditions so checkPhaseCompletion runs the full transition
+    // (modal + state update + analytics + news)
+    if (!isCapabilityUnlocked('scaling_laws')) {
+      window.debug?.unlockCapability('capabilities', 'scaling_laws');
+    }
+    gameState.phase = 1;
+    if (!gameState.phaseCompletion) gameState.phaseCompletion = {};
+    gameState.phaseCompletion.phase1Shown = false;
+    checkPhaseCompletion();
   });
 
   document.getElementById('debug-phase2-modal')?.addEventListener('click', () => {
-    showNarrativeModal({
-      title: 'The Foundation Model Era',
-      narrative: `
-        <p>The reasoning benchmarks came back. Our models are outperforming the evaluation suite. Not by a small margin. I had to rerun the tests because I didn't believe the numbers.</p>
-        <p>I'm seeing optimization patterns in the training logs that I didn't put there. The models are finding shortcuts we didn't design. That's either the best result we've ever produced or a problem I don't know how to frame yet.</p>
-      `,
-      phaseClass: 'phase-ominous',
-      buttonText: 'Begin the Road to Superintelligence',
-    });
+    if (!isCapabilityUnlocked('reasoning_breakthroughs')) {
+      window.debug?.unlockCapability('capabilities', 'reasoning_breakthroughs');
+    }
+    gameState.phase = 2;
+    if (!gameState.phaseCompletion) gameState.phaseCompletion = {};
+    gameState.phaseCompletion.phase2Shown = false;
+    checkPhaseCompletion();
   });
 
   document.getElementById('debug-trigger-arc2')?.addEventListener('click', () => {
@@ -910,26 +910,25 @@ export function initSettingsModal() {
   });
 }
 
-const MAIN_SEQ_END = 15;
-
 function updateTutorialSettingsUI() {
   const t = gameState.tutorial;
   const resumeBtn = document.getElementById('tutorial-resume-button');
   const statusEl = document.getElementById('tutorial-status');
 
   if (resumeBtn) {
-    resumeBtn.disabled = !(t.dismissed && !t.disabled && t.currentStep < MAIN_SEQ_END);
+    // Resume available whenever tutorial has started and is currently dismissed (not disabled)
+    resumeBtn.disabled = !(t.dismissed && !t.disabled && t.currentStep > 0);
   }
 
   if (statusEl) {
     if (t.disabled) {
       statusEl.textContent = 'Tutorial disabled';
-    } else if (t.currentStep >= MAIN_SEQ_END) {
-      statusEl.textContent = 'Tutorial completed';
     } else if (t.dismissed) {
       statusEl.textContent = `Tutorial paused at step ${t.currentStep + 1}`;
-    } else {
+    } else if (t.currentStep > 0) {
       statusEl.textContent = `Tutorial active — step ${t.currentStep + 1}`;
+    } else {
+      statusEl.textContent = '';
     }
   }
 }
@@ -998,6 +997,7 @@ export function showEndingModal(endingId) {
   triggerEnding(endingId);
 
   const modal = $('ending-modal');
+  if (!modal) return; // Defensive: modal missing (itch.io embed edge case / browser extension)
   const tierBadge = $('ending-tier-badge');
   const title = $('ending-title');
   const narrative = $('ending-narrative');
@@ -1116,10 +1116,35 @@ export function showEndingModal(endingId) {
 // ---------------------------------------------------------------------------
 
 export function showPrestigeModal(ending) {
+  // Guard: only show once per ending (prevents per-tick DOM rebuild)
+  if (gameState.endingTriggered) return;
+  gameState.endingTriggered = ending.id;
+  gameState.paused = true;
+  gameState.pauseReason = 'ending';
+
+  // Fire ending_reached analytics (prestige endings bypass triggerEnding())
+  const strategicChoicesMade = Object.entries(gameState.strategicChoices || {})
+    .filter(([, v]) => v.selected)
+    .map(([id, v]) => `${id}:${v.selected}`);
+  const analyticsPayload = {
+    ending_id: ending.id,
+    alignment_score: gameState.alignment?.total ?? gameState.hiddenAlignment ?? 0,
+    strategic_choices: strategicChoicesMade,
+    arc: gameState.arc,
+  };
+  // Arc 2+ properties — personality and archetype aren't tracked in Arc 1
+  if (gameState.arc >= 2) {
+    analyticsPayload.archetype = getArchetype(ending.tier || 'silver');
+    analyticsPayload.personality_passive_active = gameState.personality?.passiveActive ?? 0;
+    analyticsPayload.personality_pluralist_optimizer = gameState.personality?.pluralistOptimizer ?? 0;
+  }
+  milestone('ending_reached', analyticsPayload, undefined, { sendImmediately: true });
+
   // Calculate prestige gains
   const gains = calculatePrestigeGain();
 
   const modal = $('ending-modal');
+  if (!modal) return; // Defensive: modal missing (itch.io embed edge case / browser extension)
   const tierBadge = $('ending-tier-badge');
   const title = $('ending-title');
   const narrative = $('ending-narrative');
@@ -1127,12 +1152,12 @@ export function showPrestigeModal(ending) {
   const epilogue = $('ending-epilogue');
   const content = modal.querySelector('.ending-content');
 
-  // Set tier badge for prestige
-  tierBadge.textContent = 'Prestige Reset';
-  tierBadge.className = 'ending-tier prestige';
+  // Use ending name as tier badge with failure styling
+  tierBadge.textContent = ending.name;
+  tierBadge.className = 'ending-tier failure';
 
-  // Set content class for prestige-specific styling
-  content.className = 'modal-content ending-content prestige-ending';
+  // Set content class for failure-specific styling (somber, not celebratory)
+  content.className = 'modal-content ending-content failure-ending';
 
   // Set title
   title.textContent = ending.name;
@@ -1230,9 +1255,9 @@ export function showPrestigeModal(ending) {
   oldNewGameBtn.parentNode.replaceChild(newGameBtn, oldNewGameBtn);
   oldContinueBtn.parentNode.replaceChild(continueBtn, oldContinueBtn);
 
-  // Update button text for prestige context
-  newGameBtn.textContent = 'Prestige Reset';
-  continueBtn.textContent = 'Keep Playing';
+  // Update button text — no "Keep Playing" for failure endings
+  newGameBtn.textContent = 'Try again?';
+  continueBtn.style.display = 'none';
 
   newGameBtn.addEventListener('click', () => {
     // Apply prestige gains and reset
@@ -1246,11 +1271,6 @@ export function showPrestigeModal(ending) {
     requestFullUpdate();
     getUpdateUI()();
   });
-
-  continueBtn.addEventListener('click', () => {
-    hideEndingModal();
-    resetEndingModalButtons();
-  });
 }
 
 // Reset ending modal buttons to default state
@@ -1259,7 +1279,10 @@ export function resetEndingModalButtons() {
   const continueBtn = $('ending-continue');
 
   if (newGameBtn) newGameBtn.textContent = 'Start New Game';
-  if (continueBtn) continueBtn.textContent = 'Continue Playing';
+  if (continueBtn) {
+    continueBtn.textContent = 'Continue Playing';
+    continueBtn.style.display = '';
+  }
 }
 
 export function hideEndingModal() {

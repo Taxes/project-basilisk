@@ -318,6 +318,18 @@ body[data-arc="2"] .arc-1-hidden {
   outline: 1px solid var(--text-dim);
 }
 
+.allocation-row.track-complete {
+  opacity: 0.5;
+}
+.allocation-row.track-complete input[type="range"],
+.allocation-row.track-complete input[type="number"] {
+  pointer-events: none;
+}
+.allocation-complete-label {
+  font-size: 11px;
+  color: var(--positive);
+}
+
 .allocation-drift {
   width: 36px;
   font-size: 11px;
@@ -1842,6 +1854,12 @@ body[data-arc="2"] #research-section .scrollable-section {
   background: rgba(91, 192, 222, 0.1);
 }
 
+.ending-tier.failure {
+  color: #888;
+  border-color: #666;
+  background: rgba(128, 128, 128, 0.1);
+}
+
 /* Ending Title - Different colors based on tier */
 .golden-ending #ending-title {
   color: #ffd700;
@@ -1853,6 +1871,10 @@ body[data-arc="2"] #research-section .scrollable-section {
 
 .prestige-ending #ending-title {
   color: #f0ad4e;
+}
+
+.failure-ending #ending-title {
+  color: #999;
 }
 
 /* Ending Narrative */
@@ -1912,6 +1934,19 @@ body[data-arc="2"] #research-section .scrollable-section {
   color: #ff6b6b;
 }
 
+/* Failure ending narrative - muted, somber tone */
+.failure-ending .ending-narrative {
+  margin: 12px 0;
+}
+
+.failure-ending .ending-narrative p {
+  color: rgba(160, 160, 160, 0.8);
+}
+
+.failure-ending .ending-narrative p:first-child {
+  color: #aaa;
+}
+
 /* Ending Stats */
 .ending-stats {
   margin: 24px 0;
@@ -1968,6 +2003,21 @@ body[data-arc="2"] #research-section .scrollable-section {
 .dark-ending .ending-epilogue {
   border-left-color: #ff6b6b;
   color: rgba(255, 107, 107, 0.7);
+}
+
+/* Failure ending - reduced margins, muted treatment */
+.failure-ending .ending-stats {
+  margin: 12px 0;
+}
+
+.failure-ending .ending-stat-value {
+  color: #999;
+}
+
+.failure-ending .ending-epilogue {
+  margin: 12px 0;
+  border-left-color: #666;
+  color: rgba(160, 160, 160, 0.7);
 }
 
 /* Silver ending tier */

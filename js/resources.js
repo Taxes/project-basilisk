@@ -888,6 +888,10 @@ export function updateForecasts() {
   // Per-track breakdowns (display only — populates computed.research.tracks)
   computeTrackBreakdowns(internalCompute);
 
+  // Stats bar rate = sum of per-track effective rates (matches cumulative RP growth)
+  gameState.resources.researchRate = Object.values(gameState.tracks)
+    .reduce((sum, t) => sum + (t.researchRate || 0), 0);
+
   // Data display state (scores, effectiveness, quality — no simulation mutation)
   computeDataDisplay();
 
@@ -1010,9 +1014,8 @@ export function updateResources(deltaTime) {
     gameState.tracks.capabilities.researchPoints += feedbackRP;
   }
 
-  // Store total research rate including AI contribution for stats bar display
+  // feedbackContribution needed later for stats bar rate
   const feedbackContribution = gameState.computed.research.feedbackContribution;
-  gameState.resources.researchRate = researchRate + feedbackContribution;
 
   // Compound late-game demand growth (before calculating demand)
   updateLateGameDemandMultiplier(deltaTime);
@@ -1177,6 +1180,10 @@ export function updateResources(deltaTime) {
   // Generate track-specific research points
   generateTrackResearch(deltaTime, internalCompute);
 
+  // Stats bar rate = sum of per-track effective rates (matches cumulative RP growth)
+  gameState.resources.researchRate = Object.values(gameState.tracks)
+    .reduce((sum, t) => sum + (t.researchRate || 0), 0);
+
   // Derive total RP from track sums (single source of truth)
   gameState.resources.research = (gameState.tracks.capabilities?.researchPoints || 0)
     + (gameState.tracks.applications?.researchPoints || 0)
@@ -1293,11 +1300,8 @@ function amplifiedPersonnelRP(countOverrides = {}) {
 
 // Personnel base rate: founder + research labs + personnel trackRP
 function getPersonnelBase() {
-  let base = BALANCE.FOUNDER_OUTPUT;
-  base += getCount('research_lab') * BALANCE.RESEARCH_LAB_RATE;
-
   const { total, ampBonuses, personnelOutput, ampConfig } = amplifiedPersonnelRP();
-  base += total;
+  let base = total;
 
   // CEO Focus: Hands-on Research flat RP added to personnel base
   // (gets multiplied by compute boost, capability multiplier, etc.)
@@ -1473,69 +1477,36 @@ export function computeResearchState(internalCompute) {
 // Calculate research rate per second
 // Uses computed state if available, otherwise computes on demand
 export function calculateResearchRate(internalCompute = null) {
-  // If computed state exists and no specific internalCompute requested, use it
-  if (gameState.computed?.research && internalCompute === null) {
+  // No explicit compute → read from cache (populated each tick by computeResearchState)
+  if (internalCompute === null && gameState.computed?.research) {
     return gameState.computed.research.total;
   }
 
-  // Compute on demand (for backwards compatibility or when called with specific compute)
-  // When no internalCompute provided and no computed state, derive from game state
+  // Explicit compute or no cache yet → compute via canonical function
   if (internalCompute === null) {
     const total = calculateComputeRate();
     const allocation = gameState.resources?.computeAllocation ?? 0.5;
     internalCompute = total * allocation;
   }
-  const totalRP = (gameState.tracks?.capabilities?.researchPoints || 0)
-    + (gameState.tracks?.applications?.researchPoints || 0)
-    + (gameState.tracks?.alignment?.researchPoints || 0);
-  const personnelBase = getPersonnelBase();
-  const capMultiplier = getCapabilityMultiplier();
-  const computeBoost = getComputeBoost(internalCompute, totalRP);
-  const strategyMultiplier = getResearchRateMultiplier();
-
-  return personnelBase * capMultiplier * computeBoost * strategyMultiplier;
+  return computeResearchState(internalCompute);
 }
 
 // Calculate research rate breakdown for UI display
 // Returns computed state (populated each tick by computeResearchState)
 export function calculateResearchRateBreakdown(internalCompute = null) {
-  // Return computed state if available
-  if (gameState.computed?.research) {
+  // No explicit compute → read from cache (populated each tick by computeResearchState)
+  if (internalCompute === null && gameState.computed?.research) {
     return gameState.computed.research;
   }
 
-  // Fallback: compute on demand (for testing or before first tick)
+  // Explicit compute or no cache yet → compute via canonical function
   if (internalCompute === null) {
     const total = calculateComputeRate();
     const allocation = gameState.resources?.computeAllocation ?? 0.5;
     internalCompute = total * allocation;
   }
-  const totalAllRP = (gameState.tracks?.capabilities?.researchPoints || 0)
-    + (gameState.tracks?.applications?.researchPoints || 0)
-    + (gameState.tracks?.alignment?.researchPoints || 0);
-  const personnelBase = getPersonnelBase();
-  const capMultiplier = getCapabilityMultiplier();
-  const computeBoost = getComputeBoost(internalCompute, totalAllRP);
-  const strategyMultiplier = getResearchRateMultiplier();
-  const dataEffectivenessMultiplier = getDataEffectivenessMultiplier();
-  const feedbackRate = getCurrentFeedbackRate();
-  const totalCapRP = gameState.tracks?.capabilities?.researchPoints || 0;
-  const dataQualityFeedback = gameState.data?.quality ?? 1.0;
-  const feedbackContribution = totalCapRP * feedbackRate * dataQualityFeedback;
-  const baseRate = personnelBase * capMultiplier * computeBoost * strategyMultiplier;
-
-  return {
-    personnelBase,
-    capMultiplier,
-    computeBoost,
-    strategyMultiplier,
-    dataEffectivenessMultiplier,
-    feedbackMultiplier: 1.0,
-    feedbackRate,
-    feedbackContribution,
-    total: baseRate,
-    capTotal: baseRate * dataEffectivenessMultiplier,
-  };
+  computeResearchState(internalCompute);
+  return gameState.computed.research;
 }
 
 // Calculate compute rate per second
@@ -1610,7 +1581,10 @@ export function spendResources(cost) {
 // Populates gameState.computed.research.tracks and sets track.researchRate.
 // Called from both generateTrackResearch() (during ticks) and updateForecasts() (during pause).
 function computeTrackBreakdowns(internalCompute = null) {
-  const researchRate = calculateResearchRate(internalCompute);
+  // Read from computed state (always populated by computeResearchState before this runs).
+  // Fallback to computeResearchState if cache is missing (e.g. before first tick in tests).
+  const researchRate = gameState.computed?.research?.total
+    ?? computeResearchState(internalCompute);
   const culture = getCultureBonuses();
 
   for (const [trackId, track] of Object.entries(gameState.tracks)) {

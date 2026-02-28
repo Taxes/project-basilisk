@@ -385,7 +385,7 @@ export const newsContent = {
       text: 'FT: "Record-breaking AI funding round draws sovereign wealth interest"',
       type: 'flavor',
     },
-    series_g: {
+    series_f: {
       text: 'Reuters: "AI company valued higher than most nations\' GDP"',
       type: 'flavor',
     },

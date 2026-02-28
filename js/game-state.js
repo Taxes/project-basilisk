@@ -217,6 +217,7 @@ export function createDefaultGameState() {
       active: false,            // a card is currently showing
       shownStep: 0,             // step currently displayed (0 = none)
       completedPostSteps: [],   // IDs of completed post-tutorial standalone steps
+      tutorialFormat: 3,        // save migration marker (1 = 23-step, 2 = 25-step, 3 = 26-step)
     },
 
     // Event tracking
@@ -298,7 +299,7 @@ export function createDefaultGameState() {
       series_c: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0 },
       series_d: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0 },
       series_e: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0 },
-      series_g: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0 },
+      series_f: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0 },
     },
 
     // Target allocation for culture drift (null = no active target)
@@ -676,6 +677,12 @@ export function loadGame() {
       if (loaded.consequenceEventLog === undefined) gameState.consequenceEventLog = [];
       if (loaded.consequenceEventCooldown === undefined) gameState.consequenceEventCooldown = 0;
 
+      // Save migration: series_g renamed to series_f (#818)
+      if (loaded.fundraiseRounds?.series_g && !loaded.fundraiseRounds?.series_f) {
+        gameState.fundraiseRounds.series_f = loaded.fundraiseRounds.series_g;
+        delete gameState.fundraiseRounds.series_g;
+      }
+
       // Save migration: fundraiseRounds is a nested object — shallow merge
       // may produce incomplete state if old save is missing rounds
       if (!loaded.fundraiseRounds) {
@@ -916,17 +923,18 @@ export function loadGame() {
       if (!loaded.tutorial) {
         // Infer progress from game state so existing players don't see stale tutorials
         let inferredStep = 0;
-        if (loaded.fundraiseRounds?.seed?.raised) inferredStep = 23;  // past tutorial scope
+        if (loaded.fundraiseRounds?.seed?.raised) inferredStep = 26;  // past tutorial scope
         else if (loaded.tracks?.capabilities?.unlockedCapabilities?.includes('basic_transformer')) inferredStep = 12;
         else if (loaded.onboardingComplete) inferredStep = 1;
 
         gameState.tutorial = {
           currentStep: inferredStep,
-          dismissed: inferredStep >= 23,  // auto-dismiss if past tutorial scope
+          dismissed: inferredStep >= 26,  // auto-dismiss if past tutorial scope
           disabled: false,
           active: false,
           shownStep: 0,
           completedPostSteps: [],
+          tutorialFormat: 3,
         };
       }
 
@@ -940,16 +948,17 @@ export function loadGame() {
       // Detect old saves by checking if currentStep <= 15 and the save has the old format.
       // The old step 15 = tutorial_complete, new step 23 = tutorial_complete.
       {
-        const OLD_TO_NEW = { 1: 1, 2: 4, 3: 6, 4: 8, 5: 10, 6: 11, 7: 12, 8: 14, 9: 15, 10: 17, 11: 19, 12: 20, 13: 21, 14: 22, 15: 23 };
-        const OLD_POST_TO_NEW = { 17: 25, 18: 26 };
+        // Migration from original 15-step format to current 25-step format
+        const OLD_TO_NEW = { 1: 1, 2: 4, 3: 6, 4: 8, 5: 10, 6: 11, 7: 12, 8: 14, 9: 16, 10: 18, 11: 20, 12: 21, 13: 23, 14: 24, 15: 25 };
+        const OLD_POST_TO_NEW = { 17: 27, 18: 28 };
         const cs = gameState.tutorial.currentStep;
         // Only migrate if currentStep is in old range (1-15) and NOT already in new range
         // New step 16+ are nav/action steps that old saves never had
         if (cs >= 1 && cs <= 15 && OLD_TO_NEW[cs] !== undefined && OLD_TO_NEW[cs] !== cs) {
           gameState.tutorial.currentStep = OLD_TO_NEW[cs];
-          // Also update dismissed threshold — old 15 → new 23
+          // Also update dismissed threshold — old 15 → new 25
           if (gameState.tutorial.dismissed && cs >= 15) {
-            gameState.tutorial.currentStep = 23;
+            gameState.tutorial.currentStep = 25;
           }
         }
         // Migrate completedPostSteps IDs
@@ -958,6 +967,44 @@ export function loadGame() {
             id => OLD_POST_TO_NEW[id] || id
           );
         }
+      }
+
+      // Save migration: tutorial step IDs changed from 23-step to 25-step sequence
+      // Two new nav steps inserted at positions 15 and 22, shifting IDs >= 15 by +1 or +2
+      // tutorialFormat tracks which ID scheme the save uses (undefined/1 = 23-step, 2 = 25-step)
+      if ((gameState.tutorial.tutorialFormat || 1) < 2) {
+        const cs = gameState.tutorial.currentStep;
+        if (cs >= 15 && cs <= 23) {
+          const STEP_23_TO_25 = { 15: 16, 16: 17, 17: 18, 18: 19, 19: 20, 20: 21, 21: 23, 22: 24, 23: 25 };
+          if (STEP_23_TO_25[cs] !== undefined) {
+            gameState.tutorial.currentStep = STEP_23_TO_25[cs];
+          }
+        }
+        // Migrate post-tutorial step IDs (24-31 → 26-33)
+        const POST_23_TO_25 = { 24: 26, 25: 27, 26: 28, 27: 29, 28: 30, 29: 31, 30: 32, 31: 33 };
+        if (gameState.tutorial.completedPostSteps.length > 0) {
+          gameState.tutorial.completedPostSteps = gameState.tutorial.completedPostSteps.map(
+            id => POST_23_TO_25[id] || id
+          );
+        }
+        gameState.tutorial.tutorialFormat = 2;
+      }
+
+      // Save migration: tutorial step IDs changed from 25-step to 26-step sequence
+      // One new nav step inserted at position 24 (nav_admin), shifting IDs >= 24 by +1
+      if ((gameState.tutorial.tutorialFormat || 1) < 3) {
+        const cs = gameState.tutorial.currentStep;
+        if (cs >= 24 && cs <= 25) {
+          // 24 (admin_tab) → 25, 25 (tutorial_complete) → 26
+          gameState.tutorial.currentStep = cs + 1;
+        }
+        // Migrate post-tutorial step IDs (26-33 → 27-34)
+        if (gameState.tutorial.completedPostSteps.length > 0) {
+          gameState.tutorial.completedPostSteps = gameState.tutorial.completedPostSteps.map(
+            id => (id >= 26 && id <= 33) ? id + 1 : id
+          );
+        }
+        gameState.tutorial.tutorialFormat = 3;
       }
 
       // Save migration: lifetimeAllTime new fields (peaks, dataCollapses)

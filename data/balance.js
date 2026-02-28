@@ -30,8 +30,6 @@ export const TRACKS = {
 export const BALANCE = {
   // Resource generation
   MANUAL_CLICK_RESEARCH: 1,                // Points per manual click
-  RESEARCH_LAB_RATE: 5,                    // Points per second per lab
-
   // Token Economics
   TOKENS_PER_TFLOP: 200000,                // 200K tokens per TFLOP per second (compute is expensive)
   BASE_DEMAND: 500000000,                  // 500M tokens/s — base market, grows via app multipliers
@@ -286,7 +284,6 @@ export const BALANCE = {
   RP_THRESHOLD_SCALE: 1.0,
 
   // Secondary Resources (Phase 2+)
-  FOUNDER_OUTPUT: 0,                      // Removed: CEO Focus on Research replaces founder output
   RESEARCHER_RESEARCH_RATE: 10,            // Research per second per researcher (legacy system)
   INFRASTRUCTURE_COMPUTE_MULTIPLIER: 1.1,  // Compute multiplier per infrastructure level
   // Note: Researcher costs, salaries, and compute costs are defined in purchasables.js
@@ -514,8 +511,8 @@ export const FUNDRAISE_ROUNDS = {
     halfLife: 300,
     equityPercent: 0.05,
   },
-  series_g: {
-    name: 'Series G',
+  series_f: {
+    name: 'Series F',
     base: 0,                        // Pure revenue multiple
     maxRaise: 800_000_000_000,      // $800B cap
     gate: { capability: 'self_improvement', minRevenue: 200000000 },

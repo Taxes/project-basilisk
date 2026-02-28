@@ -395,6 +395,15 @@ function initializeGame() {
   // Handle onboarding (must be after UI init so modal DOM exists)
   handleOnboarding();
 
+  // Re-show ending modal if save was mid-ending (e.g. after import)
+  // Clear endingTriggered first so showPrestigeModal/triggerEnding guards pass;
+  // they will re-set it immediately.
+  if (gameState.endingTriggered) {
+    const endingToReshow = gameState.endingTriggered;
+    gameState.endingTriggered = null;
+    showEndingModal(endingToReshow);
+  }
+
   // Version update toast for returning players
   if (loaded && gameState.lastSeenVersion != null && gameState.lastSeenVersion < VERSION && changelog[0]?.version === VERSION) {
     const preview = changelog[0]?.changes?.[0];

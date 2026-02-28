@@ -111,11 +111,14 @@ export function updateCapabilityTree() {
     const threshold = getCapabilityThreshold(nextMilestone);
     const blockers = getMilestoneBlockers(currentTrack, nextMilestone.id);
     const prereqsMet = meetsPrerequisites(currentTrack, nextMilestone.id, gameState);
+    const thresholdText = nextMilestone.redacted
+      ? '??? RP'
+      : `${formatNumber(trackRP)} / ${formatNumber(threshold)} RP`;
     html += `
       <div class="milestone-progress">
         <div class="milestone-next">
           <span class="milestone-label">Next: ${nextMilestone.name}</span>
-          <span class="milestone-threshold">${formatNumber(trackRP)} / ${formatNumber(threshold)} RP</span>
+          <span class="milestone-threshold">${thresholdText}</span>
         </div>
         <div class="milestone-bar">
           <div class="milestone-bar-fill${!prereqsMet ? ' blocked' : ''}" style="width: ${progress.toFixed(1)}%"></div>
@@ -269,12 +272,12 @@ export function updateResearchList() {
         const fill = existingCard._fill;
         if (fill) fill.style.width = `${item.progress.toFixed(1)}%`;
         const costEl = existingCard._costEl;
-        if (costEl) {
+        if (costEl && !item.redacted) {
           const trackRP = gameState.tracks[item.trackId]?.researchPoints || 0;
           costEl.textContent = `${formatNumber(trackRP)} / ${formatNumber(item.threshold)} RP`;
         }
         const etaEl = existingCard._etaEl;
-        if (etaEl) {
+        if (etaEl && !item.redacted) {
           const remaining = item.threshold - (gameState.tracks[item.trackId]?.researchPoints || 0);
           const trackRate = getTrackResearchRate(item.trackId);
           if (trackRate > 0.001) {
@@ -424,7 +427,7 @@ function createMilestoneCard(item) {
 
   const thresholdDisplay = el('span', {
     className: 'research-cost',
-    text: `${formatNumber(trackRP)} / ${formatNumber(item.threshold)} RP`,
+    text: item.redacted ? '??? RP' : `${formatNumber(trackRP)} / ${formatNumber(item.threshold)} RP`,
   });
 
   const fill = el('div', {
@@ -432,11 +435,13 @@ function createMilestoneCard(item) {
   });
   fill.style.width = `${item.progress.toFixed(1)}%`;
 
-  // ETA element
+  // ETA element (hidden for redacted milestones)
   const remaining = item.threshold - (gameState.tracks[item.trackId]?.researchPoints || 0);
   const trackRate = getTrackResearchRate(item.trackId);
   const etaEl = el('div', { className: 'research-eta dim' });
-  if (trackRate > 0.001) {
+  if (item.redacted) {
+    etaEl.textContent = '';
+  } else if (trackRate > 0.001) {
     etaEl.textContent = `~${formatDuration(remaining / trackRate)} remaining`;
   } else {
     etaEl.textContent = 'no allocation';
@@ -664,6 +669,8 @@ function createTrackMilestoneCard(capability, status, trackId, trackState) {
             const statusEl = el('span', { className: `capability-status ${status}` });
             if (status === 'unlocked') {
               statusEl.textContent = 'UNLOCKED';
+            } else if (capability.redacted) {
+              statusEl.textContent = '??? RP';
             } else {
               const threshold = getCapabilityThreshold(capability);
               statusEl.textContent = formatNumber(threshold) + ' RP';
@@ -692,7 +699,7 @@ function createTrackMilestoneCard(capability, status, trackId, trackState) {
     }));
     card.appendChild(el('div', {
       className: 'capability-progress-text dim',
-      text: `${formatNumber(trackRP)} / ${formatNumber(threshold)} RP`,
+      text: capability.redacted ? '??? RP' : `${formatNumber(trackRP)} / ${formatNumber(threshold)} RP`,
     }));
   }
 

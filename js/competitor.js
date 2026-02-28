@@ -4,7 +4,6 @@
 import { gameState, saveGame } from './game-state.js';
 import { notify } from './ui.js';
 import { isCapabilityUnlocked, getAllTrackCapabilities } from './capabilities.js';
-import { triggerEnding } from './endings.js';
 import { addNewsItem, triggerNewsForEvent } from './news-feed.js';
 import { COMPETITOR } from '../data/balance.js';
 import { isCompetitorPausedByMoratorium } from './moratoriums.js';
@@ -95,11 +94,6 @@ export function updateCompetitor(deltaTime) {
     gameState.competitor.imminentWarned = true;
     notify('Competitor AGI Imminent', 'Intelligence reports suggest a rival lab is on the verge of achieving AGI.', 'danger');
     addNewsItem('BREAKING: Sources say rival lab weeks from AGI breakthrough', 'competitor');
-  }
-
-  // Check for competitor win — skip if player already reached AGI (ending in progress)
-  if (gameState.competitor.progressToAGI >= 100 && !gameState.endingTriggered) {
-    triggerEnding(gameState.arc === 1 ? 'competitor_wins_arc1' : 'competitor_wins_arc2');
   }
 
   // Calculate player's capability level

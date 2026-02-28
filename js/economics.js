@@ -242,14 +242,11 @@ export function handleCreditWarningChoice(choiceId) {
 }
 
 function triggerBankruptcy() {
-  // Set game over state
-  gameState.paused = true;
-  gameState.pauseReason = 'bankruptcy';
+  // Set bankrupted flag — next tick checkEndings() detects it and showPrestigeModal
+  // handles pausing. Don't pause here or the game loop won't tick to trigger the modal.
   gameState.bankrupted = true;
 
   addNewsItem('FT: "Promising AI venture folds amid cash crunch"', 'danger');
-
-  // The UI will detect bankrupted state and show game over screen
 }
 
 /**

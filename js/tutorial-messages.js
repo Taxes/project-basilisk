@@ -809,9 +809,9 @@ Autonomous research is a significant milestone. The regulatory implications alon
 
   {
     group: 'progression',
-    key: 'shapley_series_g',
+    key: 'shapley_series_f',
     sender: senders.shapley,
-    subject: 'Series G',
+    subject: 'Series F',
     body: `Round closed. I won't pretend the board added much value to the terms. Your CFO handled it.
 
 I've spent the last week in Washington. Three senators, two cabinet members, and the chairman of the National Security Council all asked me the same question: what exactly is your company building? I gave them the version your team approved. I don't think it's the full answer.
@@ -819,7 +819,7 @@ I've spent the last week in Washington. Three senators, two cabinet members, and
 When you're ready to have that conversation, the real one, call me directly.`,
     signature: '– Alvin',
     tags: ['board', 'fundraise'],
-    trigger: () => gameState.fundraiseRounds?.series_g?.raised,
+    trigger: () => gameState.fundraiseRounds?.series_f?.raised,
   },
 
   {

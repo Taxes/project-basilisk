@@ -993,6 +993,11 @@ export function updateFundraiseDisplay() {
       fingerParts.push(`${roundId}:${inQueue ? 'queued' : 'available'}`);
     }
   }
+  // Include exhausted grants in fingerprint
+  const grants = getGrantStatus();
+  for (const g of grants) {
+    if (g.exhausted) fingerParts.push(`grant_${g.id}:exhausted`);
+  }
   const fingerprint = fingerParts.join(',');
 
   if (fingerprint !== _renderedFundraiseFingerprint) {
@@ -1114,6 +1119,19 @@ export function updateFundraiseDisplay() {
         detailEl.appendChild(el('span', { text: `${equityText}${valText ? ' ' + valText : ''}` }));
         cardEl.appendChild(detailEl);
 
+        container.appendChild(cardEl);
+      }
+    }
+
+    // Third pass: render exhausted grants as historical entries
+    const exhaustedGrants = grants.filter(g => g.exhausted);
+    if (exhaustedGrants.length > 0) {
+      container.appendChild(el('div', { className: 'fundraise-divider' }));
+
+      for (const g of exhaustedGrants) {
+        const cardEl = el('div', { className: 'fundraise-round raised' });
+        const paidText = g.totalPaid > 0 ? `${formatFunding(g.totalPaid)} received` : 'EXHAUSTED';
+        cardEl.innerHTML = `<span class="fundraise-name">${g.name}</span> <span class="dim">${paidText}</span>`;
         container.appendChild(cardEl);
       }
     }

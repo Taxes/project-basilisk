@@ -4,6 +4,7 @@
 
 import { gameState } from '../game-state.js';
 import { calculateResearchRateBreakdown } from '../resources.js';
+import { getPurchasableById, PERSONNEL_IDS } from '../content/purchasables.js';
 import { formatNumber, getRateUnit } from '../utils/format.js';
 import { attachTooltip } from './stats-tooltip.js';
 import { capabilitiesTrack } from '../content/capabilities-track.js';
@@ -57,12 +58,7 @@ export function buildGlobalResearchTooltip() {
     html += `<div class="tooltip-row"><span>Strategy</span><span class="${cls}">&times;${bd.strategyMultiplier.toFixed(2)}</span></div>`;
   }
 
-  // CEO Focus: Hands-on Research multiplier (when > 1.01)
-  if (bd.ceoResearchMult > 1.01) {
-    const pct = Math.round((bd.ceoResearchMult - 1) * 100);
-    html += `<div class="tooltip-row"><span>CEO Research</span><span class="positive">+${pct}%</span></div>`;
-  }
-
+  // CEO Research and Prestige Bonus are shown as ledger rows (not in tooltip)
 
   // AI Self-Improvement (when feedbackContribution > 0)
   if (bd.feedbackContribution > 0) {
@@ -208,6 +204,51 @@ export function buildTrackResearchTooltip(trackId) {
 }
 
 // ---------------------------------------------------------------------------
+// Personnel base tooltip
+// ---------------------------------------------------------------------------
+
+export function buildPersonnelBaseTooltip() {
+  const research = gameState.computed?.research || calculateResearchRateBreakdown();
+  const amp = gameState.computed?.amplification;
+  const unit = getRateUnit();
+
+  let html = '<div class="tooltip-header">';
+  html += '<span>Personnel</span>';
+  html += `<span class="tooltip-rate">+${formatNumber(research.personnelBaseRaw)}${unit}</span>`;
+  html += '</div>';
+
+  html += '<div class="tooltip-section">';
+
+  if (amp?.personnelOutput) {
+    for (const id of PERSONNEL_IDS) {
+      const data = amp.personnelOutput[id];
+      if (!data || data.count <= 0) continue;
+      const purchasable = getPurchasableById(id);
+      const name = purchasable ? purchasable.name + 's' : id;
+      const ampMult = amp.ampBonuses[id] || 1;
+      const effectiveRP = data.baseRP * ampMult;
+
+      let row = `<span>${name} (${data.count})`;
+      if (ampMult > 1.005) {
+        row += ` <span class="positive">&times;${ampMult.toFixed(2)}</span>`;
+      }
+      row += '</span>';
+      row += `<span>+${formatNumber(effectiveRP)}${unit}</span>`;
+      html += `<div class="tooltip-row">${row}</div>`;
+    }
+  }
+
+  // CEO Focus flat RP (added to personnel base before multipliers)
+  const ceoFlatRP = gameState.computed?.ceoFocus?.flatRP || 0;
+  if (ceoFlatRP > 0) {
+    html += `<div class="tooltip-row"><span>Hands-on Research</span><span>+${formatNumber(ceoFlatRP)}${unit}</span></div>`;
+  }
+
+  html += '</div>';
+  return html;
+}
+
+// ---------------------------------------------------------------------------
 // Initialization — wire hover events
 // ---------------------------------------------------------------------------
 
@@ -222,6 +263,14 @@ export function initResearchTooltips() {
     attachTooltip(statsBarResearchGroup, buildGlobalResearchTooltip);
   }
 
+  // Personnel base tooltip
+  const personnelVal = document.getElementById('research-personnel-base');
+  const personnelRow = personnelVal?.closest('.ledger-row');
+  if (personnelRow) {
+    personnelRow.style.cursor = 'help';
+    attachTooltip(personnelRow, buildPersonnelBaseTooltip);
+  }
+
   // Per-track rate tooltips
   for (let i = 0; i < TRACK_RATE_ELEMENTS.length; i++) {
     const el = document.getElementById(TRACK_RATE_ELEMENTS[i]);
@@ -231,8 +280,8 @@ export function initResearchTooltips() {
     }
   }
 
-  // AI Self-Improvement tooltip (on the research-ai-group ledger row)
-  const aiRow = document.querySelector('#research-ai-group .ledger-row');
+  // AI Self-Improvement tooltip (on the ledger row inside research-ai-row group)
+  const aiRow = document.querySelector('#research-ai-row .ledger-row');
   if (aiRow) {
     aiRow.style.cursor = 'help';
     attachTooltip(aiRow, buildAISelfImprovementTooltip);

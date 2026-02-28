@@ -30,6 +30,11 @@ export function triggerExtinctionSequence() {
   if (sequenceActive) return;
   restoreNormalPacing(); // Ensure debug fast mode doesn't leak
 
+  // Record the ending immediately so analytics fires before the cinematic
+  const ending = arc1Endings.extinction;
+  const variant = ending.getVariant();
+  triggerEnding('extinction', variant);
+
   // During fast-forward, skip cinematic and directly transition
   if (gameState._fastForwarding) {
     const tier = getExtinctionTier();
@@ -212,10 +217,9 @@ function showEndingScreen(_tier) {
     return;
   }
 
-  // Record the ending
+  // Ending already recorded in triggerExtinctionSequence — just read the variant
   const ending = arc1Endings.extinction;
-  const variant = ending.getVariant();
-  triggerEnding('extinction', variant);
+  const variant = gameState.endingVariant || ending.getVariant();
 
   const narrativeLines = ending.variants[variant].narrative;
   const { scrollArea, container, promptBlock } = buildEndingDOM(overlay);

@@ -3,11 +3,14 @@
 // Called from gameTick() and also from the paused-state UI loop in startGameLoop().
 
 import { gameState } from './game-state.js';
-import { isTutorialActive, isTutorialEnabled, completeTutorialStep, registerStepNames } from './tutorial-state.js';
+import { isTutorialActive, isTutorialEnabled, completeTutorialStep, registerStepNames, getReviewModeTarget, clearReviewMode } from './tutorial-state.js';
 import { TUTORIAL_STEPS, STEP_NAMES } from './content/tutorial-steps.js';
-import { showCard, hideCard, isCardVisible, replaceCard } from './ui/cue-cards.js';
+import { showCard, hideCard, isCardVisible, isBackdropActive, replaceCard, showFollowUpCard } from './ui/cue-cards.js';
 
 let initialized = false;
+
+// Track whether we're showing a follow-up card for the current step
+let followUpActiveForStep = 0;
 
 export function initTutorialController() {
   registerStepNames(STEP_NAMES);
@@ -19,12 +22,12 @@ export function initTutorialController() {
 export function checkTutorialSteps() {
   if (!initialized) return;
 
-  // Main sequence (sequential, steps 1-23)
+  // Main sequence (sequential, steps 1-26)
   if (isTutorialActive()) {
     checkMainSequence();
   }
 
-  // Post-tutorial standalone steps (24-26)
+  // Post-tutorial standalone steps (27+)
   if (isTutorialEnabled()) {
     checkPostTutorialSteps();
   }
@@ -35,7 +38,23 @@ function checkMainSequence() {
   const shownId = gameState.tutorial.shownStep;
   if (isCardVisible() && shownId > 0) {
     const shownDef = TUTORIAL_STEPS.find(s => s.id === shownId && s.phase === 'main');
-    if (shownDef?.advance && shownDef.advance(gameState)) {
+
+    // Follow-up card is active — check follow-up advance
+    if (followUpActiveForStep === shownId && shownDef?.followUp?.advance) {
+      if (shownDef.followUp.advance(gameState)) {
+        followUpActiveForStep = 0;
+        completeTutorialStep(shownDef.id, 'skip-ahead');
+        // Fall through to Phase 2 to find next step
+      } else {
+        return;  // Follow-up showing, advance not met
+      }
+    } else if (shownDef?.advance && shownDef.advance(gameState)) {
+      // Primary advance met — check for follow-up
+      if (shownDef.followUp) {
+        followUpActiveForStep = shownId;
+        showFollowUpCard(shownDef);
+        return;
+      }
       completeTutorialStep(shownDef.id, 'skip-ahead');
       // Don't hide or unpause — fall through to Phase 2 to find next step
     } else {
@@ -44,30 +63,46 @@ function checkMainSequence() {
   }
 
   // Phase 2: Find the next step to show, skipping satisfied nav steps
+  const reviewTarget = getReviewModeTarget();
   let nextId = gameState.tutorial.currentStep + 1;
+
+  // Clear review mode once we've caught up
+  if (reviewTarget > 0 && nextId > reviewTarget) {
+    clearReviewMode();
+  }
+
+  const inReview = reviewTarget > 0 && nextId <= reviewTarget;
+
   // Loop to skip chains of already-satisfied nav steps
   for (let i = 0; i < 10; i++) {  // Safety cap to prevent infinite loops
     const def = TUTORIAL_STEPS.find(s => s.id === nextId && s.phase === 'main');
     if (!def || !def.trigger(gameState)) break;  // No more steps or trigger not met
 
     // Nav step already satisfied — silently complete and check next
-    if (def.major === false && def.advance && def.advance(gameState)) {
+    // In review mode, don't skip nav steps (show them so player sees all messages)
+    if (!inReview && def.major === false && def.advance && def.advance(gameState)) {
       completeTutorialStep(def.id, 'skip-ahead');
       nextId = gameState.tutorial.currentStep + 1;
       continue;
     }
 
+    // In review mode, make action-gated steps informational (add "Got it" escape)
+    // but NOT nav steps — those still auto-advance when their condition is met
+    const stepToShow = (inReview && def.advance && def.major !== false)
+      ? { ...def, reviewMode: true }
+      : def;
+
     // Found a step to show
     if (isCardVisible()) {
-      replaceCard(def);
+      replaceCard(stepToShow);
     } else {
-      showCard(def);
+      showCard(stepToShow);
     }
     return;
   }
 
-  // Phase 3: Nothing to show — clean up any lingering card
-  if (isCardVisible()) {
+  // Phase 3: Nothing to show — clean up any lingering card/backdrop
+  if (isCardVisible() || isBackdropActive()) {
     hideCard();
     if (gameState.paused) gameState.paused = false;
   }
@@ -86,6 +121,7 @@ function checkPostTutorialSteps() {
     return;  // Don't show a new card while one is visible
   }
 
+  let shown = false;
   for (const stepDef of TUTORIAL_STEPS) {
     if (stepDef.phase !== 'post') continue;
     if (gameState.tutorial.completedPostSteps.includes(stepDef.id)) continue;
@@ -97,7 +133,13 @@ function checkPostTutorialSteps() {
         continue;  // Check for next post step
       }
       showCard(stepDef);
+      shown = true;
       break;  // Show one at a time
     }
+  }
+
+  // Clean up lingering backdrop after dismissCard if no new step was shown
+  if (!shown && isBackdropActive()) {
+    hideCard();
   }
 }

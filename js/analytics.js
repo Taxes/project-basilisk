@@ -25,6 +25,12 @@ export function milestone(name, data = {}, dedupKey, options = {}) {
   if (fired.includes(key)) return;
   fired.push(key);
 
+  const isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if (isDev) {
+    console.log('[analytics]', name, { ...data, key });
+    return;
+  }
+
   if (typeof posthog === 'undefined' || typeof posthog.capture !== 'function') return;
 
   const captureOptions = options.sendImmediately

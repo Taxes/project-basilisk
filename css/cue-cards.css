@@ -13,9 +13,9 @@
   display: block;
 }
 
-/* Target element highlight — punches through the backdrop.
-   z-index is set via JS (along with ancestor stacking context elevation)
-   because CSS alone can't escape parent stacking contexts. */
+/* Target element highlight — visual outline around the focused element.
+   For action-gated steps, a clip-path cutout in the backdrop (set via JS)
+   makes the highlighted area clickable. */
 .cue-card-target-highlight {
   z-index: 901 !important;
   outline: 1px solid var(--accent);
@@ -26,6 +26,27 @@
 .cue-card-target-highlight.cue-card-highlight-inset {
   outline: none;
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Action-gated steps: highlighted area pulses to signal "interact here".
+   Interactivity is handled by clip-path cutout in the backdrop, not z-index. */
+.cue-card-target-highlight.cue-card-action-gate {
+  animation: cue-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes cue-pulse {
+  0%, 100% { outline-color: var(--accent); }
+  50% { outline-color: transparent; }
+}
+
+/* Inset variant pulses box-shadow instead */
+.cue-card-target-highlight.cue-card-highlight-inset.cue-card-action-gate {
+  animation: cue-pulse-inset 1.5s ease-in-out infinite;
+}
+
+@keyframes cue-pulse-inset {
+  0%, 100% { box-shadow: inset 0 0 0 1px var(--accent); }
+  50% { box-shadow: inset 0 0 0 1px transparent; }
 }
 
 /* Card container */
@@ -55,6 +76,12 @@
   margin-bottom: 8px;
 }
 
+/* Faint step ID for debugging — always visible on all cards */
+.cue-card-step-id {
+  opacity: 0.4;
+  float: right;
+}
+
 /* Card body text */
 .cue-card-body {
   margin-bottom: 12px;
@@ -62,6 +89,13 @@
 
 .cue-card-body strong {
   color: #fff;
+}
+
+/* Action emphasis — accent-colored text for key instructions */
+.cue-card-body .cue-card-action {
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 600;
 }
 
 .cue-card-body p {

@@ -755,6 +755,7 @@ function createSyntheticSection() {
 
   genBtn.addEventListener('click', (e) => {
     enqueuePurchase('synthetic_generator', getModifierQty(e), false);
+    _dataTabFingerprint = '';
     requestFullUpdate();
   });
   genBtn.addEventListener('contextmenu', (e) => {
@@ -763,6 +764,7 @@ function createSyntheticSection() {
     if (now - _lastPriorityClickTime < 100) return;
     _lastPriorityClickTime = now;
     enqueuePurchase('synthetic_generator', getModifierQty(e), true);
+    _dataTabFingerprint = '';
     requestFullUpdate();
   });
 
@@ -1391,7 +1393,7 @@ function updateSyntheticDynamic() {
 
 function updateAffordability() {
   // Update all cards with stashed refs via data-purchase-id
-  document.querySelectorAll('#data-tab .compact-purchase-card[data-purchase-id]').forEach(card => {
+  document.querySelectorAll('#data-tab-content .compact-purchase-card[data-purchase-id]').forEach(card => {
     const purchId = card.dataset.purchaseId;
     const purchasable = getPurchasableById(purchId);
     if (!purchasable) return;

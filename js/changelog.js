@@ -3,6 +3,17 @@
 
 export const changelog = [
   {
+    version: '0.8.2',
+    date: '2026-02-28',
+    changes: [
+      'Smoother tutorial with better action guidance and new mid-game tips',
+      'Fixed research rates not including all bonuses',
+      'Exhausted grants now appear in fundraise history',
+      'Added a late-game capabilities milestone',
+      'Assorted bugfixes and more tooltips',
+    ],
+  },
+  {
     version: '0.8.1',
     date: '2026-02-27',
     changes: [

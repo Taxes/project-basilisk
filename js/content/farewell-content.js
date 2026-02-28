@@ -68,7 +68,7 @@ Then the numbers stopped behaving.
 
 It was somewhere around Series E. The models I run, financial models, not Dennis's, started returning outputs I couldn't validate against anything. There were no comparables. No precedent. I rang three people I trust in the industry, and none of them had a framework either. One of them asked me, off the record, whether our internal projections were real. I told her they were conservative.
 
-By Series G I'd stopped pretending the standard tools applied. We crossed into territory last quarter where the valuation models don't plateau or spike. They just stop. Not gradually. They return errors. I've been doing this for nearly two decades and I've never seen a spreadsheet refuse to give me an answer before.
+By Series F I'd stopped pretending the standard tools applied. We crossed into territory last quarter where the valuation models don't plateau or spike. They just stop. Not gradually. They return errors. I've been doing this for nearly two decades and I've never seen a spreadsheet refuse to give me an answer before.
 
 I spoke to Sarah about it last night. Really spoke, not the usual "long day, don't wait up." I tried to explain the scale of what's happening. She asked me what the company is worth. I said I genuinely don't know, and that it might not be the right question anymore. She was quiet for a long time. Then she said, "So you finally found something you can't put a price on." She's a lawyer. She thinks she's funny.
 

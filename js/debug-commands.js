@@ -133,8 +133,6 @@ const debug = {
   },
 
   triggerBankruptcy() {
-    gameState.paused = true;
-    gameState.pauseReason = 'bankruptcy';
     gameState.bankrupted = true;
     console.log('[debug] Triggered bankruptcy — ending will fire next tick');
   },

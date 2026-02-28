@@ -338,6 +338,17 @@ We went from "interpolate training data" to "reason about the world." Those are 
   },
 };
 
+// === TRACK COMPLETION MESSAGE ===
+
+export const trackCompletionMessage = {
+  type: 'info',
+  sender: senders.babbage,
+  subject: (trackName) => `${trackName} Research Complete`,
+  body: (trackName) => `We've hit every target on the ${trackName} roadmap. Nothing left to chase there. I'm reassigning researchers to the open programs.`,
+  signature: '\u2013 Dennis',
+  tags: ['research'],
+};
+
 // === FUNDING MESSAGES ===
 
 export const fundingMessages = {
@@ -410,10 +421,10 @@ One more thing. I'm proud of what we've built here. Not just the numbers. The te
     tags: ['funding', 'fundraise'],
     triggeredBy: 'fundraise_series_e',
   },
-  series_g_available: {
+  series_f_available: {
     type: 'info',
     sender: characters.cfo,
-    subject: 'Series G — Unprecedented Scale',
+    subject: 'Series F — Unprecedented Scale',
     body: `I don't know how to write this email.
 
 I have spent my entire career putting numbers into frameworks. Valuation models, discounted cash flows, comparable transactions. That is what I do. That is what I have always done. And for the first time in my professional life, the numbers do not fit into anything I know.
@@ -425,7 +436,7 @@ I keep running the models and the models keep telling me things I don't know how
 You know the drill. Give me a ring when you're ready to talk to them.`,
     signature: '– Ada',
     tags: ['funding', 'fundraise'],
-    triggeredBy: 'fundraise_series_g',
+    triggeredBy: 'fundraise_series_f',
   },
 };
 

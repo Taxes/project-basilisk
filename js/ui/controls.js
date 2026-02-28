@@ -163,6 +163,9 @@ export function initAllocationSliders() {
  * culture system.
  */
 export function updateAllocation(changedTrack, newValue) {
+  // Don't allow allocation to a completed track
+  if (window.isTrackComplete(changedTrack)) return;
+
   // In Arc 1, alignment is hidden — only work with capabilities and applications
   const isArc1 = gameState.arc === 1;
   const tracks = isArc1
@@ -249,6 +252,28 @@ export function updateAllocationDisplay() {
     const slider = $(`${track}-allocation`);
     const numInput = $(`${track}-percent-input`);
     const driftDisplay = $(`${track}-drift`);
+
+    // Check if track is complete — lock slider
+    const row = document.querySelector(`.allocation-row[data-track="${track}"]`);
+    if (row) {
+      const complete = window.isTrackComplete(track);
+      row.classList.toggle('track-complete', complete);
+
+      // Add or remove "Complete" label
+      let completeLabel = row.querySelector('.allocation-complete-label');
+      if (complete && !completeLabel) {
+        completeLabel = document.createElement('span');
+        completeLabel.className = 'allocation-complete-label';
+        completeLabel.textContent = 'Complete';
+        row.appendChild(completeLabel);
+      } else if (!complete && completeLabel) {
+        completeLabel.remove();
+      }
+
+      // Disable inputs
+      if (slider) slider.disabled = complete;
+      if (numInput) numInput.disabled = complete;
+    }
 
     if (slider) {
       const actualAlloc = state.tracks[track].researcherAllocation * 100;
@@ -547,18 +572,18 @@ function updateResearchBreakdown() {
   if (!research) return;
 
   const base = $('research-personnel-base');
-  if (base) base.textContent = '+' + formatNumber(research.personnelBase) + getRateUnit();
+  if (base) base.textContent = '+' + formatNumber(research.personnelBaseRaw) + getRateUnit();
 
   // Compute boost (always shown; warn when low)
-  const boostGroup = $('research-compute-boost-group');
+  const boostRow = $('research-compute-boost-row');
   const boost = $('research-compute-boost');
-  if (boostGroup && boost) {
+  if (boostRow && boost) {
     const val = research.computeBoost ?? 0;
     boost.textContent = '\u00d7' + val.toFixed(2);
     boost.classList.toggle('warning', val >= 0.8 && val < 1.0);
     boost.classList.toggle('negative', val < 0.8);
-    if (!boostGroup._hasTooltip) {
-      _addBreakdownTooltip(boostGroup, () => {
+    if (!boostRow._hasTooltip) {
+      _addBreakdownTooltip(boostRow, () => {
         const r = gameState.computed?.research;
         const cb = r?.computeBoost ?? 0;
         const comp = gameState.computed?.compute;
@@ -571,46 +596,60 @@ function updateResearchBreakdown() {
           `<div class="tooltip-row"><span>Multiplier</span><span>\u00d7${cb.toFixed(2)}</span></div>` +
           '<div class="tooltip-row dim"><span>More compute relative to RP = higher boost</span></div>';
       });
-      boostGroup._hasTooltip = true;
+      boostRow._hasTooltip = true;
     }
   }
 
   // Capability bonus (hide when x1.00)
-  const capGroup = $('research-cap-bonus-group');
+  const capRow = $('research-cap-bonus-row');
   const cap = $('research-cap-bonus');
-  if (capGroup && cap) {
+  if (capRow && cap) {
     const val = research.capMultiplier || 1;
-    capGroup.classList.toggle('hidden', Math.abs(val - 1) < 0.005);
+    capRow.classList.toggle('hidden', Math.abs(val - 1) < 0.005);
     cap.textContent = '\u00d7' + val.toFixed(2);
-    if (!capGroup._hasTooltip) {
-      _addBreakdownTooltip(capGroup, () => {
+    if (!capRow._hasTooltip) {
+      _addBreakdownTooltip(capRow, () => {
         const cm = gameState.computed?.research?.capMultiplier || 1;
         return '<div class="tooltip-header"><span>Capability Bonus</span></div>' +
           `<div class="tooltip-row"><span>From unlocked research</span><span>\u00d7${cm.toFixed(2)}</span></div>` +
           '<div class="tooltip-row dim"><span>Certain capabilities boost all research</span></div>';
       });
-      capGroup._hasTooltip = true;
+      capRow._hasTooltip = true;
     }
   }
 
-  // Research from personnel subtotal = base x all multipliers
-  const fromPersonnel = (research.personnelBase || 0)
-    * (research.computeBoost ?? 0)
-    * (research.capMultiplier || 1)
-    * (research.strategyMultiplier || 1);
+  // CEO Research bonus (hide when x1.00)
+  const ceoRow = $('research-ceo-row');
+  const ceoBonusEl = $('research-ceo-bonus');
+  const ceoVal = research.ceoResearchMult || 1;
+  if (ceoRow && ceoBonusEl) {
+    ceoRow.classList.toggle('hidden', Math.abs(ceoVal - 1) < 0.005);
+    ceoBonusEl.textContent = '\u00d7' + ceoVal.toFixed(2);
+  }
+
+  // Prestige bonus (hide when x1.00)
+  const prestigeRow = $('research-prestige-row');
+  const prestigeBonusEl = $('research-prestige-bonus');
+  const prestigeVal = research.prestigeResearch ?? 1;
+  if (prestigeRow && prestigeBonusEl) {
+    prestigeRow.classList.toggle('hidden', Math.abs(prestigeVal - 1) < 0.005);
+    prestigeBonusEl.textContent = '\u00d7' + prestigeVal.toFixed(2);
+  }
+
+  // Research from personnel subtotal — read directly from game loop (single source of truth)
   const fpEl = $('research-from-personnel');
-  if (fpEl) fpEl.textContent = '+' + formatNumber(fromPersonnel) + getRateUnit();
+  if (fpEl) fpEl.textContent = '+' + formatNumber(research.total || 0) + getRateUnit();
 
   // AI self-improvement (hide when 0)
-  const aiGroup = $('research-ai-group');
+  const aiRow = $('research-ai-row');
   const aiRate = $('research-ai-rate');
-  if (aiGroup && aiRate) {
+  if (aiRow && aiRate) {
     const val = research.feedbackContribution || 0;
-    aiGroup.classList.toggle('hidden', val === 0);
+    aiRow.classList.toggle('hidden', val === 0);
     aiRate.textContent = '+' + formatNumber(val) + getRateUnit();
   }
 
-  // Total research rate
+  // Base research rate = personnel subtotal + AI self-improvement (before track-specific modifiers)
   const total = (research.total || 0) + (research.feedbackContribution || 0);
   const totalEl = $('research-total-rate');
   if (totalEl) totalEl.textContent = '+' + formatNumber(total) + getRateUnit();

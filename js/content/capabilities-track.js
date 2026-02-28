@@ -284,5 +284,19 @@ export const capabilitiesTrack = {
       flavorQuote: 'Error: circular dependency detected.',
       warningText: 'This capability will determine your ending. Current alignment will be evaluated.',
     },
+
+    // Tier 10 - The end
+    {
+      id: 'agi_emergence',
+      name: '???',
+      tier: 10,
+      threshold: 73728000000,   // AGI_RP_TARGET — unlocks at 100% AGI progress
+      requires: ['recursive_improvement'],
+      effects: {},
+      description: 'Something is happening.',
+      flavorQuote: 'Look on my works, ye Mighty, and despair!',
+      redacted: true,           // UI hides threshold numbers
+      silent: true,             // No unlock toast
+    },
   ],
 };

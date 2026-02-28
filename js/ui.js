@@ -47,6 +47,7 @@ import {
 
 import { renderMessagesPanel } from './ui/messages-panel.js';
 import { updateTabBadge } from './ui/tab-navigation.js';
+import { isCardVisible } from './ui/cue-cards.js';
 
 // Late-bound callback to avoid main.js <-> ui.js circular import
 let _onHardReset = null;
@@ -384,6 +385,13 @@ function updatePlaytime() {
 
 // Toggle pause state
 export function togglePause() {
+  // Block manual pause toggle while any tutorial card is showing
+  // (the tutorial controls pause/unpause timing for all steps)
+  if (isCardVisible()) return;
+
+  // Block unpause while an ending modal is open
+  if (gameState.paused && gameState.endingTriggered) return;
+
   if (gameState.paused) {
     gameState.paused = false;
     gameState.pauseStartTime = null;

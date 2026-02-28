@@ -11,7 +11,7 @@ import { FUNDRAISE_ROUNDS, BALANCE } from '../data/balance.js';
 import { requestFullUpdate } from './ui/signals.js';
 import { getFundraiseMultiplier } from './focus-queue.js';
 import { addInfoMessage, hasMessageBeenTriggered, markMessageTriggered } from './messages.js';
-import { fundingMessages } from './content/message-content.js';
+import { fundingMessages, trackCompletionMessage } from './content/message-content.js';
 import { milestone } from './analytics.js';
 
 // Send CFO email when a fundraise round becomes available
@@ -209,12 +209,20 @@ export function checkAllMilestones() {
     }
   }
 
-  // Show notifications for newly unlocked milestones
-  if (totalUnlocked > 3) {
-    // Cascade: show summary instead of spamming
-    notify(`${totalUnlocked} milestones unlocked`, 'Multiple research breakthroughs achieved', 'milestone');
-  } else if (totalUnlocked > 0) {
-    for (const [trackId, ids] of Object.entries(results)) {
+  // Show notifications for newly unlocked milestones (skip silent ones)
+  const notifiable = {};
+  let notifiableCount = 0;
+  for (const [trackId, ids] of Object.entries(results)) {
+    const filtered = ids.filter(capId => !getCapability(trackId, capId)?.silent);
+    if (filtered.length > 0) {
+      notifiable[trackId] = filtered;
+      notifiableCount += filtered.length;
+    }
+  }
+  if (notifiableCount > 3) {
+    notify(`${notifiableCount} milestones unlocked`, 'Multiple research breakthroughs achieved', 'milestone');
+  } else if (notifiableCount > 0) {
+    for (const [trackId, ids] of Object.entries(notifiable)) {
       for (const capId of ids) {
         const capability = getCapability(trackId, capId);
         if (capability) {
@@ -222,6 +230,70 @@ export function checkAllMilestones() {
         }
       }
     }
+  }
+
+  // Check for newly completed tracks and redistribute allocation
+  for (const trackId of Object.keys(results)) {
+    if (!isTrackComplete(trackId)) continue;
+    const triggerKey = `track_complete_${trackId}`;
+    if (hasMessageBeenTriggered(triggerKey)) continue;
+
+    const target = gameState.targetAllocation;
+    if (!target) continue;
+
+    const completedShare = target[trackId];
+    if (completedShare <= 0) {
+      // Track already at 0% — just send the message
+      const trackName = tracks[trackId].name;
+      addInfoMessage(
+        trackCompletionMessage.sender,
+        trackCompletionMessage.subject(trackName),
+        trackCompletionMessage.body(trackName),
+        trackCompletionMessage.signature,
+        trackCompletionMessage.tags,
+        triggerKey,
+      );
+      markMessageTriggered(triggerKey);
+      continue;
+    }
+
+    // Find remaining incomplete tracks
+    const otherTracks = Object.keys(gameState.tracks).filter(
+      t => t !== trackId && !isTrackComplete(t)
+    );
+    const otherSum = otherTracks.reduce((s, t) => s + (target[t] || 0), 0);
+
+    // Redistribute proportionally
+    target[trackId] = 0;
+    if (otherSum > 0) {
+      for (const t of otherTracks) {
+        target[t] = (target[t] || 0) + completedShare * ((target[t] || 0) / otherSum);
+      }
+    } else if (otherTracks.length > 0) {
+      // All other tracks at 0 — split evenly
+      const share = completedShare / otherTracks.length;
+      for (const t of otherTracks) {
+        target[t] = share;
+      }
+    }
+
+    // Cancel any queued culture shift (targets stale allocation)
+    const cultureIdx = gameState.focusQueue.findIndex(item => item.type === 'culture');
+    if (cultureIdx >= 0) {
+      gameState.focusQueue.splice(cultureIdx, 1);
+    }
+
+    // Send Babbage message
+    const trackName = tracks[trackId].name;
+    addInfoMessage(
+      trackCompletionMessage.sender,
+      trackCompletionMessage.subject(trackName),
+      trackCompletionMessage.body(trackName),
+      trackCompletionMessage.signature,
+      trackCompletionMessage.tags,
+      triggerKey,
+    );
+    markMessageTriggered(triggerKey);
   }
 
   return results;
@@ -236,6 +308,14 @@ export function isCapabilityUnlocked(capId) {
     }
   }
   return false;
+}
+
+// Check if all milestones in a track have been unlocked
+export function isTrackComplete(trackId) {
+  const track = tracks[trackId];
+  const trackState = gameState.tracks[trackId];
+  if (!track || !trackState) return false;
+  return track.capabilities.every(cap => trackState.unlockedCapabilities.includes(cap.id));
 }
 
 // Count total unlocked capabilities across all tracks
@@ -305,6 +385,7 @@ if (typeof window !== 'undefined') {
   window.isCapabilityUnlocked = isCapabilityUnlocked;
   window.countUnlockedCapabilities = countUnlockedCapabilities;
   window.getAllTrackCapabilities = getAllTrackCapabilities;
+  window.isTrackComplete = isTrackComplete;
   window.checkFundraiseGates = checkFundraiseGates;
 }
 
