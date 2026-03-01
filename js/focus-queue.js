@@ -22,6 +22,21 @@ export function getCultureSpeedMultiplier() {
   return Math.pow(ref / Math.max(researchers, 1), exp);
 }
 
+/** HR-driven culture drift rate (drift/s) as a function of r = hrTeams / researchers. */
+export function getHRCultureDrift(r) {
+  if (r <= 0) return 0;
+  const R_MIN = BALANCE.HR_CULTURE_R_MIN;
+  const R_MAX = BALANCE.HR_CULTURE_R_MAX;
+  const RATE_MIN = BALANCE.HR_CULTURE_RATE_MIN;
+  const RATE_MAX = BALANCE.HR_CULTURE_RATE_MAX;
+  if (r < R_MIN) return RATE_MIN * r / R_MIN;           // dead zone: linear blend
+  if (r <= R_MAX) {                                       // active zone: linear interp
+    const t = (r - R_MIN) / (R_MAX - R_MIN);
+    return RATE_MIN + t * (RATE_MAX - RATE_MIN);
+  }
+  return RATE_MAX;                                        // clamp
+}
+
 // --- Queue ID counter ---
 let nextQueueId = 1;
 
@@ -440,8 +455,10 @@ function processFurloughItem(item, effectiveDelta, speed) {
 }
 
 function processCultureItem(item, effectiveDelta) {
-  const speedMult = getCultureSpeedMultiplier();
-  const driftAmount = BALANCE.CULTURE_FOCUSED_DRIFT_RATE * effectiveDelta * speedMult;
+  const hrDriftRate = gameState.computed?.hrCultureDriftRate || 0;
+  const focusedHrDrift = hrDriftRate * BALANCE.CULTURE_FOCUS_MULTIPLIER * effectiveDelta;
+  const legacyDrift = BALANCE.CULTURE_FOCUSED_DRIFT_RATE * effectiveDelta * getCultureSpeedMultiplier();
+  const driftAmount = Math.max(focusedHrDrift, legacyDrift);
   const done = applyAllocationDrift(item.targetAllocation, driftAmount);
   item.progress = calculateCultureProgress(item.targetAllocation);
 
@@ -453,9 +470,10 @@ function processCultureItem(item, effectiveDelta) {
     if (diff > maxTrackDiff) maxTrackDiff = diff;
   }
   if (maxTrackDiff > BALANCE.CULTURE_COMPLETION_THRESHOLD) {
-    const focusedRate = BALANCE.CULTURE_FOCUSED_DRIFT_RATE * speedMult;
-    const passiveRate = BALANCE.CULTURE_PASSIVE_DRIFT_RATE * speedMult;
-    item.effectiveRemaining = maxTrackDiff / focusedRate;
+    const effectiveRate = driftAmount / effectiveDelta;
+    const passiveHrDrift = hrDriftRate;
+    const passiveRate = Math.max(passiveHrDrift, BALANCE.CULTURE_PASSIVE_DRIFT_RATE * getCultureSpeedMultiplier());
+    item.effectiveRemaining = maxTrackDiff / effectiveRate;
     item.passiveRemaining = maxTrackDiff / passiveRate;
   } else {
     item.effectiveRemaining = 0;
@@ -518,7 +536,7 @@ export function getFundraiseMultiplier(roundId) {
  *  irExtraBase is the fixed IR bonus that pushes the raise above the normal maxRaise cap.
  *  irMultFraction is the IR multiplier fraction (e.g. 0.20 = 20% of base multiplier) — its
  *  revenue contribution also pushes above the cap. */
-export function calculateFundraisePreview(round, annualRevenue, multiplier, baseOverride, irExtraBase = 0, irMultFraction = 0) {
+export function calculateFundraisePreview(round, annualRevenue, multiplier, baseOverride, irExtraBase = 0, irMultFraction = 0, irCapMultiplier = 1) {
   const effectiveBase = baseOverride !== undefined ? baseOverride : (round.base || 0);
   const revenueComponent = annualRevenue * multiplier * round.equityPercent;
   const uncappedAmount = effectiveBase + revenueComponent;
@@ -527,13 +545,14 @@ export function calculateFundraisePreview(round, annualRevenue, multiplier, base
   const irMultRevenue = annualRevenue * (irMultFraction * multiplier) * round.equityPercent;
   // Both IR components stack above the normal cap, total capped at maxRaise × (1 + overshoot)
   const totalIrExtra = irExtraBase + irMultRevenue;
-  const irMaxRaise = round.maxRaise ? round.maxRaise * (1 + BALANCE.IR_MAX_OVERSHOOT) : Infinity;
+  const irMaxRaise = round.maxRaise ? round.maxRaise * (1 + BALANCE.IR_MAX_OVERSHOOT * irCapMultiplier) : Infinity;
   const raiseAmount = Math.min(irMaxRaise, cappedAmount + totalIrExtra);
+  // Effective equity = what fraction of total theoretical demand was captured.
+  // See docs/design-docs/economics/fundraising.md for scenario table.
+  const totalTheoretical = uncappedAmount + totalIrExtra;
   let effectiveEquity = round.equityPercent;
-  // Cap the uncapped total at the overshoot limit so IR can't inflate valuations beyond 25%
-  const totalUncapped = Math.min(uncappedAmount + totalIrExtra, irMaxRaise);
-  if (round.maxRaise && totalUncapped > round.maxRaise) {
-    effectiveEquity = round.equityPercent * (round.maxRaise / totalUncapped);
+  if (totalTheoretical > 0 && raiseAmount < totalTheoretical) {
+    effectiveEquity = round.equityPercent * (raiseAmount / totalTheoretical);
   }
   return { raiseAmount, effectiveEquity, irMultRevenue };
 }
@@ -563,10 +582,11 @@ function completeFundraise(item) {
   const liveRevenue = gameState.computed?.revenue?.gross || 0;
   const irBaseBonus = gameState.computed?.ceoFocus?.irFundraiseBonus || 0;
   const irMultFraction = gameState.computed?.ceoFocus?.irMultFraction || 0;
+  const irCapMult = gameState.computed?.ceoFocus?.irCapMultiplier || 1;
 
   const annualRevenue = liveRevenue * 365;
   // Both IR components push above maxRaise cap (#564, #724)
-  const { raiseAmount, effectiveEquity } = calculateFundraisePreview(round, annualRevenue, liveMultiplier, undefined, irBaseBonus, irMultFraction);
+  const { raiseAmount, effectiveEquity } = calculateFundraisePreview(round, annualRevenue, liveMultiplier, undefined, irBaseBonus, irMultFraction, irCapMult);
 
   // Tranche disbursement: money arrives over time instead of instantly
   const disbursementDuration = round.disbursementDuration || 1; // fallback to instant
@@ -648,7 +668,10 @@ function calculateCultureProgress(target) {
 export function applyPassiveDrift(deltaTime) {
   const target = gameState.targetAllocation;
   if (!target) return;
-  applyAllocationDrift(target, BALANCE.CULTURE_PASSIVE_DRIFT_RATE * deltaTime * getCultureSpeedMultiplier());
+  const hrDriftRate = gameState.computed?.hrCultureDriftRate || 0;
+  const hrDrift = hrDriftRate * deltaTime;
+  const passiveDrift = BALANCE.CULTURE_PASSIVE_DRIFT_RATE * deltaTime * getCultureSpeedMultiplier();
+  applyAllocationDrift(target, Math.max(hrDrift, passiveDrift));
 }
 
 // --- Enqueue helpers ---
@@ -763,4 +786,5 @@ export function initFocusQueueExports() {
   window.resetQueueIdCounter = resetQueueIdCounter;
   window.processDisbursements = processDisbursements;
   window.arePurchasesBlocked = arePurchasesBlocked;
+  window.getHRCultureDrift = getHRCultureDrift;
 }

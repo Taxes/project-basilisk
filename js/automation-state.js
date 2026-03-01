@@ -47,6 +47,16 @@ export const POLICY_TYPES = {
   PERCENT_ITEM: 'percent_item',        // Maintain at X% of another item
 };
 
+// Get culture shift automation state (#850)
+export function getCultureShiftAutomation() {
+  return gameState.cultureShiftAutomation || { enabled: false, priority: 1 };
+}
+
+// Culture shift automation unlocked when player has HR teams + operations dept
+export function isCultureShiftUnlocked() {
+  return getCount('hr_team') > 0 && getCount('operations_dept') > 0;
+}
+
 // Check if automation is unlocked for an item
 export function isAutomationUnlocked(itemId) {
   const personnelItem = AUTOMATABLE_PERSONNEL.find(p => p.id === itemId);
@@ -108,7 +118,7 @@ export function getItemPointCost(itemId) {
   let cost = BALANCE.AUTOMATION_POINT_COSTS[itemId] || 90;
   // Dedicated Upskilling doubles HR point cost for personnel hires
   const PERSONNEL = ['grad_student', 'junior_researcher', 'team_lead', 'elite_researcher'];
-  if (gameState.purchases?.dedicated_upskilling > 0 && PERSONNEL.includes(itemId)) {
+  if (getCount('dedicated_upskilling') > 0 && PERSONNEL.includes(itemId)) {
     cost *= 2;
   }
   return cost;
@@ -208,4 +218,6 @@ if (typeof window !== 'undefined') {
   window.canHRHire = canHRHire;
   window.canProcurementBuy = canProcurementBuy;
   window.getItemRate = getItemRate;
+  window.getCultureShiftAutomation = getCultureShiftAutomation;
+  window.isCultureShiftUnlocked = isCultureShiftUnlocked;
 }

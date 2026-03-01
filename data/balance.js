@@ -176,25 +176,25 @@ export const BALANCE = {
     [3456000000, 100000],  // Self-improvement — safe to spam synthetic at 0.6 quality.
   ],
 
-  // Bulk data sources: { id, name, score, quality, flavor }
+  // Bulk data sources: { id, name, score, quality }
   // Purchase costs and unlock gates are in purchasable definitions (purchasables.js)
   DATA_BULK_SOURCES: [
-    { id: 'public_web',       name: 'Public Web (Wikipedia & Commons)', score: 30,   quality: 1.0,  flavor: 'The sum of human knowledge, neatly categorized.' },
-    { id: 'forum_social',     name: 'Forum & Social Data',             score: 80,   quality: 0.9,  flavor: 'Reddit, StackOverflow, Twitter. Messy, opinionated, authentic.' },
-    { id: 'academic_corpora', name: 'Academic Corpora',                score: 160,  quality: 0.85, flavor: 'Peer-reviewed, well-structured. Small corpus, high signal.' },
-    { id: 'broad_web',        name: 'Broad Web Scraping',              score: 350,  quality: 0.8,  flavor: 'Billions of pages. Mostly noise, but scale has value.' },
-    { id: 'code_repos',       name: 'Code Repositories',               score: 650,  quality: 0.95, flavor: 'Open-source code with tests and reviews. Teaches reasoning through structure.' },
-    { id: 'licensed_books',   name: 'Licensed Books & Media',          score: 1000, quality: 0.85, flavor: 'Publisher deals, news archives. Expensive, legally clean, well-edited.' },
-    { id: 'government_data',  name: 'Government & Institutional',      score: 2000, quality: 0.9,  flavor: 'Census, patents, court records. Bureaucratic to acquire, uniquely comprehensive.' },
-    { id: 'enterprise_data',  name: 'Enterprise Data Partnerships',    score: 4000, quality: 0.95, flavor: 'Financial, medical, legal datasets. NDA-locked and domain-rich.' },
+    { id: 'public_web',       name: 'Public Web (Wikipedia & Commons)', score: 30,   quality: 1.0  },
+    { id: 'forum_social',     name: 'Forum & Social Data',             score: 80,   quality: 0.9  },
+    { id: 'academic_corpora', name: 'Academic Corpora',                score: 160,  quality: 0.85 },
+    { id: 'broad_web',        name: 'Broad Web Scraping',              score: 350,  quality: 0.8  },
+    { id: 'code_repos',       name: 'Code Repositories',               score: 650,  quality: 0.95 },
+    { id: 'licensed_books',   name: 'Licensed Books & Media',          score: 1000, quality: 0.85 },
+    { id: 'government_data',  name: 'Government & Institutional',      score: 2000, quality: 0.9  },
+    { id: 'enterprise_data',  name: 'Enterprise Data Partnerships',    score: 4000, quality: 0.95 },
   ],
 
-  // Renewable data sources: { id, name, startScore, growthCap, quality, flavor }
+  // Renewable data sources: { id, name, startScore, growthCap, quality }
   // Purchase costs, running costs, and unlock gates are in purchasable definitions (purchasables.js)
   DATA_RENEWABLE_SOURCES: [
-    { id: 'human_annotation',     name: 'Human Annotation',          startScore: 0, growthCap: 250,  quality: 0.9,  flavor: 'Expert annotators label and curate training data.' },
-    { id: 'domain_expert_panel',  name: 'Domain Expert Panel',       startScore: 0, growthCap: 625,  quality: 0.95, flavor: 'PhDs and specialists. Nothing else matches the depth.' },
-    { id: 'user_interaction',     name: 'User Interaction Pipeline', startScore: 0, growthCap: 1250, quality: 0.85, flavor: 'Every conversation is training data. Requires scale to matter.' },
+    { id: 'human_annotation',     name: 'Human Annotation',          startScore: 0, growthCap: 250,  quality: 0.9  },
+    { id: 'domain_expert_panel',  name: 'Domain Expert Panel',       startScore: 0, growthCap: 625,  quality: 0.95 },
+    { id: 'user_interaction',     name: 'User Interaction Pipeline', startScore: 0, growthCap: 1250, quality: 0.85 },
   ],
   // User Interaction Pipeline token-scaled cap
   // effectiveCap = baseCap + bonusCap * ln(1 + tokensSold / K)
@@ -218,8 +218,8 @@ export const BALANCE = {
   ],
 
   // Renewable copies scaling
-  DATA_RENEWABLE_CAP_ALPHA: 0.7,      // raw power-law exponent before soft cap
-  DATA_RENEWABLE_SOFT_CAP_MULT: 3,    // effectiveCap asymptotes to baseCap × this
+  DATA_RENEWABLE_CAP_ALPHA: 0.55,     // raw power-law exponent before soft cap (lower = slower saturation)
+  DATA_RENEWABLE_SOFT_CAP_MULT: 5,    // effectiveCap asymptotes to baseCap × this
   DATA_RENEWABLE_DECAY_TAU: 300,       // Decay tau (2x faster than growth tau of 600)
   DATA_RENEWABLE_COST_ALPHA: 0.3,      // Running cost = base * copies^(1 + α) = base * copies^1.3
 
@@ -340,6 +340,14 @@ export const BALANCE = {
   CULTURE_COMPLETION_THRESHOLD: 0.01,  // within 1% = done
   CULTURE_DRIFT_REF_SIZE: 10,          // org size where multiplier = 1.0
   CULTURE_DRIFT_EXPONENT: 0.83,        // how steeply drift slows with size
+
+  // HR-driven culture shift (#850)
+  // r = hr_points_devoted_to_culture / total_personnel
+  HR_CULTURE_R_MIN: 0.025,              // Dead zone ceiling — 1 HR team per 120 researchers
+  HR_CULTURE_R_MAX: 0.30,               // Cap — 1 HR team per 10 researchers
+  HR_CULTURE_RATE_MIN: 0.000556,        // Drift/s at r_min → 60 mo pivot (1800s)
+  HR_CULTURE_RATE_MAX: 0.006667,        // Drift/s at r_max → 5 mo pivot (150s)
+  CULTURE_FOCUS_MULTIPLIER: 6,          // Focus queue multiplier on HR drift
 
   // Culture Bonuses (graduated linear scaling above 33%)
   CULTURE_BONUS_BASELINE: 0.33,

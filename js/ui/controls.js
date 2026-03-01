@@ -32,6 +32,7 @@ import { getTrackResearchRate } from './research.js';
 import { logSliderChange } from '../playtest-logger.js';
 import { getCultureBonuses } from '../resources.js';
 import { attachTooltip } from './stats-tooltip.js';
+import { isCultureShiftUnlocked } from '../automation-state.js';
 
 // ---------------------------------------------------------------------------
 // Caches
@@ -65,6 +66,7 @@ registerUpdate(updateAllocationDisplay, FAST);
 registerUpdate(updateResearchBreakdown, FAST);
 registerUpdate(updateTrackRates, FAST);
 registerUpdate(updateCultureDisplay, FAST);
+registerUpdate(updateCultureAutoControls, FAST);
 registerUpdate(updateComputeAllocationDisplay, FAST);
 registerUpdate(updateComputeStats, FAST);
 registerUpdate(updateQueueDisplay, EVERY_TICK, { reset: resetQueueCache });
@@ -143,14 +145,38 @@ export function initAllocationSliders() {
     // Custom tooltip
     attachTooltip(cultureBtn, () => {
       const speedMult = getCultureSpeedMultiplier();
+      const hrRate = gameState.computed?.hrCultureDriftRate || 0;
       let html = '<div class="tooltip-header">Culture Shift</div>';
       html += '<div class="tooltip-row"><span>Queue focused drift toward target allocation</span></div>';
-      html += '<div class="tooltip-row"><span>Speed vs passive</span><span>6\u00d7 faster</span></div>';
-      html += `<div class="tooltip-row"><span>Org-size modifier</span><span>\u00d7${speedMult.toFixed(2)}</span></div>`;
-      if (speedMult < 0.5) {
-        html += '<div class="tooltip-row dim"><span>Large orgs shift culture slowly</span></div>';
+      if (hrRate > 0) {
+        const focusedRate = hrRate * 6;
+        const pivotMo = Math.round(1.0 / focusedRate / 30);
+        html += `<div class="tooltip-row"><span>HR-boosted pivot</span><span>~${pivotMo} mo</span></div>`;
+      } else {
+        html += '<div class="tooltip-row"><span>Speed vs passive</span><span>6\u00d7 faster</span></div>';
+        html += `<div class="tooltip-row"><span>Org-size modifier</span><span>\u00d7${speedMult.toFixed(2)}</span></div>`;
+        if (speedMult < 0.5) {
+          html += '<div class="tooltip-row dim"><span>Large orgs shift culture slowly</span></div>';
+        }
       }
       return html;
+    });
+  }
+
+  // Culture shift automation controls (#850)
+  const cultureAutoEnable = $('culture-auto-enable');
+  const cultureAutoPriority = $('culture-auto-priority');
+
+  if (cultureAutoEnable) {
+    cultureAutoEnable.addEventListener('change', () => {
+      gameState.cultureShiftAutomation.enabled = cultureAutoEnable.checked;
+    });
+  }
+  if (cultureAutoPriority) {
+    cultureAutoPriority.addEventListener('change', () => {
+      const val = Math.max(1, Math.min(9, parseInt(cultureAutoPriority.value) || 1));
+      gameState.cultureShiftAutomation.priority = val;
+      cultureAutoPriority.value = val;
     });
   }
 
@@ -558,6 +584,46 @@ function updateCultureDisplay() {
 }
 
 // ---------------------------------------------------------------------------
+// Culture shift automation controls (#850)
+// ---------------------------------------------------------------------------
+
+/** Show/hide and update the HR culture shift automation panel. */
+function updateCultureAutoControls() {
+  const container = $('culture-auto-controls');
+  if (!container) return;
+
+  // Show only when culture shift automation is unlocked AND a shift is active
+  if (!isCultureShiftUnlocked() || gameState.targetAllocation === null) {
+    container.classList.add('hidden');
+    return;
+  }
+  container.classList.remove('hidden');
+
+  const checkbox = $('culture-auto-enable');
+  const priorityInput = $('culture-auto-priority');
+  const statusSpan = $('culture-auto-status');
+
+  if (checkbox) checkbox.checked = gameState.cultureShiftAutomation.enabled;
+  if (priorityInput && document.activeElement !== priorityInput) {
+    priorityInput.value = gameState.cultureShiftAutomation.priority;
+  }
+
+  if (statusSpan) {
+    const rate = gameState.computed?.hrCultureDriftRate || 0;
+    if (gameState.cultureShiftAutomation.enabled && rate > 0) {
+      const r = gameState.computed?.hrCultureR || 0;
+      const pivotSeconds = 1.0 / rate;
+      const months = pivotSeconds / 30;
+      statusSpan.textContent = `Culture drift: ${r.toFixed(3)} \u00b7 ~${months < 1 ? '<1' : Math.round(months)} mo`;
+    } else if (gameState.cultureShiftAutomation.enabled) {
+      statusSpan.textContent = 'No HR points available';
+    } else {
+      statusSpan.textContent = '';
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Research rate breakdown (left side of personnel subtab split)
 // ---------------------------------------------------------------------------
 
@@ -716,15 +782,34 @@ export function initComputeAllocationSlider() {
   }
 
   updateComputeAllocationDisplay();
+
+  // Tooltips on internal/external TFLOPS showing ops mastery breakdown
+  const internalDisplay = $('internal-compute-display');
+  const externalDisplay = $('external-compute-display');
+  const buildComputeSplitTooltip = (label) => () => {
+    const comp = gameState.computed?.compute || {};
+    const tflopsMult = gameState.computed?.ceoFocus?.tflopsMultiplier ?? 1;
+    const total = comp.total || 0;
+    if (!total) return '';
+    let html = `<div class="tooltip-row"><span>${label}</span><span>${formatNumber(label === 'Research' ? comp.internal : comp.external)} TFLOPS</span></div>`;
+    if (tflopsMult > 1.001) {
+      const rawTotal = total / tflopsMult;
+      const rawSplit = label === 'Research' ? rawTotal * comp.allocation : rawTotal * (1 - comp.allocation);
+      html += `<div class="tooltip-row dim"><span>Base</span><span>${formatNumber(rawSplit)} TFLOPS</span></div>`;
+      html += `<div class="tooltip-row" style="color: #9b59b6"><span>Ops mastery</span><span>×${tflopsMult.toFixed(2)}</span></div>`;
+    }
+    return html;
+  };
+  if (internalDisplay) attachTooltip(internalDisplay, buildComputeSplitTooltip('Research'));
+  if (externalDisplay) attachTooltip(externalDisplay, buildComputeSplitTooltip('Revenue'));
 }
 
 /** Render compute allocation breakdown (internal vs external TFLOPS). */
 export function updateComputeAllocationDisplay() {
   const state = gameState;
-
-  // Always calculate from raw values to avoid stale computed state issues
-  const internalCompute = state.resources.compute * state.resources.computeAllocation;
-  const externalCompute = state.resources.compute * (1 - state.resources.computeAllocation);
+  const comp = state.computed?.compute || {};
+  const internalCompute = comp.internal || 0;
+  const externalCompute = comp.external || 0;
 
   const internalDisplay = $('internal-compute-display');
   const externalDisplay = $('external-compute-display');
@@ -777,6 +862,7 @@ function updateComputeStats() {
   if (avgCost) avgCost.textContent = stats.avgCostPerMTokens > 0
     ? formatFunding(stats.avgCostPerMTokens)
     : '-';
+
 }
 
 // ---------------------------------------------------------------------------

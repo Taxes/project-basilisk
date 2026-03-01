@@ -11,12 +11,7 @@ import { capabilitiesTrack } from '../content/capabilities-track.js';
 import { createAutomationPanel, updateAutomationPanel } from './automation-panel.js';
 import { isAutomationUnlocked } from '../automation-state.js';
 
-function recordFlavorDiscovery(purchasableId) {
-  const discovered = gameState.ui.discoveredFlavor;
-  if (!discovered.includes(purchasableId)) {
-    discovered.push(purchasableId);
-  }
-}
+import { recordFlavorDiscovery } from '../flavor-discovery.js';
 
 /** Apply first-unlock highlight to a card if not yet seen by the player. */
 function applyNewCardHighlight(card, purchasableId) {
@@ -179,31 +174,46 @@ export function renderDataTab(container) {
   // Stats overview panel
   container.appendChild(createStatsPanel());
 
-  // Bulk section
-  const visibleBulk = (BALANCE.DATA_BULK_SOURCES || []).filter(s => isDataSourceVisible(s.id));
-  const purchasedCount = visibleBulk.filter(s => getCount('data_' + s.id) > 0).length;
-  const allBulkPurchased = purchasedCount === visibleBulk.length && visibleBulk.length > 0;
-  const bulkCards = visibleBulk.map(src => createBulkCard(src));
   const cd = gameState.computed?.data;
-  const catQ = cd?.categoryQuality || {};
-  const bulkEffVal = cd?.scores?.bulkEff ?? (cd?.scores?.bulk || 0) * (catQ.bulk || 1);
-  const bulkSummary = `${formatNumber(Math.round(bulkEffVal))} effective`;
-  const bulkDefaultCollapsed = collapseState['BULK DATA'] !== undefined ? collapseState['BULK DATA'] : allBulkPurchased;
-  container.appendChild(createCollapsibleSection('BULK DATA', bulkSummary, bulkDefaultCollapsed, bulkCards));
 
-  // Renewable section
-  const visibleRenewable = (BALANCE.DATA_RENEWABLE_SOURCES || []).filter(s => isDataSourceVisible(s.id));
-  const renewableCards = visibleRenewable.map(src => createRenewableCard(src));
-  const renewSummary = buildRenewableSummary(cd, visibleRenewable);
-  const renewDefaultCollapsed = collapseState['RENEWABLE DATA'] !== undefined ? collapseState['RENEWABLE DATA'] : false;
-  container.appendChild(createCollapsibleSection('RENEWABLE DATA', renewSummary, renewDefaultCollapsed, renewableCards));
+  // --- Section order: Synthetic → Renewable → Bulk ---
 
-  // Synthetic section
+  // Synthetic section (hidden until unlocked, no teaser)
   if (isCapUnlocked('synthetic_data')) {
     const synthSummary = buildSyntheticSummary(cd);
     const synthDefaultCollapsed = collapseState['SYNTHETIC DATA'] !== undefined ? collapseState['SYNTHETIC DATA'] : false;
     container.appendChild(createCollapsibleSection('SYNTHETIC DATA', synthSummary, synthDefaultCollapsed, [createSyntheticSection()]));
   }
+
+  // Renewable section (always visible — hint when no/some sources locked)
+  const visibleRenewable = (BALANCE.DATA_RENEWABLE_SOURCES || []).filter(s => isDataSourceVisible(s.id));
+  const hiddenRenewableCount = (BALANCE.DATA_RENEWABLE_SOURCES || []).length - visibleRenewable.length;
+  const renewableCards = visibleRenewable.map(src => createRenewableCard(src));
+  if (hiddenRenewableCount > 0) {
+    renewableCards.push(createResearchHint('renewable', hiddenRenewableCount, visibleRenewable.length > 0));
+  }
+  if (visibleRenewable.length > 0) {
+    const renewSummary = buildRenewableSummary(cd, visibleRenewable);
+    const renewDefaultCollapsed = collapseState['RENEWABLE DATA'] !== undefined ? collapseState['RENEWABLE DATA'] : false;
+    container.appendChild(createCollapsibleSection('RENEWABLE DATA', renewSummary, renewDefaultCollapsed, renewableCards));
+  } else if (hiddenRenewableCount > 0) {
+    container.appendChild(createResearchHint('renewable', hiddenRenewableCount, false));
+  }
+
+  // Bulk section
+  const visibleBulk = (BALANCE.DATA_BULK_SOURCES || []).filter(s => isDataSourceVisible(s.id));
+  const hiddenBulkCount = (BALANCE.DATA_BULK_SOURCES || []).length - visibleBulk.length;
+  const purchasedCount = visibleBulk.filter(s => getCount('data_' + s.id) > 0).length;
+  const allBulkPurchased = purchasedCount === visibleBulk.length && visibleBulk.length > 0;
+  const bulkCards = visibleBulk.map(src => createBulkCard(src));
+  if (hiddenBulkCount > 0) {
+    bulkCards.push(createResearchHint('bulk', hiddenBulkCount, true));
+  }
+  const catQ = cd?.categoryQuality || {};
+  const bulkEffVal = cd?.scores?.bulkEff ?? (cd?.scores?.bulk || 0) * (catQ.bulk || 1);
+  const bulkSummary = `${formatNumber(Math.round(bulkEffVal))} effective`;
+  const bulkDefaultCollapsed = collapseState['BULK DATA'] !== undefined ? collapseState['BULK DATA'] : allBulkPurchased;
+  container.appendChild(createCollapsibleSection('BULK DATA', bulkSummary, bulkDefaultCollapsed, bulkCards));
 }
 
 // ---------------------------------------------------------------------------
@@ -419,7 +429,7 @@ function createBulkCard(src) {
 
   const desc = document.createElement('div');
   desc.className = 'purchase-description';
-  desc.textContent = purchasable?.description || src.flavor;
+  desc.textContent = purchasable?.description || src.name;
   if (purchasable?.flavorText) {
     desc.classList.add('has-flavor');
     const flavorText = purchasable.flavorText;
@@ -570,7 +580,7 @@ function createRenewableCard(src) {
 
   const desc = document.createElement('div');
   desc.className = 'purchase-description';
-  desc.textContent = purchasable?.description || src.flavor;
+  desc.textContent = purchasable?.description || src.name;
   if (purchasable?.flavorText) {
     desc.classList.add('has-flavor');
     const flavorText = purchasable.flavorText;
@@ -952,7 +962,7 @@ function createSyntheticSection() {
 
     const cHeader = document.createElement('div');
     cHeader.className = 'completed-header collapsed';
-    cHeader.innerHTML = `<h3>COMPLETED (${completedUpgradeIds.length})</h3><span class="toggle-icon">\u25BC</span>`;
+    cHeader.innerHTML = `<h3>PURCHASED UPGRADES (${completedUpgradeIds.length})</h3><span class="toggle-icon">\u25BC</span>`;
 
     const cList = document.createElement('div');
     cList.className = 'completed-list collapsed';
@@ -1448,6 +1458,46 @@ function updateAffordability() {
 }
 
 // ---------------------------------------------------------------------------
+// Research hint line ("Research X to unlock [more] Y data sources")
+// ---------------------------------------------------------------------------
+
+/** Capability IDs that gate sources in each category, ordered by unlock tier. */
+const CATEGORY_CAPS = {
+  bulk: ['data_curation', 'chain_of_thought', 'dataset_licensing', 'massive_scaling'],
+  renewable: ['data_curation', 'dataset_licensing', 'massive_scaling'],
+};
+
+/** Return the name of the lowest-tier locked capability that gates a source in this category. */
+function getNextLockedCapName(category) {
+  for (const capId of CATEGORY_CAPS[category] || []) {
+    if (!isCapUnlocked(capId)) {
+      const cap = capabilitiesTrack.capabilities.find(c => c.id === capId);
+      return cap?.name || capId;
+    }
+  }
+  return null;
+}
+
+/**
+ * Create a hint element for hidden data sources.
+ * @param {string} category - 'bulk' or 'renewable'
+ * @param {number} hiddenCount - number of hidden sources
+ * @param {boolean} hasVisible - whether some sources in this category are already visible
+ * @returns {HTMLElement}
+ */
+function createResearchHint(category, hiddenCount, hasVisible) {
+  const capName = getNextLockedCapName(category);
+  const label = category === 'renewable' ? 'renewable' : 'bulk';
+  const more = hasVisible ? 'more ' : '';
+  const el = document.createElement('div');
+  el.className = 'data-research-hint';
+  el.textContent = capName
+    ? `Research ${capName} to unlock ${more}${label} data sources.`
+    : `${hiddenCount} additional ${label} source${hiddenCount > 1 ? 's' : ''} requiring further research.`;
+  return el;
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 function isCapUnlocked(capId) {
@@ -1457,17 +1507,11 @@ function isCapUnlocked(capId) {
   return false;
 }
 
-/** Show a data source if: no requirement, already unlocked, or prerequisite cap is "next up" */
+/** Show a data source if: no requirement, or required capability is unlocked. */
 function isDataSourceVisible(sourceId) {
   const p = getPurchasableById('data_' + sourceId);
   if (!p?.requires?.capability) return true;
-  if (isCapUnlocked(p.requires.capability)) return true;
-
-  // "Next up": the capability's own prerequisites are all unlocked
-  const cap = capabilitiesTrack.capabilities.find(c => c.id === p.requires.capability);
-  if (!cap) return false;
-  if (!cap.requires || cap.requires.length === 0) return true;
-  return cap.requires.every(reqId => isCapUnlocked(reqId));
+  return isCapUnlocked(p.requires.capability);
 }
 
 // Export reset function for game reset / tab switch.

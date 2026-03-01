@@ -5,7 +5,6 @@ import { gameState, resetGame, saveGame } from './game-state.js';
 // getPurchasableById — moved to js/ui/controls.js
 import { enqueueFundraise, clearQueue, moveInQueue, cancelFromQueue, resetQueueIdCounter } from './focus-queue.js';
 import { resetTriggeredMessages } from './messages.js';
-// applyChoiceEffects — moved to js/ui/modals.js
 // getEndingById, getEndingStats, triggerEnding, getEndingNarrative — moved to js/ui/modals.js
 // calculatePrestigeGain, applyPrestigeGains, resetForPrestige — moved to js/ui/modals.js
 import { BALANCE } from '../data/balance.js';
@@ -545,7 +544,7 @@ export function updateNotifications() {
   // This function is reserved for future queue management
 }
 
-// showEventModal, hideEventModal — moved to js/ui/modals.js
+// showEventModal, hideEventModal — removed (legacy event system deleted, see #833)
 
 // Initialize track tabs for capability tree
 function initTrackTabs() {

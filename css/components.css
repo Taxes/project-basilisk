@@ -72,7 +72,7 @@ body[data-arc="2"] .arc-1-hidden {
 }
 
 #pause-button {
-  min-width: 80px;
+  min-width: 100px; /* sized for longest label: "⏸ Pause" with emoji */
 }
 
 /* Speed control */
@@ -1441,6 +1441,21 @@ body[data-arc="2"] #research-section .scrollable-section {
   pointer-events: none;
 }
 
+.extinction-active::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: rgba(180, 0, 0, 0.08);
+  animation: extinction-pulse 3s ease-in-out infinite;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+@keyframes extinction-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
 .extinction-active #start-arc2-btn {
   pointer-events: auto;
   cursor: pointer;
@@ -2606,6 +2621,40 @@ body[data-arc="2"] #research-section .scrollable-section {
   transition: width 0.1s linear;
 }
 
+/* Mastery bars (purple) — main display */
+.mastery-bar-container {
+  margin-top: 1px;
+  height: 3px;
+}
+
+.mastery-bar-fill {
+  background: #9b59b6 !important;
+}
+
+/* Mastery bars — option selector */
+.option-bars-wrapper {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  vertical-align: middle;
+}
+
+.ceo-focus-option .option-mastery-bar {
+  width: 60px;
+  height: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: block;
+}
+
+.ceo-focus-option .option-mastery-fill {
+  display: block;
+  height: 100%;
+  background: #9b59b6;
+  transition: width 0.3s ease;
+}
+
+
 .progress-bar-container {
   width: 100%;
   height: 6px;
@@ -2702,7 +2751,7 @@ body[data-arc="2"] #research-section .scrollable-section {
   color: var(--text-dim);
 }
 
-.settings-controls-section {
+.settings-section {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
@@ -2744,11 +2793,7 @@ body[data-arc="2"] #research-section .scrollable-section {
   text-align: center;
 }
 
-.settings-save-section {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
+/* .settings-save-section consolidated into .settings-section */
 
 .save-actions {
   display: flex;
@@ -2816,10 +2861,8 @@ body[data-arc="2"] #research-section .scrollable-section {
   font-size: 12px;
 }
 
-.settings-danger-zone {
+.settings-section.settings-danger-zone {
   margin-top: 32px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
 }
 
 .btn-danger {
@@ -2850,7 +2893,7 @@ body[data-arc="2"] #research-section .scrollable-section {
 .modal-content.settings-modal-content {
   min-width: 320px;
   max-width: 620px;
-  height: min(640px, 80vh);
+  height: min(700px, 85vh);
   display: flex;
   flex-direction: column;
   overflow-y: hidden;
@@ -3065,7 +3108,7 @@ body[data-arc="2"] #research-section .scrollable-section {
 .contamination-display { font-size: 12px; margin: 4px 0; }
 .contamination-display.warning { color: var(--warning); }
 .contamination-display.danger { color: var(--danger); }
-.purge-btn { margin: 4px 0; }
+.purge-btn { margin: 4px 0; min-width: 175px; /* sized for "Purge Synthetic Data" */ }
 .purge-btn.active {
   border-color: var(--warning);
   color: var(--warning);
@@ -3185,6 +3228,13 @@ body[data-arc="2"] #research-section .scrollable-section {
 
 .data-section.collapsed .data-section-items {
   display: none;
+}
+
+.data-research-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 6px 8px;
+  font-style: italic;
 }
 
 /* Synthetic sub-panels */
@@ -4013,6 +4063,17 @@ input[type="checkbox"].terminal-checkbox:checked::after,
   border-left-color: var(--accent);
 }
 
+/* Extinction news: bold red, stands out from normal feed */
+.dashboard-feed-item.extinction .feed-subject {
+  color: var(--negative);
+  font-weight: bold;
+}
+
+.dashboard-feed-item.extinction .message-tag {
+  color: var(--negative);
+  border-color: var(--negative);
+}
+
 /* Subtle fade for older items (bottom of feed) - newest at top */
 .dashboard-feed-item:nth-child(n+8) {
   opacity: 0.6;
@@ -4157,4 +4218,30 @@ input[type="checkbox"].terminal-checkbox:checked::after,
 .farewell-actions .big-button:hover {
   background: rgba(255, 255, 255, 0.03);
   color: var(--text);
+}
+
+/* Mode selection */
+.mode-choice {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  margin-bottom: 0.75rem;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s;
+}
+
+.mode-choice:hover {
+  border-color: var(--accent);
+}
+
+.mode-choice p {
+  margin: 0.5rem 0 0;
+  opacity: 0.7;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.mode-tag {
+  opacity: 0.5;
+  font-size: 0.85rem;
 }

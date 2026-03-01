@@ -141,17 +141,22 @@
   color: #000;
 }
 
-/* Skip link — inline in button row, left-aligned */
+/* Skip / hide-hints button — secondary, left-aligned in button row */
 .cue-card-skip {
   font-size: 0.65rem;
   color: var(--text-dim);
   cursor: pointer;
-  text-decoration: none;
   margin-right: auto;
+  background: transparent;
+  border: 1px solid transparent;
+  font-family: inherit;
+  padding: 4px 12px;
+  transition: border-color 0.15s, color 0.15s;
 }
 
 .cue-card-skip:hover {
   color: var(--text);
+  border-color: var(--border);
 }
 
 /* Center position (for welcome/completion cards) */
@@ -159,4 +164,25 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+}
+
+/* Toast shown after skipping tutorial */
+.cue-card-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 910;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  padding: 8px 16px;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.cue-card-toast.visible {
+  opacity: 1;
 }

@@ -306,7 +306,9 @@ function updateTooltip() {
   }
   const html = activeBuilder();
   if (!html) { hideTooltip(); return; }
-  tooltipEl.innerHTML = html;
+  if (tooltipEl.innerHTML !== html) {
+    tooltipEl.innerHTML = html;
+  }
 }
 
 registerUpdate(updateTooltip, EVERY_TICK);

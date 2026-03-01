@@ -23,18 +23,15 @@ import {
   PERSONNEL_IDS,
   COMPUTE_IDS,
 } from '../content/purchasables.js';
-import { getEffectivePool, getPoolUsage, getPoolScalingMultiplier, POOL_IDS } from '../talent-pool.js';
+import { getEffectivePool, getPoolUsage, getPoolScalingMultiplier, getEffectiveScaling, POOL_IDS } from '../talent-pool.js';
 import { enqueuePurchase, enqueueFurlough } from '../focus-queue.js';
 import {
   getOutputMultiplier,
+  getCostReduction,
 } from '../content/upgrades.js';
 
-function recordFlavorDiscovery(purchasableId) {
-  const discovered = gameState.ui.discoveredFlavor;
-  if (!discovered.includes(purchasableId)) {
-    discovered.push(purchasableId);
-  }
-}
+import { recordFlavorDiscovery } from '../flavor-discovery.js';
+import { getPersonnelCostMultiplier } from '../strategic-choices.js';
 import { BALANCE } from '../../data/balance.js';
 import { formatFunding, formatNumber, getRateUnit, formatDuration } from '../utils/format.js';
 import { $ } from '../utils/dom-cache.js';
@@ -50,12 +47,13 @@ import {
   isAutomationUnlocked,
   getActiveCount,
   getHRSpeedMultiplier,
+  getItemPointCost,
   AUTOMATABLE_PERSONNEL,
   AUTOMATABLE_COMPUTE,
   FURLOUGHABLE_ADMIN,
 } from '../automation-state.js';
 import { getCount } from '../purchasable-state.js';
-import { getAmplificationBonusText } from '../resources.js';
+import { getAmplificationBonusText, getAmplificationTooltipBuilder } from '../resources.js';
 import { initTabNotifications } from './tab-notifications.js';
 
 // ---------------------------------------------------------------------------
@@ -286,12 +284,6 @@ function rebuildPurchaseList() {
               return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
             }, { delay: 400 });
           }
-        } else if (p.flavorText) {
-          // No description but has flavor — show as description text directly
-          const descEl = document.createElement('div');
-          descEl.className = 'completed-card-desc';
-          descEl.textContent = p.flavorText;
-          item.appendChild(descEl);
         }
 
         list.appendChild(item);
@@ -329,6 +321,64 @@ function rebuildPurchaseList() {
 // ---------------------------------------------------------------------------
 // Incremental affordability update (FAST)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Cost breakdown tooltip
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a tooltip builder for a purchasable's upfront cost.
+ * Shows base cost, scaling, upgrade discount, strategic choice, PP mastery.
+ * Section 2: HR/proc automation point cost (if automatable).
+ */
+function buildCostTooltipBuilder(purchasable) {
+  const pid = purchasable.id;
+  return () => {
+    const count = getCount(pid);
+    const baseFunding = purchasable.baseCost.funding || 0;
+    const scalingFactor = getEffectiveScaling(pid);
+    let scaling;
+    if (purchasable.costScalingMode === 'exponential') {
+      scaling = Math.pow(scalingFactor, count);
+    } else {
+      scaling = 1 + scalingFactor * count;
+    }
+    const costReduction = getCostReduction(pid);
+    const strategicCostMult = purchasable.category === 'personnel' ? getPersonnelCostMultiplier() : 1.0;
+    const masteryDiscount = gameState.computed?.ceoFocus?.purchaseCostDiscount ?? 1;
+    const finalCost = Math.floor(baseFunding * scaling * costReduction * strategicCostMult * masteryDiscount);
+
+    let html = '<div class="tooltip-header"><span>Cost Breakdown</span></div>';
+    html += `<div class="tooltip-row"><span>Base cost</span><span>${formatFunding(baseFunding)}</span></div>`;
+    if (scaling > 1.001) {
+      html += `<div class="tooltip-row"><span>Scaling (${count} owned)</span><span>×${fmtMult(scaling)}</span></div>`;
+    }
+    if (costReduction < 0.999) {
+      html += `<div class="tooltip-row"><span>Upgrade discount</span><span>×${fmtMult(costReduction)}</span></div>`;
+    }
+    if (strategicCostMult !== 1.0) {
+      html += `<div class="tooltip-row"><span>Strategic choice</span><span>×${fmtMult(strategicCostMult)}</span></div>`;
+    }
+    if (masteryDiscount < 0.999) {
+      html += `<div class="tooltip-row" style="color: #9b59b6"><span>PP mastery</span><span>×${fmtMult(masteryDiscount)}</span></div>`;
+    }
+    if (scaling > 1.001 || costReduction < 0.999 || strategicCostMult !== 1.0 || masteryDiscount < 0.999) {
+      html += `<div class="tooltip-row"><span>Final cost</span><span>${formatFunding(finalCost)}</span></div>`;
+    }
+
+    // Section 2: automation point cost
+    const isAutoPersonnel = AUTOMATABLE_PERSONNEL.some(p => p.id === pid);
+    const isAutoCompute = AUTOMATABLE_COMPUTE.some(c => c.id === pid);
+    if (isAutoPersonnel || isAutoCompute) {
+      const pointCost = getItemPointCost(pid);
+      const label = isAutoPersonnel ? 'HR' : 'Proc';
+      html += '<div class="tooltip-section-header">Automation</div>';
+      html += `<div class="tooltip-row"><span>${label} points</span><span>${pointCost}</span></div>`;
+    }
+
+    return html;
+  };
+}
 
 /**
  * Build stats text for a purchasable (RP, TFLOPS, running costs).
@@ -453,7 +503,7 @@ function buildStatsParts(purchasable, count) {
 
   // COO ops bonuses (hardcoded in ceo-focus.js, not in effects object)
   if (purchasable.id === 'coo') {
-    parts.push({ text: '+5% ops cost floor · +5% ops cap · +12.5% auto speed floor/cap', tooltipBuilder: null });
+    parts.push({ text: '+5% ops cost floor · +5% ops cap · ×1.125 auto speed floor/cap', tooltipBuilder: null });
   }
 
   // Efficiency: $/RP for personnel, $/TFLOPS for compute (uses running cost, not purchase cost)
@@ -661,6 +711,11 @@ function updatePurchaseAffordability() {
         const ampLine = document.createElement('div');
         ampLine.className = 'purchase-org-bonus dim';
         ampLine.textContent = ampText;
+        const ampTooltipBuilder = getAmplificationTooltipBuilder(p.id);
+        if (ampTooltipBuilder) {
+          ampLine.style.cursor = 'help';
+          attachTooltip(ampLine, ampTooltipBuilder);
+        }
         statsEl.after(ampLine);
         card._ampEl = ampLine;
       }
@@ -848,6 +903,8 @@ function createPurchaseCard(purchasable) {
   const durationText = purchasable.focusDuration ? formatDuration(purchasable.focusDuration) : '';
   costInfo.textContent = durationText ? `${costText} \u00b7 ${durationText}` : costText;
   costInfo.classList.toggle('affordable', affordable);
+  costInfo.style.cursor = 'help';
+  attachTooltip(costInfo, buildCostTooltipBuilder(purchasable));
 
   descRow.appendChild(desc);
   descRow.appendChild(costInfo);
@@ -865,6 +922,11 @@ function createPurchaseCard(purchasable) {
     const ampLine = document.createElement('div');
     ampLine.className = 'purchase-org-bonus dim';
     ampLine.textContent = ampText;
+    const ampTooltipBuilder = getAmplificationTooltipBuilder(purchasable.id);
+    if (ampTooltipBuilder) {
+      ampLine.style.cursor = 'help';
+      attachTooltip(ampLine, ampTooltipBuilder);
+    }
     card.appendChild(ampLine);
     card._ampEl = ampLine;
   }
@@ -930,36 +992,37 @@ const SUBTAB_CONTENT = {
 };
 
 /** Initialize sub-tab switching for Operations column. */
+/** Programmatically switch to a subtab by category name. */
+export function switchSubTab(category) {
+  const opsColumn = document.getElementById('col-operations');
+  if (!opsColumn) return;
+
+  const btn = opsColumn.querySelector(`.sub-tab[data-category="${category}"]`);
+  if (!btn || btn.classList.contains('active')) return;
+
+  opsColumn.querySelectorAll('.sub-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  for (const [cat, contentId] of Object.entries(SUBTAB_CONTENT)) {
+    const contentEl = document.getElementById(contentId);
+    if (contentEl) {
+      contentEl.classList.toggle('hidden', cat !== category);
+    }
+  }
+
+  requestFullUpdate();
+  _renderedPurchaseFingerprint = '';
+  resetDataTab();
+  rebuildPurchaseList();
+}
+
 export function initInfraTabs() {
   const opsColumn = document.getElementById('col-operations');
   if (!opsColumn) return;
   initTabNotifications();
   // Sub-tab switching: toggle .subtab-content visibility
   opsColumn.querySelectorAll('.sub-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      // Skip rebuild if already on this tab
-      if (btn.classList.contains('active')) return;
-
-      // Update tab button active states
-      opsColumn.querySelectorAll('.sub-tab').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-
-      // Show/hide subtab content divs
-      const activeCategory = btn.dataset.category;
-      for (const [category, contentId] of Object.entries(SUBTAB_CONTENT)) {
-        const contentEl = document.getElementById(contentId);
-        if (contentEl) {
-          contentEl.classList.toggle('hidden', category !== activeCategory);
-        }
-      }
-
-      requestFullUpdate();
-      // Force fingerprint invalidation so rebuildPurchaseList runs immediately
-      _renderedPurchaseFingerprint = '';
-      // Also reset data tab fingerprint so it does a full rebuild when switching back
-      resetDataTab();
-      rebuildPurchaseList();
-    });
+    btn.addEventListener('click', () => switchSubTab(btn.dataset.category));
   });
 }
 

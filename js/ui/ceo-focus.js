@@ -1,7 +1,7 @@
 // js/ui/ceo-focus.js — CEO Focus UI rendering
 import { gameState } from '../game-state.js';
 import { registerUpdate, EVERY_TICK } from './scheduler.js';
-import { getAvailableActivities, selectActivity, ACTIVITIES, BUILDUP_TIME, IR_BUILDUP_TIME, DECAY_TIME } from '../ceo-focus.js';
+import { getAvailableActivities, selectActivity, ACTIVITIES, BUILDUP_TIME, IR_BUILDUP_TIME, DECAY_TIME, MASTERY_BUILDUP_TIME, MASTERY_DECAY_TIME } from '../ceo-focus.js';
 import { formatFunding, formatDuration, getRateUnit } from '../utils/format.js';
 import { $ } from '../utils/dom-cache.js';
 import { attachTooltip } from './stats-tooltip.js';
@@ -52,6 +52,19 @@ function updateCEOFocusDisplay() {
     }
   }
 
+  // Mastery bar (main display) — always visible for continuous activities
+  const masteryBarContainer = $('ceo-focus-mastery-container');
+  const masteryBarFill = $('ceo-focus-mastery-bar');
+  if (masteryBarContainer && masteryBarFill) {
+    if (isContinuous) {
+      masteryBarContainer.style.visibility = 'visible';
+      const masteryVal = computed.mastery?.[computed.selected] || 0;
+      masteryBarFill.style.width = `${masteryVal * 100}%`;
+    } else {
+      masteryBarContainer.style.visibility = 'hidden';
+    }
+  }
+
   // Always show selector
   renderSelector(available, computed);
 }
@@ -63,7 +76,7 @@ function formatActivityValue(computed) {
     case 'research': {
       const rpPart = computed.flatRP > 0 ? `+${Math.round(computed.flatRP)} RP${getRateUnit()}` : '';
       const multPart = computed.personnelMultiplier > 1
-        ? `+${Math.round((computed.personnelMultiplier - 1) * 100)}% org`
+        ? `×${computed.personnelMultiplier.toFixed(2)} org`
         : '';
       return [rpPart, multPart].filter(Boolean).join(' \u2502 ') || 'Idle to activate';
     }
@@ -85,11 +98,6 @@ function formatActivityValue(computed) {
 function getDirectionIndicator(computed) {
   const selected = computed.selected;
   const activity = ACTIVITIES[selected];
-
-  // Discrete-only: on/off indicator
-  if (activity?.type === 'discrete') {
-    return computed.idle ? { text: '\u25CF', cls: 'building' } : { text: '\u25CB', cls: 'decaying' };
-  }
 
   // Continuous / mixed
   if (computed.idle) {
@@ -121,7 +129,10 @@ function renderSelector(available, computed) {
         <span class="radio"></span>
         <span class="option-name">${activity.name}</span>
         <span class="option-value"></span>
-        <span class="option-bar"><span class="option-bar-fill"></span></span>
+        <span class="option-bars-wrapper">
+          <span class="option-bar"><span class="option-bar-fill"></span></span>
+          <span class="option-mastery-bar"><span class="option-mastery-fill"></span></span>
+        </span>
       `;
       div.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -155,26 +166,37 @@ function renderSelector(available, computed) {
     } else if (barFill) {
       div.querySelector('.option-bar').style.display = 'none';
     }
+
+    // Mastery bar (purple) — always visible so players see what they're working toward
+    const masteryFill = div.querySelector('.option-mastery-fill');
+    const masteryBarEl = div.querySelector('.option-mastery-bar');
+    const masteryVal = computed.mastery?.[id] || 0;
+    const idBuildupMaxed = (computed.buildup[id] || 0) >= 1.0;
+    if (masteryBarEl && masteryFill) {
+      masteryBarEl.style.display = '';
+      masteryFill.style.width = `${masteryVal * 100}%`;
+      const isMasteryBuilding = computed.idle && id === computed.selected && idBuildupMaxed;
+      masteryBarEl.classList.toggle('building', isMasteryBuilding);
+      masteryBarEl.classList.toggle('dimmed', !isMasteryBuilding);
+    }
   }
 }
 
 function formatOptionValue(activityId, computed) {
   switch (activityId) {
-    case 'grants': {
-      const potentialRate = computed.grantBaseRate * (computed.potentialEfficiency || 1);
+    case 'grants':
       return computed.idle && computed.selected === 'grants'
         ? `+${formatFunding(computed.grantRate)}${getRateUnit()}`
-        : `${formatFunding(potentialRate)}${getRateUnit()}`;
-    }
+        : `${formatFunding(computed.potentialGrantRate)}${getRateUnit()}`;
     case 'research':
-      return `+${Math.round((computed.personnelMultiplier - 1) * 100)}% org`;
+      return `×${computed.personnelMultiplier.toFixed(2)} org`;
     case 'ir': {
       const total = computed.irTotalEstimate || computed.irFundraiseBonus;
       return total > 0 ? `+${formatFunding(total)}` : '\u2014';
     }
     case 'operations': {
       const pct = Math.round(computed.opsBonus * 100);
-      return pct > 0 ? `${pct}%` : `${Math.round(computed.opsFloor * 100)}% base`;
+      return pct > 0 ? `-${pct}%` : `${Math.round(computed.opsFloor * 100)}% base`;
     }
     case 'public_positioning': {
       const revPct = Math.round(computed.bonusRevenueMultiplier * 100);
@@ -199,30 +221,60 @@ function buildupTimeEstimate(activityId, computed) {
   }
 }
 
+function masteryTimeEstimate(activityId, computed) {
+  const m = computed.mastery?.[activityId] || 0;
+  const isBuilding = computed.idle && computed.selected === activityId && (computed.buildup?.[activityId] || 0) >= 1.0;
+
+  if (isBuilding) {
+    const remaining = 1 - m;
+    if (remaining <= 0.01) return null;
+    return `<div class="tooltip-row dim"><span>Mastery to max</span><span>~${formatDuration(remaining * MASTERY_BUILDUP_TIME)}</span></div>`;
+  } else {
+    if (m <= 0.01) return null;
+    return `<div class="tooltip-row dim"><span>Mastery to zero</span><span>~${formatDuration(m * MASTERY_DECAY_TIME)}</span></div>`;
+  }
+}
+
+/** Mastery tooltip hint — shows time estimate if building, or a dim unlock hint if mastery hasn't started */
+function masteryHint(activityId, computed) {
+  const m = computed.mastery?.[activityId] || 0;
+  if (m > 0.001) return masteryTimeEstimate(activityId, computed) || '';
+  return '<div class="tooltip-row dim"><span>Builds after max focus buildup</span></div>';
+}
+
 // Tooltip descriptions for each CEO focus activity
 const ACTIVITY_TOOLTIPS = {
   grants: (computed) => {
     let html = '<div class="tooltip-header">Grant Writing</div>';
     html += '<div class="tooltip-section">';
-    html += '<div class="tooltip-row dim"><span>Type: Instant (active while idle)</span></div>';
-    html += '<div class="tooltip-row"><span>Passive funding income while your queue is empty.</span></div>';
-    const potentialGrant = computed.grantBaseRate * (computed.potentialEfficiency || 1);
-    html += `<div class="tooltip-row"><span>Effective rate</span><span>${formatFunding(potentialGrant)}${getRateUnit()}</span></div>`;
+    html += '<div class="tooltip-row dim"><span>Type: Hybrid (instant + buildup)</span></div>';
+    html += '<div class="tooltip-row"><span>Passive funding income while your queue is empty. Rate improves as you stay focused.</span></div>';
+    html += `<div class="tooltip-row"><span>Effective rate</span><span>${formatFunding(computed.potentialGrantRate)}${getRateUnit()}</span></div>`;
+    const grantBuildup = computed.buildup?.grants || 0;
+    const activeMultiplier = 1 + grantBuildup;
+    html += `<div class="tooltip-row"><span>Focus buildup</span><span>×${activeMultiplier.toFixed(2)} (max ×2.00)</span></div>`;
     html += '<div class="tooltip-row dim"><span>Scales with efficiency and fundraise rounds</span></div>';
+    html += buildupTimeEstimate('grants', computed) || '';
+    html += '<div class="tooltip-section-header">Mastery</div>';
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Grant rate</span><span>×${(computed.grantMasteryMultiplier || 1).toFixed(2)} (max ×4.00)</span></div>`;
+    html += masteryHint('grants', computed);
     html += '</div>';
     return html;
   },
   research: (computed) => {
-    const multPct = Math.round((computed.personnelMultiplier - 1) * 100);
     let html = '<div class="tooltip-header">Hands-on Research</div>';
     html += '<div class="tooltip-section">';
     html += '<div class="tooltip-row dim"><span>Type: Hybrid (instant + buildup)</span></div>';
     html += '<div class="tooltip-row"><span>Direct research contribution plus a growing bonus to your research team.</span></div>';
     const potentialRP = 10 * (computed.potentialEfficiency || 1);
     html += `<div class="tooltip-row"><span>Flat RP (while idle)</span><span>+${Math.round(potentialRP)} RP${getRateUnit()}</span></div>`;
-    html += `<div class="tooltip-row"><span>Team multiplier</span><span>+${multPct}% (max +25%)</span></div>`;
+    html += `<div class="tooltip-row"><span>Team multiplier</span><span>×${computed.personnelMultiplier.toFixed(2)} (max ×1.25)</span></div>`;
     html += '<div class="tooltip-row dim"><span>Multiplier builds while idle, decays while busy</span></div>';
     html += buildupTimeEstimate('research', computed) || '';
+    html += '<div class="tooltip-section-header">Mastery</div>';
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Org synergy</span><span>×${(1 + (computed.orgTierBonus || 0)).toFixed(2)} (max ×1.50)</span></div>`;
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Compute cap</span><span>+${(computed.computeCapBonus || 0).toFixed(1)} (max +2.0)</span></div>`;
+    html += masteryHint('research', computed);
     html += '</div>';
     return html;
   },
@@ -238,6 +290,10 @@ const ACTIVITY_TOOLTIPS = {
     }
     html += '<div class="tooltip-row dim"><span>Resets after completing a fundraise</span></div>';
     html += buildupTimeEstimate('ir', computed) || '';
+    html += '<div class="tooltip-section-header">Mastery</div>';
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Overshoot cap</span><span>×${(computed.irCapMultiplier || 1).toFixed(2)} (max ×2.00)</span></div>`;
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Revenue multiple</span><span>+${Math.round((computed.irMasteryMultFraction || 0) * 100)}pp (max +20pp)</span></div>`;
+    html += masteryHint('ir', computed);
     html += '</div>';
     return html;
   },
@@ -250,34 +306,39 @@ const ACTIVITY_TOOLTIPS = {
     html += '<div class="tooltip-row dim"><span>Type: Buildup (grows while idle)</span></div>';
     html += '<div class="tooltip-row"><span>Streamline operations to reduce ongoing costs and speed up hiring and procurement.</span></div>';
     html += `<div class="tooltip-row"><span>Running costs</span><span>-${pct}% (max ${capPct}%)</span></div>`;
-    const autoPct = Math.round((computed.opsAutomationBonus || 0) * 100);
-    const autoCapPct = Math.round((computed.autoCap || 0.5) * 100);
-    html += `<div class="tooltip-row"><span>Automation speed</span><span>+${autoPct}% (max +${autoCapPct}%)</span></div>`;
+    const autoMult = 1 + (computed.opsAutomationBonus || 0);
+    const autoCapMult = 1 + (computed.autoCap || 0.5);
+    html += `<div class="tooltip-row"><span>Automation speed</span><span>×${autoMult.toFixed(2)} (max ×${autoCapMult.toFixed(2)})</span></div>`;
     const autoFloorPct = Math.round((computed.autoFloor || 0) * 100);
     if (floorPct > 0 || autoFloorPct > 0) {
       const parts = [];
       if (floorPct > 0) parts.push(`-${floorPct}% costs`);
-      if (autoFloorPct > 0) parts.push(`+${autoFloorPct}% auto speed`);
+      if (autoFloorPct > 0) parts.push(`×${(1 + computed.autoFloor).toFixed(2)} auto speed`);
       html += `<div class="tooltip-row"><span>Baseline (from COO)</span><span>${parts.join(' · ')}</span></div>`;
     }
     html += '<div class="tooltip-row dim"><span>Cap increases with COO and Process Optimization</span></div>';
     html += buildupTimeEstimate('operations', computed) || '';
+    html += '<div class="tooltip-section-header">Mastery</div>';
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>TFLOPS</span><span>×${(computed.tflopsMultiplier || 1).toFixed(2)} (max ×1.50)</span></div>`;
+    html += masteryHint('operations', computed);
     html += '</div>';
     return html;
   },
   public_positioning: (computed) => {
-    const growthPct = Math.round((computed.acquiredDemandGrowthMultiplier - 1) * 100);
     const edgePct = Math.round(computed.edgeDecayReduction * 100);
     const revPct = Math.round(computed.bonusRevenueMultiplier * 100);
     let html = '<div class="tooltip-header">Public Positioning</div>';
     html += '<div class="tooltip-section">';
     html += '<div class="tooltip-row dim"><span>Type: Buildup (grows while idle)</span></div>';
     html += '<div class="tooltip-row"><span>Build public presence to strengthen your market position and generate brand revenue.</span></div>';
-    html += `<div class="tooltip-row"><span>Customer growth rate</span><span>+${growthPct}% (max +100%)</span></div>`;
+    html += `<div class="tooltip-row"><span>Customer growth rate</span><span>×${computed.acquiredDemandGrowthMultiplier.toFixed(2)} (max ×2.00)</span></div>`;
     html += `<div class="tooltip-row"><span>Market edge decay</span><span>-${edgePct}% (max -30%)</span></div>`;
     html += `<div class="tooltip-row"><span>Bonus revenue</span><span>+${revPct}% (max +10%)</span></div>`;
     html += '<div class="tooltip-row dim"><span>All build while idle, decay while busy</span></div>';
     html += buildupTimeEstimate('public_positioning', computed) || '';
+    html += '<div class="tooltip-section-header">Mastery</div>';
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Purchase costs</span><span>×${(computed.purchaseCostDiscount || 1).toFixed(2)} (max ×0.80)</span></div>`;
+    html += masteryHint('public_positioning', computed);
     html += '</div>';
     return html;
   },

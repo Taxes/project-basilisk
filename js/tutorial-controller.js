@@ -93,6 +93,7 @@ function checkMainSequence() {
       : def;
 
     // Found a step to show
+    if (stepToShow.onShow) stepToShow.onShow();
     if (isCardVisible()) {
       replaceCard(stepToShow);
     } else {
@@ -132,6 +133,7 @@ function checkPostTutorialSteps() {
         completeTutorialStep(stepDef.id, 'skip-ahead');
         continue;  // Check for next post step
       }
+      if (stepDef.onShow) stepDef.onShow();
       showCard(stepDef);
       shown = true;
       break;  // Show one at a time

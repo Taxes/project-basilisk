@@ -2,7 +2,6 @@
 
 import { gameState, loadGame, rehydrateMessages, saveGame } from './game-state.js';
 import { updateResources, updateForecasts } from './resources.js';
-import { initializeEvents, checkResourceThresholdEvents, checkTimeBasedEvents } from './events.js';
 import { updateUI, initializeUI, setOnHardReset, notify } from './ui.js';
 import { showEndingModal, showChangelog } from './ui/modals.js';
 import { initializePhaseCompletion, checkPhaseCompletion } from './phase-completion.js';
@@ -43,13 +42,9 @@ import { updateFavicon } from './favicon.js';
 import { initializeFarewells, checkFarewells } from './farewells.js';
 import { showNarrativeModal } from './narrative-modal.js';
 import { onboardingMessage } from './content/message-content.js';
-import { VERSION } from './version.js';
+import { VERSION, VERSION_INT } from './version.js';
 import { changelog } from './changelog.js';
 
-// Import content
-import { phase1Events } from './content/events-phase1.js';
-import { phase2Events } from './content/events-phase2.js';
-import { phase3Events } from './content/events-phase3.js';
 
 // Side-effect import: expose internal functions to window for playtester harness
 import './test-api.js';
@@ -170,9 +165,6 @@ function gameTick(deltaTime) {
   // 1z. Check farewell sequence (must run before checkEndings)
   checkFarewells();
 
-  // 2. Check for events
-  checkResourceThresholdEvents();
-  checkTimeBasedEvents();
 
   // Check for strategic choice unlocks
   checkChoiceUnlocks();
@@ -235,6 +227,78 @@ function startGameLoop() {
 
 // Handle first-time onboarding modal + inbox message
 export function handleOnboarding() {
+  // Mode selection — shown once to new players before onboarding
+  if (!gameState.gameMode) {
+    gameState.paused = true;
+    gameState.pauseStartTime = Date.now();
+
+    const modal = document.getElementById('phase-completion-modal');
+    const content = modal.querySelector('.phase-completion-content');
+    const titleEl = document.getElementById('phase-completion-title');
+    const narrativeEl = document.getElementById('phase-completion-narrative');
+    const statsEl = document.getElementById('phase-completion-stats');
+    const choicesEl = document.getElementById('phase-completion-choices');
+    const badgeEl = document.getElementById('phase-completion-badge');
+    const senderNameEl = document.getElementById('phase-sender-name');
+    const senderRoleEl = document.getElementById('phase-sender-role');
+    const continueBtn = document.getElementById('phase-completion-continue');
+
+    // Clear optional sections
+    content.classList.remove('phase-forward', 'phase-ominous', 'phase-onboarding');
+    content.classList.add('phase-onboarding');
+    if (badgeEl) { badgeEl.textContent = ''; badgeEl.classList.add('hidden'); }
+    if (senderNameEl) senderNameEl.textContent = '';
+    if (senderRoleEl) senderRoleEl.textContent = '';
+    if (statsEl) statsEl.innerHTML = '';
+    if (titleEl) titleEl.textContent = 'Select Mode';
+    if (continueBtn) continueBtn.classList.add('hidden');
+
+    // Build choice buttons
+    const arcadeDesc = 'A more forgiving experience with tutorials and prestige bonuses on repeated playthroughs. Recommended for players newer to the genre or looking for a more traditional incremental experience.';
+    const narrativeDesc = 'No tutorials, no bonuses. You read the messages from your team, explore the interface, and figure out how to run your lab. Mistakes are part of the experience. This mode requires curiosity and careful reading and is recommended for incremental/strategy game veterans looking for a more challenging experience. This is how the game was meant to be played.';
+
+    narrativeEl.innerHTML = '';
+    choicesEl.innerHTML = `
+      <div class="mode-choice" data-mode="arcade">
+        <strong>Guided</strong> <span class="mode-tag">(beginner-friendly)</span>
+        <p>${arcadeDesc}</p>
+      </div>
+      <div class="mode-choice" data-mode="narrative">
+        <strong>Narrative</strong> <span class="mode-tag">(challenging)</span>
+        <p>${narrativeDesc}</p>
+      </div>
+    `;
+
+    modal.dataset.noDismiss = 'true';
+    modal.classList.remove('hidden');
+
+    // Handle clicks
+    const handleModeClick = (e) => {
+      const choice = e.target.closest('.mode-choice');
+      if (!choice) return;
+
+      const mode = choice.dataset.mode;
+      gameState.gameMode = mode;
+
+      if (mode === 'narrative') {
+        gameState.tutorial.disabled = true;
+      }
+
+      saveGame();
+
+      // Clean up
+      choicesEl.removeEventListener('click', handleModeClick);
+      modal.classList.add('hidden');
+      if (continueBtn) continueBtn.classList.remove('hidden');
+
+      // Chain to onboarding
+      handleOnboarding();
+    };
+
+    choicesEl.addEventListener('click', handleModeClick);
+    return; // Don't proceed to onboarding yet
+  }
+
   // Send KTech reference message once per playthrough
   // Note: on first load, this runs before the modal so we can capture the
   // message ID for navigateToMessage in onDismiss.
@@ -266,10 +330,12 @@ export function handleOnboarding() {
       noDismissOnBackdrop: true,
       onDismiss: () => {
         gameState.onboardingComplete = true;
+        // Stay paused — let player orient before hitting Play
+        gameState.paused = true;
         if (guideMessageId) {
           navigateToMessage(guideMessageId);
         }
-        milestone('game_started');
+        milestone('game_started', { game_mode: gameState.gameMode || 'arcade' });
       },
     });
   } else {
@@ -285,11 +351,9 @@ function initializeGame() {
 
   // Register game version as a PostHog super property (attached to every event)
   if (typeof posthog !== 'undefined' && typeof posthog.register === 'function') { // eslint-disable-line no-undef
-    posthog.register({ game_version: VERSION }); // eslint-disable-line no-undef
+    posthog.register({ game_version: VERSION, game_version_int: VERSION_INT }); // eslint-disable-line no-undef
   }
 
-  // Load event content (capability content is handled by track system)
-  initializeEvents([phase1Events, phase2Events, phase3Events]);
 
   // Load saved game or start fresh
   const loaded = loadGame();
@@ -304,6 +368,13 @@ function initializeGame() {
   }
   // Clear import guard now that load is complete (safe to save again)
   sessionStorage.removeItem('agi-import-pending');
+  // Migrate existing saves: default to arcade if no mode set.
+  // Require onboardingComplete so a beforeunload save from a fresh game
+  // (before the player picks a mode) doesn't silently default to arcade.
+  if (loaded && !gameState.gameMode && gameState.onboardingComplete) {
+    gameState.gameMode = 'arcade';
+  }
+
   if (loaded) {
     // Restore focus queue ID counter so new items don't collide with saved IDs
     restoreQueueIdCounter();
@@ -406,9 +477,7 @@ function initializeGame() {
 
   // Version update toast for returning players
   if (loaded && gameState.lastSeenVersion != null && gameState.lastSeenVersion < VERSION && changelog[0]?.version === VERSION) {
-    const preview = changelog[0]?.changes?.[0];
-    const body = preview || 'See changelog in Settings.';
-    notify(`Updated to v${VERSION}`, body, 'info', {
+    notify(`Updated to v${VERSION}`, 'CEO Focus Mastery, game modes, and balance tweaks. View the full changelog in Settings or click here.', 'info', {
       duration: BALANCE.VERSION_TOAST_DURATION,
       onClick: () => showChangelog(),
       onDismiss: () => { gameState.lastSeenVersion = VERSION; },

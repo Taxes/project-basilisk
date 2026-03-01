@@ -13,11 +13,13 @@ import {
   getItemPointCost,
   canHRHire,
   canProcurementBuy,
+  getCultureShiftAutomation,
 } from './automation-state.js';
-import { getPurchaseCost, getPurchasableById } from './content/purchasables.js';
+import { getPurchaseCost, getPurchasableById, PERSONNEL_IDS } from './content/purchasables.js';
 import { canAfford, spendResources, getTeamCostMultiplier } from './resources.js';
-import { getPurchasableState, getActiveCount, incrementCount } from './purchasable-state.js';
+import { getPurchasableState, getActiveCount, getCount, incrementCount } from './purchasable-state.js';
 import { calculateTarget } from './automation-policies.js';
+import { getHRCultureDrift } from './focus-queue.js';
 import { getEffectiveScaling } from './talent-pool.js';
 import { BALANCE } from '../data/balance.js';
 import { addNewsMessage } from './messages.js';
@@ -49,7 +51,10 @@ function getRunningCostForCount(itemId, purchasable, count) {
 
 function processHRAutomation(deltaTime) {
   const hrPoints = getHRPointsPerSecond() * deltaTime;
-  if (hrPoints <= 0) return;
+  if (hrPoints <= 0) {
+    if (gameState.computed) gameState.computed.hrCultureDriftRate = 0;
+    return;
+  }
 
   // Items HR can automate: personnel + hr_team + procurement_team_unit
   const hrItems = [
@@ -58,7 +63,79 @@ function processHRAutomation(deltaTime) {
     'procurement_team_unit',
   ];
 
-  distributePoints(hrPoints, hrItems, canHRHire, deltaTime);
+  const cultureAuto = getCultureShiftAutomation();
+  const hasCultureTarget = cultureAuto.enabled && gameState.targetAllocation !== null;
+
+  if (!hasCultureTarget) {
+    if (gameState.computed) gameState.computed.hrCultureDriftRate = 0;
+    distributePoints(hrPoints, hrItems, canHRHire, deltaTime);
+    return;
+  }
+
+  // Culture shift is enabled — carve out its share based on priority,
+  // then pass the remainder to distributePoints() for hiring.
+  const culturePriority = cultureAuto.priority || 1;
+
+  // Count active hiring items at each priority level
+  const activeHiringByPriority = new Map();
+  for (const itemId of hrItems) {
+    if (!canHRHire(itemId)) continue;
+    const state = getPurchasableState(itemId);
+    if (!state.automation.enabled) continue;
+    const active = getActiveCount(itemId);
+    const target = calculateTarget(itemId, state.automation);
+    if (active === target) continue; // at target, doesn't need points
+    const p = state.automation.priority || 1;
+    activeHiringByPriority.set(p, (activeHiringByPriority.get(p) || 0) + 1);
+  }
+
+  // Walk priority levels to determine culture's share
+  // Collect all priority levels that have either hiring items or culture
+  const allPriorities = new Set([...activeHiringByPriority.keys(), culturePriority]);
+  const sortedPriorities = [...allPriorities].sort((a, b) => a - b);
+
+  let remaining = hrPoints;
+  let culturePoints = 0;
+
+  for (const p of sortedPriorities) {
+    if (remaining <= 0) break;
+    const hiringCount = activeHiringByPriority.get(p) || 0;
+    const hasCulture = (p === culturePriority);
+    const totalItems = hiringCount + (hasCulture ? 1 : 0);
+
+    if (totalItems === 0) continue;
+
+    if (hasCulture) {
+      // Culture gets its even share at this priority level
+      culturePoints += remaining / totalItems;
+    }
+
+    // All items at this level consume their share; stop here
+    // (matches distributePoints behavior: don't overflow to next priority
+    //  while items at this level still need points)
+    const anyHiringNeedsPoints = hiringCount > 0;
+    if (anyHiringNeedsPoints || hasCulture) {
+      remaining = 0;
+    }
+  }
+
+  // Pass non-culture points to normal distribution for hiring
+  const hiringPoints = hrPoints - culturePoints;
+  if (hiringPoints > 0) {
+    distributePoints(hiringPoints, hrItems, canHRHire, deltaTime);
+  }
+
+  // Compute culture drift rate from allocated points
+  let totalPersonnel = 1; // founder
+  for (const id of PERSONNEL_IDS) {
+    totalPersonnel += getCount(id);
+  }
+  const culturePointsPerSecond = culturePoints / deltaTime;
+  const r = culturePointsPerSecond / totalPersonnel;
+
+  if (!gameState.computed) gameState.computed = {};
+  gameState.computed.hrCultureDriftRate = getHRCultureDrift(r);
+  gameState.computed.hrCultureR = r;
 }
 
 function processProcurementAutomation(deltaTime) {

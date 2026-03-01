@@ -279,6 +279,10 @@ input[type="range"] {
   z-index: 2000;
 }
 
+.modal:has(.phase-onboarding) {
+  background: rgba(0, 0, 0, 1);
+}
+
 .modal.hidden {
   display: none;
 }
@@ -365,6 +369,18 @@ input[type="range"] {
   margin-bottom: 6px;
   border-bottom: 1px solid var(--border);
   padding-bottom: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.changelog-version:hover {
+  color: var(--accent);
+}
+
+.changelog-toggle {
+  font-size: 10px;
+  display: inline-block;
+  width: 12px;
 }
 
 .changelog-date {
@@ -372,6 +388,10 @@ input[type="range"] {
   font-weight: normal;
   font-size: 11px;
   margin-left: 8px;
+}
+
+.changelog-entry.collapsed .changelog-changes {
+  display: none;
 }
 
 .changelog-changes {
@@ -383,6 +403,24 @@ input[type="range"] {
 .changelog-changes li {
   color: var(--text-dim);
   padding: 2px 0;
+}
+
+.changelog-section-label {
+  list-style: none;
+  color: var(--text);
+  font-weight: bold;
+  font-size: 12px;
+  margin-top: 6px;
+  margin-left: -16px;
+  padding: 0;
+}
+
+.changelog-section-label:first-child {
+  margin-top: 0;
+}
+
+.changelog-section-item {
+  list-style: disc;
 }
 
 .changelog-empty {

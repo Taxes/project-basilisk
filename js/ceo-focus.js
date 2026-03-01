@@ -3,19 +3,21 @@
 
 import { gameState } from './game-state.js';
 import { getActiveCount } from './purchasable-state.js';
-import { FUNDRAISE_ROUNDS } from '../data/balance.js';
+import { BALANCE, FUNDRAISE_ROUNDS } from '../data/balance.js';
 
 // --- Constants ---
 export const BUILDUP_TIME = 120;   // seconds to reach max for continuous activities
 export const IR_BUILDUP_TIME = 90; // IR-specific: faster base time-to-cap (uses sqrt of efficiency)
 export const DECAY_TIME = 360;     // seconds to fully decay
+export const MASTERY_BUILDUP_TIME = 5 * 365; // 5 game-years (~1825 seconds real-time)
+export const MASTERY_DECAY_TIME = 5 * 365;   // 5 game-years (~1825 seconds real-time)
 
 // Activity definitions
 const ACTIVITIES = {
   grants: {
     id: 'grants',
     name: 'Grant Writing',
-    type: 'discrete',
+    type: 'continuous',
     unlock: () => true,
   },
   research: {
@@ -98,6 +100,21 @@ export function processCEOFocus(deltaTime) {
     }
   }
 
+  // Mastery: builds when active buildup is maxed, decays otherwise
+  const mastery = gameState.ceoFocus.mastery || (gameState.ceoFocus.mastery = {});
+  for (const [id, activity] of Object.entries(ACTIVITIES)) {
+    const isContinuous = activity.type === 'continuous' || activity.type === 'mixed';
+    if (!isContinuous) continue;
+
+    if (idle && id === selected && (buildup[id] || 0) >= 1.0) {
+      // Active buildup is maxed — build mastery
+      mastery[id] = Math.min(1, (mastery[id] || 0) + deltaTime / MASTERY_BUILDUP_TIME);
+    } else {
+      // Decay mastery
+      mastery[id] = Math.max(0, (mastery[id] || 0) - deltaTime / MASTERY_DECAY_TIME);
+    }
+  }
+
   // Decay fundraise multipliers (skip when IR is active)
   const irActive = idle && selected === 'ir';
   for (const [roundId, round] of Object.entries(FUNDRAISE_ROUNDS)) {
@@ -126,10 +143,19 @@ export function computeEffects() {
   const fundraiseCount = focus.completedFundraiseCount || 0;
   const efficiency = idle ? gameState.focusSpeed : 1.0;
 
-  // Grant Writing: $1000/s base × 3^fundraiseCount × efficiency (only when idle + selected)
+  // Grant Writing: $1000/s base × 2^fundraiseCount × efficiency (only when idle + selected)
   const grantsActive = idle && selected === 'grants';
-  const grantBaseRate = 1000 * Math.pow(3, fundraiseCount);
-  const grantRate = grantsActive ? grantBaseRate * efficiency : 0;
+  const grantBaseRate = 1000 * Math.pow(2, fundraiseCount);
+  // --- Mastery bonuses (all scale with active × mastery) ---
+  const mastery = focus.mastery || {};
+
+  // Grant Writing: active buildup 1×→2×, mastery adds up to 4× (8× total at max active + max mastery)
+  const grantActiveMultiplier = 1 + (buildup.grants || 0); // 1× to 2×
+  const grantMasteryFactor = (buildup.grants || 0) * (mastery.grants || 0); // scales with active × mastery
+  const grantMasteryMultiplier = 1 + 3 * grantMasteryFactor; // 1× to 4×
+
+  const grantRate = grantsActive ? grantBaseRate * efficiency * grantActiveMultiplier * grantMasteryMultiplier : 0;
+  const potentialGrantRate = grantBaseRate * (gameState.focusSpeed || 1) * grantActiveMultiplier * grantMasteryMultiplier;
 
   // Hands-on Research: +10 RP/s discrete × efficiency (only when idle + selected)
   const researchActive = idle && selected === 'research';
@@ -158,20 +184,38 @@ export function computeEffects() {
   const irBuildup = buildup.ir || 0;
   const irFundraiseScaling = Math.max(0, fundraiseCount - 1);
   const IR_CAP_BASE = 5000000;  // $5M base cap at full buildup
+  // Hands-on Research: +50% org tier amplification, compute cap 3→5×
+  const researchMastery = (buildup.research || 0) * (mastery.research || 0);
+  const orgTierBonus = 0.50 * researchMastery;           // 0 to 0.50
+  const computeCapBonus = 2.0 * researchMastery;         // raises soft cap by 0 to 2.0 (3→5)
+
+  // Investor Relations: 2× IR overshoot ceiling + extra revenue multiple from mastery
+  const irMastery = (buildup.ir || 0) * (mastery.ir || 0);
+  const irCapMultiplier = 1 + irMastery; // 1× to 2×
+  const irMasteryMultFraction = 0.20 * irMastery; // 0 to 0.20 extra mult fraction from mastery
+
   const irFundraiseCap = IR_CAP_BASE * Math.pow(8, irFundraiseScaling);
   const irFundraiseBonus = irFundraiseCap * irBuildup;
-  const irMultFraction = 0.20 * irBuildup;  // 20% of base multiplier at full buildup, bypasses cap
+  const irMultFraction = 0.20 * irBuildup + irMasteryMultFraction;  // buildup + mastery contributions
 
   // Estimate total IR raise bonus for display (fixed + mult-based revenue for next round)
+  // Clamped to the overshoot ceiling so the panel doesn't promise more than the raise delivers
   let irTotalEstimate = irFundraiseBonus;
   const nextRound = Object.entries(FUNDRAISE_ROUNDS).find(
     ([rid]) => gameState.fundraiseRounds[rid]?.available && !gameState.fundraiseRounds[rid]?.raised
   );
-  if (nextRound && irMultFraction > 0) {
-    const [, round] = nextRound;
-    const annualRevenue = (gameState.computed?.revenue?.annual || 0);
-    const currentMult = gameState.fundraiseRounds[nextRound[0]]?.currentMultiplier ?? round.startingMultiplier;
-    irTotalEstimate += annualRevenue * (irMultFraction * currentMult) * round.equityPercent;
+  if (nextRound) {
+    const [roundId, round] = nextRound;
+    if (irMultFraction > 0) {
+      const annualRevenue = (gameState.computed?.revenue?.annual || 0);
+      const currentMult = gameState.fundraiseRounds[roundId]?.currentMultiplier ?? round.startingMultiplier;
+      irTotalEstimate += annualRevenue * (irMultFraction * currentMult) * round.equityPercent;
+    }
+    // Cap estimate to overshoot headroom: IR can add at most maxRaise × overshoot above the normal cap
+    if (round.maxRaise) {
+      const overshootHeadroom = round.maxRaise * BALANCE.IR_MAX_OVERSHOOT * irCapMultiplier;
+      irTotalEstimate = Math.min(irTotalEstimate, overshootHeadroom);
+    }
   }
 
   // Public Positioning: acquisition growth + market edge preservation + bonus revenue
@@ -180,11 +224,21 @@ export function computeEffects() {
   const edgeDecayReduction = 0.30 * ppBuildup;       // up to 30% slower market edge decay
   const bonusRevenueMultiplier = 0.10 * ppBuildup;   // up to 10% bonus revenue
 
+  // Operations: +50% TFLOPS
+  const opsMastery = (buildup.operations || 0) * (mastery.operations || 0);
+  const tflopsMultiplier = 1 + 0.50 * opsMastery; // 1× to 1.50×
+
+  // Public Positioning: -20% upfront purchase costs
+  const ppMastery = ppBuildup * (mastery.public_positioning || 0);
+  const purchaseCostDiscount = 1 - 0.20 * ppMastery; // 1.0 to 0.80
+
   // Store computed effects for other systems to read
   if (!gameState.computed) gameState.computed = {};
   gameState.computed.ceoFocus = {
     grantRate,
+    potentialGrantRate,
     grantBaseRate,
+    grantActiveMultiplier,
     efficiency,
     potentialEfficiency: gameState.focusSpeed,
     flatRP,
@@ -202,6 +256,14 @@ export function computeEffects() {
     acquiredDemandGrowthMultiplier,
     edgeDecayReduction,
     bonusRevenueMultiplier,
+    grantMasteryMultiplier,
+    orgTierBonus,
+    computeCapBonus,
+    irCapMultiplier,
+    irMasteryMultFraction,
+    tflopsMultiplier,
+    purchaseCostDiscount,
+    mastery: { ...mastery },
     idle,
     selected,
     buildup: { ...buildup },

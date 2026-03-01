@@ -947,7 +947,8 @@ function getIRInclusivePreview(round, roundId) {
   const annualRevenue = gameState.computed?.revenue?.annual || 0;
   const irMultFraction = gameState.computed?.ceoFocus?.irMultFraction || 0;
   const irBaseBonus = gameState.computed?.ceoFocus?.irFundraiseBonus || 0;
-  const { raiseAmount, effectiveEquity, irMultRevenue } = calculateFundraisePreview(round, annualRevenue, currentMult, undefined, irBaseBonus, irMultFraction);
+  const irCapMult = gameState.computed?.ceoFocus?.irCapMultiplier || 1;
+  const { raiseAmount, effectiveEquity, irMultRevenue } = calculateFundraisePreview(round, annualRevenue, currentMult, undefined, irBaseBonus, irMultFraction, irCapMult);
   return { currentMult, annualRevenue, irMultFraction, irBaseBonus, irMultRevenue, raiseAmount, effectiveEquity };
 }
 
@@ -1052,7 +1053,8 @@ export function updateFundraiseDisplay() {
             html += `<div class="tooltip-row"><span>IR revenue bonus (+${Math.round(p.irMultFraction * 100)}% mult)</span><span>+${formatFunding(p.irMultRevenue)}</span></div>`;
           }
           if (round.maxRaise) {
-            const overshootCap = round.maxRaise * (1 + BALANCE.IR_MAX_OVERSHOOT);
+            const irCapMult = gameState.computed?.ceoFocus?.irCapMultiplier || 1;
+            const overshootCap = round.maxRaise * (1 + BALANCE.IR_MAX_OVERSHOOT * irCapMult);
             const totalRaise = Math.min(overshootCap, (round.maxRaise < uncapped ? round.maxRaise : uncapped) + totalIrExtra);
             if (totalRaise >= overshootCap * 0.95) {
               html += `<div class="tooltip-row dim"><span>IR overshoot cap</span><span>${formatFunding(overshootCap)}</span></div>`;

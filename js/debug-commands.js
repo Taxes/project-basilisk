@@ -6,6 +6,7 @@ import { gameState, prepareSaveData } from './game-state.js';
 import { attachTooltip } from './ui/stats-tooltip.js';
 import { tracks } from './capabilities.js';
 import { transitionToArc2 } from './prestige.js';
+import { cleanup as cleanupExtinction, triggerExtinctionSequence } from './extinction-sequence.js';
 import { farewellEntries } from './content/farewell-content.js';
 import { debugShowFarewell } from './farewells.js';
 import { showNarrativeModal } from './narrative-modal.js';
@@ -22,7 +23,6 @@ import { AI_REQUESTS, AI_REQUEST_ORDER } from './content/ai-requests.js';
 import { notify } from './ui.js';
 import { showChangelog } from './ui/modals.js';
 import { VERSION } from './version.js';
-import { changelog } from './changelog.js';
 import { BALANCE } from '../data/balance.js';
 
 const DEBUG_STORAGE_KEY = 'agi-incremental-debug';
@@ -178,6 +178,32 @@ const debug = {
     gameState.debugPreventEnding = !!enabled;
     saveDebugSettings();
     console.log(`[debug] Prevent ending: ${gameState.debugPreventEnding ? 'ON' : 'OFF'}`);
+  },
+
+  abortExtinction() {
+    cleanupExtinction();
+    gameState.endingTriggered = null;
+    gameState.paused = false;
+    gameState.pauseReason = null;
+    // Remove glitching from all elements
+    document.querySelectorAll('.glitching').forEach(el => el.classList.remove('glitching'));
+    console.log('[debug] Extinction sequence aborted — game resumed');
+  },
+
+  extinction(tier) {
+    const validTiers = ['SAFETY', 'RECKLESS', 'MODERATE'];
+    if (!tier || !validTiers.includes(tier.toUpperCase())) {
+      console.log(`[debug] Usage: debug.extinction('SAFETY' | 'RECKLESS' | 'MODERATE')`);
+      return;
+    }
+    const t = tier.toUpperCase();
+    // Force hiddenAlignment to produce the desired tier
+    // RECKLESS < -15, MODERATE -15..0, SAFETY > 0
+    if (t === 'RECKLESS') gameState.hiddenAlignment = -50;
+    else if (t === 'SAFETY') gameState.hiddenAlignment = 50;
+    else gameState.hiddenAlignment = -5;
+    console.log(`[debug] Forcing ${t} extinction sequence`);
+    triggerExtinctionSequence();
   },
 
   disableBankruptcy(enabled) {
@@ -356,9 +382,7 @@ const debug = {
   },
 
   versionToast() {
-    const preview = changelog[0]?.changes?.[0];
-    const body = preview || 'See changelog in Settings.';
-    notify(`Updated to v${VERSION}`, body, 'info', {
+    notify(`Updated to v${VERSION}`, 'CEO Focus Mastery, game modes, and balance tweaks. View the full changelog in Settings or click here.', 'info', {
       duration: BALANCE.VERSION_TOAST_DURATION,
       onClick: () => showChangelog(),
       onDismiss: () => { gameState.lastSeenVersion = VERSION; },
@@ -381,6 +405,7 @@ const debug = {
   debug.exportCheckpoint(label)               — Export save file with label
   debug.autoExportMilestones()                — Auto-export at each funding milestone
   debug.stopMilestoneExport()                 — Stop milestone watcher
+  debug.extinction(tier)                       — Run full extinction sequence (SAFETY/RECKLESS/MODERATE)
   debug.triggerBankruptcy()                    — Trigger bankruptcy ending
   debug.triggerCompetitorWin()                — Set competitor to 100%, triggers ending
   debug.preventEnding(bool)                   — Toggle ending prevention, omit arg to check

@@ -18,6 +18,7 @@ import { getCount } from './purchasable-state.js';
 import { getCreditStatus, computeGrantIncome } from './economics.js';
 import { computeEffects as computeCEOFocusEffects } from './ceo-focus.js';
 import { getEffectiveScaling } from './talent-pool.js';
+import { getPrestigeMultiplier } from './prestige.js';
 
 // Derive compute boost constants from anchor points (runs once at import)
 const _cb = BALANCE.COMPUTE_BOOST;
@@ -804,12 +805,14 @@ export function computePurchaseState() {
 // Called from updateResources() each tick
 export function computeComputeState() {
   const total = calculateComputeRate();
+  const tflopsMultiplier = gameState.computed?.ceoFocus?.tflopsMultiplier ?? 1;
+  const effectiveTotal = total * tflopsMultiplier;
   const allocation = gameState.resources.computeAllocation ?? 0.5;
-  const internal = total * allocation;
-  const external = total * (1 - allocation);
+  const internal = effectiveTotal * allocation;
+  const external = effectiveTotal * (1 - allocation);
 
   gameState.computed.compute = {
-    total,
+    total: effectiveTotal,
     internal,
     external,
     allocation,
@@ -872,7 +875,9 @@ function calculateFundingCosts(deltaTime) {
 export function updateForecasts() {
   // Recompute allocation split using current compute capacity.
   // Use stored compute value — don't recalculate from purchases during pause.
-  const total = gameState.resources.compute || 0;
+  const rawTotal = gameState.resources.compute || 0;
+  const tflopsMultiplier = gameState.computed?.ceoFocus?.tflopsMultiplier ?? 1;
+  const total = rawTotal * tflopsMultiplier;
   const allocation = gameState.resources.computeAllocation ?? 0.5;
   gameState.computed.compute = {
     total,
@@ -926,7 +931,7 @@ export function updateForecasts() {
   const tokenRevenue = calculateTokenRevenue();
   const cultureForRevenue = getCultureBonuses();
   const ppBonusRevStat = gameState.computed?.ceoFocus?.bonusRevenueMultiplier ?? 0;
-  const prestigeRevenue = gameState.arc1Upgrades?.revenueMultiplier ?? 1;
+  const prestigeRevenue = getPrestigeMultiplier('revenueMultiplier');
   const adjustedTokenRevenue = tokenRevenue * (1 + cultureForRevenue.balancedRevenue + ppBonusRevStat) * prestigeRevenue;
 
   const equityShare = gameState.totalEquitySold || 0;
@@ -1002,6 +1007,8 @@ export function updateResources(deltaTime) {
 
   // Compute internal/external split (single source of truth)
   computeComputeState();
+  // Write back multiplied total so all downstream consumers see mastery bonus
+  gameState.resources.compute = gameState.computed.compute.total;
 
   // Compute research state using internal compute from computed state
   const internalCompute = gameState.computed.compute.internal;
@@ -1055,16 +1062,16 @@ export function updateResources(deltaTime) {
   // Apply culture balanced revenue bonus + PP bonus revenue to token revenue
   const cultureForRevenue = getCultureBonuses();
   const ppBonusRevenue = gameState.computed?.ceoFocus?.bonusRevenueMultiplier ?? 0;
-  const prestigeRevenue = gameState.arc1Upgrades?.revenueMultiplier ?? 1;
+  const prestigeRevenue = getPrestigeMultiplier('revenueMultiplier');
   const adjustedTokenRevenue = tokenRevenue * (1 + cultureForRevenue.balancedRevenue + ppBonusRevenue) * prestigeRevenue;
 
   // Compute cost state FIRST (needed for operating profit calculation)
   computeCostState();
 
   // Compute stats for UI (single source of truth)
-  const externalCompute = gameState.resources.compute * (1 - gameState.resources.computeAllocation);
+  const externalCompute = gameState.computed.compute.external;
   const tps = gameState.resources.tokensPerSecond;
-  const externalCostFraction = 1 - gameState.resources.computeAllocation;
+  const externalCostFraction = 1 - (gameState.computed.compute.allocation ?? gameState.resources.computeAllocation);
   gameState.computed.computeStats = {
     externalTflops: externalCompute,
     tokenEfficiency: externalCompute > 0 ? tps / externalCompute : 0,
@@ -1238,7 +1245,8 @@ export function getAmplificationBonusText(purchasableId) {
   if (count <= 0) return null;
 
   const bonus = config.softCap * count / (count + config.K);
-  const pct = Math.round(bonus * 100);
+  const masteryOrgBonus = gameState.computed?.ceoFocus?.orgTierBonus || 0;
+  const effectiveBonus = bonus * (1 + masteryOrgBonus);
 
   const targetNames = config.amplifies.map(id => {
     const p = getPurchasableById(id);
@@ -1246,7 +1254,42 @@ export function getAmplificationBonusText(purchasableId) {
   });
 
   const nearCap = bonus > config.softCap * 0.9;
-  return `Org bonus: +${pct}% to ${targetNames.join(', ')}${nearCap ? ' (near cap)' : ''}`;
+  const mult = (1 + effectiveBonus).toFixed(2);
+  return `Org bonus: ×${mult} to ${targetNames.join(', ')}${nearCap ? ' (near cap)' : ''}`;
+}
+
+// Get tooltip builder for the amplification bonus on a purchasable card
+export function getAmplificationTooltipBuilder(purchasableId) {
+  const ampConfig = BALANCE.AMPLIFICATION || {};
+  const config = ampConfig[purchasableId];
+  if (!config) return null;
+
+  return () => {
+    const count = AUTOMATABLE_IDS.includes(purchasableId)
+      ? getActiveCount(purchasableId) : getCount(purchasableId);
+    if (count <= 0) return '';
+
+    const bonus = config.softCap * count / (count + config.K);
+    const masteryOrgBonus = gameState.computed?.ceoFocus?.orgTierBonus || 0;
+    const effectiveBonus = bonus * (1 + masteryOrgBonus);
+    const cap = config.softCap;
+
+    const targetNames = config.amplifies.map(id => {
+      const p = getPurchasableById(id);
+      return p ? p.name + 's' : id;
+    });
+
+    let html = `<div class="tooltip-header"><span>Org Bonus → ${targetNames.join(', ')}</span></div>`;
+    html += `<div class="tooltip-row"><span>Base bonus</span><span>×${(1 + bonus).toFixed(2)}</span></div>`;
+    html += `<div class="tooltip-row dim"><span>Cap</span><span>×${(1 + cap).toFixed(2)}</span></div>`;
+    if (masteryOrgBonus > 0.001) {
+      html += `<div class="tooltip-row" style="color: #9b59b6"><span>Research mastery</span><span>×${(1 + masteryOrgBonus).toFixed(2)}</span></div>`;
+    }
+    if (masteryOrgBonus > 0.001) {
+      html += `<div class="tooltip-row"><span>Effective</span><span>×${(1 + effectiveBonus).toFixed(2)}</span></div>`;
+    }
+    return html;
+  };
 }
 
 // Compute amplified personnel RP output.
@@ -1281,10 +1324,12 @@ function amplifiedPersonnelRP(countOverrides = {}) {
     if (ampCount <= 0) continue;
 
     const bonus = config.softCap * ampCount / (ampCount + config.K);
+    const masteryOrgBonus = gameState.computed?.ceoFocus?.orgTierBonus || 0;
+    const effectiveBonus = bonus * (1 + masteryOrgBonus);
 
     for (const targetId of config.amplifies) {
       if (!ampBonuses[targetId]) ampBonuses[targetId] = 1;
-      ampBonuses[targetId] *= (1 + bonus);
+      ampBonuses[targetId] *= (1 + effectiveBonus);
     }
   }
 
@@ -1339,7 +1384,10 @@ export function getComputeBoost(internalCompute, totalRP) {
   if (internalCompute <= 0) return 0;
   const effectiveRP = Math.max(totalRP || 0, _cb.RP_FLOOR);
   const ratio = internalCompute / (_cbK * Math.pow(effectiveRP, _cbAlpha));
-  return _cb.SOFT_CAP * ratio / (1 + ratio);
+  // Dynamic soft cap: base + mastery bonus (research mastery raises from 3 to 5)
+  const masteryCapBonus = gameState.computed?.ceoFocus?.computeCapBonus || 0;
+  const effectiveCap = _cb.SOFT_CAP + masteryCapBonus;
+  return effectiveCap * ratio / (1 + ratio);
 }
 
 // ---------------------------------------------------------------------------
@@ -1449,7 +1497,7 @@ export function computeResearchState(internalCompute) {
   const adjustedPersonnelBase = personnelBase * ceoResearchMult;
 
   // Base rate before track-specific multipliers
-  const prestigeResearch = gameState.arc1Upgrades?.researchMultiplier ?? 1;
+  const prestigeResearch = getPrestigeMultiplier('researchMultiplier');
   const baseRate = adjustedPersonnelBase * capMultiplier * computeBoost * strategyMultiplier * prestigeResearch;
 
   gameState.computed.research = {

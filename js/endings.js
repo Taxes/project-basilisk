@@ -458,6 +458,14 @@ export function triggerEnding(endingId, variant = null) {
   if (variant) {
     analyticsPayload.ending_variant = variant;
   }
+  // CEO Focus mastery levels at game end
+  const masteryLevels = gameState.ceoFocus?.mastery || {};
+  const significantMastery = Object.fromEntries(
+    Object.entries(masteryLevels).filter(([, v]) => v > 0.01).map(([k, v]) => [k, Math.round(v * 100) / 100])
+  );
+  if (Object.keys(significantMastery).length > 0) {
+    analyticsPayload.mastery_levels = significantMastery;
+  }
   // Arc 2+ properties — personality and archetype aren't tracked in Arc 1
   if (gameState.arc >= 2) {
     analyticsPayload.archetype = getArchetype(ending.tier || 'silver');

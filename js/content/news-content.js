@@ -404,9 +404,9 @@ export const competitorBreakthroughs = [
 // Tier-specific extinction news (moved from extinction-sequence.js)
 export const extinctionNewsByTier = {
   RECKLESS: [
-    { text: 'AGI ACHIEVED — Congratulations!' },
-    { text: 'Markets rally on AGI announcement' },
-    { text: 'Anomalous optimization patterns—' },
+    { text: 'Bloomberg: "AI startup claims AGI-level capability milestone"', type: 'flavor' },
+    { text: 'BREAKING: Anomalous activity reported across major cloud providers' },
+    { text: 'ALERT: Global infrastructure systems not responding to' },
     { text: '' },
   ],
   MODERATE: [

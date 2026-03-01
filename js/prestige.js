@@ -5,6 +5,17 @@ import { FUNDING } from '../data/balance.js';
 import { resetQueueIdCounter } from './focus-queue.js';
 import { resetAnalytics } from './analytics.js';
 
+/**
+ * Get effective prestige multiplier for a given key, respecting game mode.
+ * Narrative mode always returns 1 (no prestige bonuses).
+ * @param {string} key - Upgrade key (e.g. 'researchMultiplier', 'startingFunding', 'revenueMultiplier')
+ * @returns {number}
+ */
+export function getPrestigeMultiplier(key) {
+  if (gameState.gameMode === 'narrative') return 1;
+  return gameState.arc1Upgrades?.[key] ?? 1;
+}
+
 // Calculate prestige upgrade gains based on current progress
 export function calculatePrestigeGain() {
   const progress = gameState.agiProgress || 0;
@@ -54,6 +65,7 @@ export function resetForPrestige() {
 
   // Preserve onboarding flag
   const onboardingComplete = gameState.onboardingComplete;
+  const gameMode = gameState.gameMode;
 
   // Preserve UI state that persists across prestige
   const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
@@ -85,6 +97,7 @@ export function resetForPrestige() {
   gameState.arc2Upgrades = arc2Upgrades;
   gameState.lifetimeAllTime = lifetimeAllTime;
   gameState.onboardingComplete = onboardingComplete;
+  gameState.gameMode = gameMode;
   gameState.ui.seenCards = seenCards;
   gameState.ui.everUnlockedSections = everUnlockedSections;
   gameState.ui.discoveredFlavor = discoveredFlavor;
@@ -105,7 +118,7 @@ export function resetForPrestige() {
 
   // Apply starting bonuses from upgrades
   if (currentArc === 1) {
-    gameState.resources.funding = FUNDING.SEED_AMOUNT * arc1Upgrades.startingFunding;
+    gameState.resources.funding = FUNDING.SEED_AMOUNT * getPrestigeMultiplier('startingFunding');
   }
 
   resetQueueIdCounter();
@@ -121,6 +134,7 @@ export function resetForPrestige() {
 export function resetForExtinction(endingId, variant) {
   // Preserve cosmetic/informational state
   const onboardingComplete = gameState.onboardingComplete;
+  const gameMode = gameState.gameMode;
   const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
   const everUnlockedSections = gameState.ui?.everUnlockedSections ? [...gameState.ui.everUnlockedSections] : [];
   const discoveredFlavor = gameState.ui?.discoveredFlavor ? [...gameState.ui.discoveredFlavor] : [];
@@ -140,6 +154,7 @@ export function resetForExtinction(endingId, variant) {
 
   // Restore preserved state
   gameState.onboardingComplete = onboardingComplete;
+  gameState.gameMode = gameMode;
   gameState.ui.seenCards = seenCards;
   gameState.ui.everUnlockedSections = everUnlockedSections;
   gameState.ui.discoveredFlavor = discoveredFlavor;
@@ -167,6 +182,7 @@ export function resetForExtinction(endingId, variant) {
 
 // Transition from Arc 1 to Arc 2 (one-way door)
 export function transitionToArc2() {
+  const gameMode = gameState.gameMode;
   const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
   const everUnlockedSections = gameState.ui?.everUnlockedSections ? [...gameState.ui.everUnlockedSections] : [];
   const discoveredFlavor = gameState.ui?.discoveredFlavor ? [...gameState.ui.discoveredFlavor] : [];
@@ -175,6 +191,7 @@ export function transitionToArc2() {
 
   // Reset everything except arcUnlocked
   Object.assign(gameState, fresh);
+  gameState.gameMode = gameMode;
   gameState.ui.seenCards = seenCards;
   gameState.ui.everUnlockedSections = everUnlockedSections;
   gameState.ui.discoveredFlavor = discoveredFlavor;
@@ -215,6 +232,7 @@ export function transitionToArc2() {
 
 // Export for testing
 if (typeof window !== 'undefined') {
+  window.getPrestigeMultiplier = getPrestigeMultiplier;
   window.calculatePrestigeGain = calculatePrestigeGain;
   window.applyPrestigeGains = applyPrestigeGains;
   window.resetForPrestige = resetForPrestige;

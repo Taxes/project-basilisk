@@ -489,6 +489,12 @@ export function renderDashboardFeed() {
       item.classList.add('tutorial');
     }
 
+    // Extinction news gets urgent styling
+    const isExtinction = msg.tags && msg.tags.includes('extinction');
+    if (isExtinction) {
+      item.classList.add('extinction');
+    }
+
     // Unread state: actions use actionTaken, info/tutorial use read, news never unread
     if (msg.type === 'action' && !msg.actionTaken) {
       item.classList.add('unread');

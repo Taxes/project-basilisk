@@ -47,13 +47,13 @@ export function showTutorialStep(step) {
 }
 
 // Skip the entire tutorial
-export function skipTutorial() {
+export function skipTutorial(source = 'main') {
   const currentStep = gameState.tutorial.shownStep || gameState.tutorial.currentStep;
   gameState.tutorial.dismissed = true;
   gameState.tutorial.active = false;
   gameState.tutorial.shownStep = 0;
 
-  milestone('tutorial_skipped', { step: currentStep }, 'tutorial_skipped');
+  milestone('tutorial_skipped', { step: currentStep, source }, 'tutorial_skipped');
 }
 
 // Resume tutorial from Settings — re-show the last completed step
@@ -97,7 +97,7 @@ export function isTutorialActive() {
 
 // Is the tutorial system enabled at all? (for post-tutorial standalone steps)
 export function isTutorialEnabled() {
-  return !gameState.tutorial.disabled && gameState.arc === 1;
+  return !gameState.tutorial.disabled && !gameState.tutorial.dismissed && gameState.arc === 1;
 }
 
 // Review mode: returns the step the player had reached before restart (0 if not in review mode)

@@ -28,12 +28,7 @@ import { el } from '../utils/dom.js';
 import { registerUpdate, EVERY_TICK, SLOW } from './scheduler.js';
 import { attachTooltip } from './stats-tooltip.js';
 
-function recordFlavorDiscovery(id) {
-  const discovered = gameState.ui.discoveredFlavor;
-  if (!discovered.includes(id)) {
-    discovered.push(id);
-  }
-}
+import { recordFlavorDiscovery } from '../flavor-discovery.js';
 
 // ---------------------------------------------------------------------------
 // Caches

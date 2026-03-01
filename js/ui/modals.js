@@ -1,10 +1,9 @@
 // Modal UI — stats, changelog, events, endings, prestige
 
 import { gameState, resetGame, saveGame, prepareSaveData } from '../game-state.js';
-import { getAllPurchasables } from '../content/purchasables.js';
+import { getTotalFlavorCount } from '../flavor-discovery.js';
 import LZString from '../../vendor/lz-string.min.js';
 import { tracks, isCapabilityUnlocked } from '../capabilities.js';
-import { applyChoiceEffects } from '../events.js';
 import { getEndingById, getEndingStats, triggerEnding, getEndingNarrative, getPersonalityEpilogue } from '../endings.js';
 import { milestone } from '../analytics.js';
 import { getArchetype } from '../personality.js';
@@ -18,7 +17,7 @@ import { changelog } from '../changelog.js';
 import { VERSION } from '../version.js';
 import { attachTooltip } from './stats-tooltip.js';
 import { $ } from '../utils/dom-cache.js';
-import { resumeTutorial, restartTutorial, disableTutorial } from '../tutorial-state.js';
+import { resumeTutorial, restartTutorial, skipTutorial } from '../tutorial-state.js';
 import { requestFullUpdate } from './signals.js';
 import { applyDebugSettings } from '../debug-commands.js';
 import { getDebugMessageStatus } from '../tutorial-messages.js';
@@ -30,9 +29,6 @@ import {
 } from '../content/message-content.js';
 import { farewellEntries } from '../content/farewell-content.js';
 import { AI_REQUESTS } from '../content/ai-requests.js';
-import { phase1Events } from '../content/events-phase1.js';
-import { phase2Events } from '../content/events-phase2.js';
-import { phase3Events } from '../content/events-phase3.js';
 
 // Lazy back-reference to top-level updateUI / resetUI.
 // Imported at call-time to avoid circular-import issues
@@ -70,8 +66,7 @@ export function initModals(updateUI, resetUI) {
 
 function getFlavorStats() {
   const discovered = gameState.ui?.discoveredFlavor || [];
-  const total = getAllPurchasables().filter(p => p.flavorText).length;
-  return { discovered: discovered.length, total };
+  return { discovered: discovered.length, total: getTotalFlavorCount() };
 }
 
 function getFlavorTier(discovered, total) {
@@ -229,6 +224,29 @@ function renderStatsContent() {
 // Settings modal (with tabbed changelog)
 // ---------------------------------------------------------------------------
 
+/** Escape a string for safe HTML insertion. */
+function escapeHtml(str) {
+  const el = document.createElement('span');
+  el.textContent = str;
+  return el.innerHTML;
+}
+
+/** Render changes list — handles both flat strings and { section, items } objects. */
+function renderChanges(changes) {
+  let html = '';
+  for (const change of changes) {
+    if (typeof change === 'string') {
+      html += `<li>${escapeHtml(change)}</li>`;
+    } else if (change.section && change.items) {
+      html += `<li class="changelog-section-label">${escapeHtml(change.section)}</li>`;
+      for (const item of change.items) {
+        html += `<li class="changelog-section-item">${escapeHtml(item)}</li>`;
+      }
+    }
+  }
+  return html;
+}
+
 /** Populate the changelog tab content. Called once on first view. */
 let _changelogRendered = false;
 function renderChangelogContent() {
@@ -237,15 +255,17 @@ function renderChangelogContent() {
   if (!content) return;
 
   let html = '';
-  for (const entry of changelog) {
-    html += `<div class="changelog-entry">`;
-    html += `<div class="changelog-version">v${entry.version}${entry.date ? ` <span class="changelog-date">${entry.date}</span>` : ''}</div>`;
+  for (let i = 0; i < changelog.length; i++) {
+    const entry = changelog[i];
+    const isLatest = i === 0;
+    const collapsedClass = isLatest ? '' : ' collapsed';
+    html += `<div class="changelog-entry${collapsedClass}">`;
+    html += `<div class="changelog-version" role="button" tabindex="0">`;
+    html += `<span class="changelog-toggle">${isLatest ? '\u25BC' : '\u25B6'}</span> `;
+    html += `v${entry.version}${entry.date ? ` <span class="changelog-date">${entry.date}</span>` : ''}`;
+    html += `</div>`;
     html += `<ul class="changelog-changes">`;
-    for (const change of entry.changes) {
-      const li = document.createElement('li');
-      li.textContent = change;
-      html += `<li>${li.textContent}</li>`;
-    }
+    html += renderChanges(entry.changes);
     html += `</ul></div>`;
   }
 
@@ -254,6 +274,17 @@ function renderChangelogContent() {
   }
 
   content.innerHTML = html;
+
+  // Wire up expand/collapse toggles
+  content.addEventListener('click', (e) => {
+    const versionEl = e.target.closest('.changelog-version');
+    if (!versionEl) return;
+    const entryEl = versionEl.closest('.changelog-entry');
+    if (!entryEl) return;
+    const toggle = versionEl.querySelector('.changelog-toggle');
+    entryEl.classList.toggle('collapsed');
+    if (toggle) toggle.textContent = entryEl.classList.contains('collapsed') ? '\u25B6' : '\u25BC';
+  });
 
   const versionEl = document.getElementById('settings-version');
   if (versionEl) versionEl.textContent = `v${VERSION}`;
@@ -317,6 +348,19 @@ export function showSettingsModal() {
   radios.forEach(radio => {
     radio.checked = radio.value === currentValue;
   });
+
+  // Update game mode display
+  const modeEl = document.getElementById('game-mode-value');
+  if (modeEl && gameState.gameMode) {
+    const labels = { arcade: 'Guided (beginner-friendly)', narrative: 'Narrative (challenging)' };
+    modeEl.textContent = labels[gameState.gameMode] || gameState.gameMode;
+  }
+
+  // Hide tutorial section in narrative mode (tutorials are disabled)
+  const tutorialSection = modal.querySelector('.settings-tutorial-section');
+  if (tutorialSection) {
+    tutorialSection.style.display = gameState.gameMode === 'narrative' ? 'none' : '';
+  }
 
   // Always open on Settings tab
   switchSettingsTab('settings');
@@ -460,21 +504,6 @@ function getNonTutorialDebugEntries() {
     add('farewells', entry.key, entry.sender, entry.subject, `farewell_${entry.key}`);
   }
 
-  // Events — Phase 1
-  for (const event of phase1Events) {
-    add('events_phase1', event.id, null, event.name, `event:${event.id}`);
-  }
-
-  // Events — Phase 2
-  for (const event of phase2Events) {
-    add('events_phase2', event.id, null, event.name, `event:${event.id}`);
-  }
-
-  // Events — Phase 3
-  for (const event of phase3Events) {
-    add('events_phase3', event.id, null, event.name, `event:${event.id}`);
-  }
-
   // Phase Completions
   add('phase_completions', 'phase_completion_1', 'Prof. Shannon', 'The Transformer Era', 'phase_completion_1');
   add('phase_completions', 'phase_completion_2', 'Dennis Babbage', 'Something in the training logs', 'phase_completion_2');
@@ -501,9 +530,6 @@ const NON_TUTORIAL_GROUP_LABELS = {
   board: 'Board',
   strategic_choices: 'Strategic Choices',
   farewells: 'Farewells',
-  events_phase1: 'Events — Phase 1',
-  events_phase2: 'Events — Phase 2',
-  events_phase3: 'Events — Phase 3',
   phase_completions: 'Phase Completions',
   arc2: 'Arc 2',
 };
@@ -905,7 +931,7 @@ export function initSettingsModal() {
   });
 
   document.getElementById('tutorial-off-button')?.addEventListener('click', () => {
-    disableTutorial();
+    skipTutorial('settings');
     updateTutorialSettingsUI();
   });
 }
@@ -916,61 +942,22 @@ function updateTutorialSettingsUI() {
   const statusEl = document.getElementById('tutorial-status');
 
   if (resumeBtn) {
-    // Resume available whenever tutorial has started and is currently dismissed (not disabled)
-    resumeBtn.disabled = !(t.dismissed && !t.disabled && t.currentStep > 0);
+    resumeBtn.disabled = !(t.dismissed && t.currentStep > 0);
   }
 
   if (statusEl) {
-    if (t.disabled) {
-      statusEl.textContent = 'Tutorial disabled';
-    } else if (t.dismissed) {
-      statusEl.textContent = `Tutorial paused at step ${t.currentStep + 1}`;
+    if (t.dismissed) {
+      if (t.currentStep >= 26) {
+        statusEl.textContent = 'Tutorial & hints hidden';
+      } else {
+        statusEl.textContent = `Tutorial paused at step ${t.currentStep + 1}`;
+      }
     } else if (t.currentStep > 0) {
       statusEl.textContent = `Tutorial active — step ${t.currentStep + 1}`;
     } else {
       statusEl.textContent = '';
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// Event modal
-// ---------------------------------------------------------------------------
-
-export function showEventModal(event) {
-  const modal = $('event-modal');
-  const title = $('event-title');
-  const text = $('event-text');
-  const choices = $('event-choices');
-
-  if (!modal || !title || !text || !choices) return;
-
-  title.textContent = event.name;
-  text.textContent = event.text;
-
-  choices.innerHTML = '';
-
-  for (let choice of event.choices) {
-    const button = document.createElement('button');
-    button.className = 'choice-button';
-    button.textContent = choice.text;
-
-    button.addEventListener('click', () => {
-      applyChoiceEffects(choice.effects);
-      hideEventModal();
-      requestFullUpdate();
-      getUpdateUI()();
-    });
-
-    choices.appendChild(button);
-  }
-
-  modal.classList.remove('hidden');
-}
-
-export function hideEventModal() {
-  const modal = $('event-modal');
-  if (modal) modal.classList.add('hidden');
 }
 
 // ---------------------------------------------------------------------------

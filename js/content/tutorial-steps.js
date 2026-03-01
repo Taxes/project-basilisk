@@ -1,5 +1,5 @@
 // Tutorial Step Definitions
-// 34-step cue card tutorial: 26 sequential onboarding + 8 post-tutorial.
+// 35-step cue card tutorial: 26 sequential onboarding + 9 post-tutorial.
 // Steps are either "major" (player-facing, counted in "Step N of M") or
 // "nav" (tab-navigation, skipped if player is already on the correct tab).
 // See docs/design-docs/onboarding-spike.md for full design.
@@ -7,6 +7,7 @@
 import { gameState } from '../game-state.js';
 import { getCount } from '../purchasable-state.js';
 import { switchTab } from '../ui/tab-navigation.js';
+import { switchSubTab } from '../ui/infrastructure.js';
 
 // Step name lookup for analytics
 export const STEP_NAMES = {
@@ -44,6 +45,7 @@ export const STEP_NAMES = {
   32: 'automation_teams',
   33: 'nav_personnel_automation',
   34: 'automation_controls',
+  35: 'synthetic_unlock',
 };
 
 // Player-visible step count (only major steps in main phase)
@@ -532,6 +534,26 @@ export const TUTORIAL_STEPS = [
     unpauseOnDismiss: true,
     content: {
       body: `Enable **Auto** and set a target. Your operations team will hire to that number automatically. Priority controls which items get attention first when the team is busy.\nNot every item is automatable yet. Operations Department unlocks the basics. Admin upgrades unlock higher-tier items.\nThe **policy** selector controls how the target is calculated. You start with **Units** (a fixed count). More policies unlock as you grow.`,
+      buttons: [{ label: 'Got it', action: 'dismiss' }],
+    },
+  },
+
+  // ===== Synthetic data unlock =====
+  {
+    id: 35,
+    name: 'synthetic_unlock',
+    phase: 'post',
+    trigger: (gs) => hasCapability(gs, 'capabilities', 'synthetic_data'),
+    target: '#data-tab-content',
+    position: 'right',
+    onShow: () => {
+      switchSubTab('data');
+      document.getElementById('data-tab-content')?.scrollTo(0, 0);
+    },
+    pauseOnShow: true,
+    unpauseOnDismiss: true,
+    content: {
+      body: `You've unlocked **Synthetic Data Generation**. Generators produce unlimited training data at zero licensing cost.\nThe tradeoff is quality. Synthetic samples are weaker than real data, and they dilute your dataset. Keep an eye on **Data Quality** as you scale generators up.\n**Renewable sources** produce higher-quality data and offset the dilution.`,
       buttons: [{ label: 'Got it', action: 'dismiss' }],
     },
   },

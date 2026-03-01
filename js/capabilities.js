@@ -234,6 +234,7 @@ export function checkAllMilestones() {
 
   // Check for newly completed tracks and redistribute allocation
   for (const trackId of Object.keys(results)) {
+    if (trackId === 'capabilities') continue; // capabilities completing is not player-notable
     if (!isTrackComplete(trackId)) continue;
     const triggerKey = `track_complete_${trackId}`;
     if (hasMessageBeenTriggered(triggerKey)) continue;
@@ -252,14 +253,15 @@ export function checkAllMilestones() {
         trackCompletionMessage.signature,
         trackCompletionMessage.tags,
         triggerKey,
+        { trackName },
       );
       markMessageTriggered(triggerKey);
       continue;
     }
 
-    // Find remaining incomplete tracks
+    // Find remaining incomplete tracks (exclude alignment in Arc 1 — not player-visible)
     const otherTracks = Object.keys(gameState.tracks).filter(
-      t => t !== trackId && !isTrackComplete(t)
+      t => t !== trackId && !isTrackComplete(t) && !(gameState.arc === 1 && t === 'alignment')
     );
     const otherSum = otherTracks.reduce((s, t) => s + (target[t] || 0), 0);
 
@@ -292,6 +294,7 @@ export function checkAllMilestones() {
       trackCompletionMessage.signature,
       trackCompletionMessage.tags,
       triggerKey,
+      { trackName },
     );
     markMessageTriggered(triggerKey);
   }

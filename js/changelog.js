@@ -1,7 +1,35 @@
 // Player-facing changelog — concise, plain-English descriptions
-// Max 5 bullets per version. Newest first.
+// Newest first. Changes can be flat strings or { section, items } objects.
 
 export const changelog = [
+  {
+    version: '0.9.0',
+    date: '2026-03-01',
+    changes: [
+      {
+        section: 'Content',
+        items: [
+          'Added CEO Focus Mastery: sustained focus unlocks unique bonuses',
+          'Added game modes: choose Guided or Narrative at start',
+        ],
+      },
+      {
+        section: 'Balance',
+        items: [
+          'Reworked data tab layout and rebalanced late-game data needs',
+          'HR teams can now speed up culture pivots',
+        ],
+      },
+      {
+        section: 'Bug fixes',
+        items: [
+          'Revised the timeline on German expansionism',
+          'Fixed maximum flavor',
+          'Assorted other tooltip and UI fixes',
+        ],
+      },
+    ],
+  },
   {
     version: '0.8.2',
     date: '2026-02-28',

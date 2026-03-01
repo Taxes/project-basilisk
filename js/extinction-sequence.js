@@ -61,10 +61,10 @@ export function triggerExtinctionSequence() {
   document.body.classList.add('extinction-active');
 
   news.forEach((item, i) => {
-    const delay = timing.NEWS_DELAYS[i] || (timing.NEWS_DELAYS[timing.NEWS_DELAYS.length - 1] + (i * 4000));
+    const delay = timing.NEWS_DELAYS[i] ?? (timing.NEWS_DELAYS[timing.NEWS_DELAYS.length - 1] + (i * 4000));
     if (item.text) {
       const timeout = setTimeout(() => {
-        addNewsItem(item.text, 'extinction');
+        addNewsItem(item.text, item.type || 'extinction');
       }, delay);
       sequenceTimeouts.push(timeout);
     }
@@ -96,7 +96,7 @@ export function triggerExtinctionSequence() {
 
 function startUIDegradation(tier) {
   document.body.classList.add('ui-degrading');
-  const elements = document.querySelectorAll('.column, #stats-bar, #header');
+  const elements = document.querySelectorAll('#col-at-a-glance, .column, #stats-bar, #header');
   const baseDelay = tier === 'RECKLESS' ? 500 : tier === 'SAFETY' ? 2000 : 1000;
   elements.forEach((el, i) => {
     const timeout = setTimeout(() => {
@@ -479,7 +479,7 @@ export function debugEnding(variant, fast = false) {
   console.log(`[debugEnding] Playing ${variant} ending`);
 }
 
-function cleanup() {
+export function cleanup() {
   sequenceTimeouts.forEach(t => clearTimeout(t));
   sequenceTimeouts = [];
   sequenceActive = false;

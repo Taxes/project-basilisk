@@ -1,6 +1,6 @@
 import { BALANCE } from '../data/balance.js';
 import { gameState } from './game-state.js';
-import { getActiveCount } from './purchasable-state.js';
+import { getActiveCount, getCount } from './purchasable-state.js';
 
 const POOL_IDS = ['grad_student', 'junior_researcher', 'team_lead', 'elite_researcher'];
 
@@ -42,7 +42,7 @@ export function getPoolScalingMultiplier(usage) {
 export function getPoolGrowthRate(usage) {
   const t = BALANCE.TALENT_POOL_THRESHOLDS;
   const g = BALANCE.TALENT_POOL_GROWTH;
-  if (gameState.purchases?.dedicated_upskilling > 0) return g.UPSKILLING;
+  if (getCount('dedicated_upskilling') > 0) return g.UPSKILLING;
   if (usage < t.WARNING) return g.LOW;
   if (usage < t.DEPLETED) return g.MEDIUM;
   return g.HIGH;

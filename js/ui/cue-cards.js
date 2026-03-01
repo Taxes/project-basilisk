@@ -30,6 +30,17 @@ function buildStepCounter(stepDef) {
   return '';
 }
 
+// Build skip/hide button — main steps get "Skip tutorial", post-tutorial gets "Hide hints"
+function buildSkipHtml(stepDef) {
+  if (stepDef.phase === 'main') {
+    return '<button class="cue-card-skip">Skip tutorial</button>';
+  }
+  if (stepDef.phase === 'post') {
+    return '<button class="cue-card-skip">Hide hints</button>';
+  }
+  return '';
+}
+
 let backdropEl = null;
 let cardEl = null;
 let currentStepDef = null;
@@ -71,9 +82,7 @@ export function showCard(stepDef) {
   const stepCounter = buildStepCounter(stepDef);
   const bodyHtml = formatBody(stepDef.content.body);
   const buttonsHtml = buildButtons(stepDef);
-  const skipHtml = stepDef.phase === 'main'
-    ? '<a class="cue-card-skip">Skip tutorial</a>'
-    : '';
+  const skipHtml = buildSkipHtml(stepDef);
 
   const hasAdvanceGate = typeof stepDef.advance === 'function';
   // In review mode, action-gated steps show "Got it" so player can read and move on
@@ -162,9 +171,7 @@ export function replaceCard(stepDef) {
   const stepCounter = buildStepCounter(stepDef);
   const bodyHtml = formatBody(stepDef.content.body);
   const buttonsHtml = buildButtons(stepDef);
-  const skipHtml = stepDef.phase === 'main'
-    ? '<a class="cue-card-skip">Skip tutorial</a>'
-    : '';
+  const skipHtml = buildSkipHtml(stepDef);
 
   const hasAdvanceGate = typeof stepDef.advance === 'function';
   const showButtons = !hasAdvanceGate || stepDef.reviewMode;
@@ -200,9 +207,7 @@ export function showFollowUpCard(stepDef) {
   // Keep the same step counter
   const stepCounter = buildStepCounter(stepDef);
   const bodyHtml = formatBody(followUp.body);
-  const skipHtml = stepDef.phase === 'main'
-    ? '<a class="cue-card-skip">Skip tutorial</a>'
-    : '';
+  const skipHtml = buildSkipHtml(stepDef);
 
   // Follow-up cards have an advance gate but also show "Got it" as manual escape
   const dismissBtn = '<button class="cue-card-btn cue-card-btn-primary" data-action="dismiss">Got it</button>';
@@ -460,6 +465,22 @@ function unhighlightTarget() {
   highlightedAncestors = [];
 }
 
+// --- Toast ---
+
+function showSkipToast() {
+  const el = document.createElement('div');
+  el.className = 'cue-card-toast';
+  el.textContent = 'Tutorial skipped. Resume from Settings (gear icon, top-right).';
+  document.body.appendChild(el);
+  // Trigger reflow then add visible class for transition
+  el.offsetHeight; // eslint-disable-line no-unused-expressions
+  el.classList.add('visible');
+  setTimeout(() => {
+    el.classList.remove('visible');
+    setTimeout(() => el.remove(), 300);
+  }, 4000);
+}
+
 // --- Content formatting ---
 
 function formatBody(text) {
@@ -494,13 +515,13 @@ function handleAction(action) {
       hideCard();
       completeTutorialStep(stepDef.id, 'action');
       switchTab('dashboard');
-      gameState.paused = false;
+      // Stay paused — next tutorial card shows immediately and manages its own pause
       break;
 
     case 'skip_all':
       hideCard();
       skipTutorial();
-      gameState.paused = false;
+      // Stay paused — player hits Play when ready
       break;
 
     case 'dismiss':
@@ -526,7 +547,14 @@ function handleDismiss() {
 
 function handleSkip() {
   if (!currentStepDef) return;
+  const isWelcomeCard = currentStepDef.id === 1;
+  const source = currentStepDef.phase === 'post' ? 'post_tutorial' : 'main';
   hideCard();
-  skipTutorial();
-  gameState.paused = false;
+  skipTutorial(source);
+  showSkipToast();
+  // Welcome card: stay paused so player can orient (they hit Play when ready)
+  // Mid-tutorial: unpause since they're already playing
+  if (!isWelcomeCard && gameState.paused) {
+    gameState.paused = false;
+  }
 }

@@ -15,6 +15,7 @@ export function createDefaultGameState() {
     settings: {
       timeDisplay: 'game',  // 'game' (days) or 'real' (seconds)
     },
+    gameMode: null,  // 'arcade' | 'narrative' — permanent per save, null until selected
     phase: 1,
     timeElapsed: 0,
     lastTick: Date.now(),
@@ -154,6 +155,12 @@ export function createDefaultGameState() {
       autoTrain: false,
     },
 
+    // HR-driven culture shift automation (#850)
+    cultureShiftAutomation: {
+      enabled: false,
+      priority: 1,
+    },
+
     // Automation toggles (visible after buying operations_dept)
     autoHiringEnabled: true,
     autoComputeEnabled: true,
@@ -278,6 +285,14 @@ export function createDefaultGameState() {
     ceoFocus: {
       selectedActivity: 'research',  // 'grants' | 'research' | 'ir' | 'operations' | 'public_positioning'
       buildup: {
+        grants: 0,
+        research: 0,
+        ir: 0,
+        operations: 0,
+        public_positioning: 0,
+      },
+      mastery: {
+        grants: 0,
         research: 0,
         ir: 0,
         operations: 0,
@@ -416,76 +431,6 @@ export function createDefaultGameState() {
 // Global game state
 export let gameState = createDefaultGameState();
 
-// Backwards-compatibility shim for gameState.purchases
-// Allows legacy code (tests) to read/write via gameState.purchases[id]
-// by delegating to the new gameState.purchasables structure
-
-// Helper to ensure purchasable entry exists
-function ensurePurchasable(state, id) {
-  if (!state.purchasables) state.purchasables = {};
-  if (!state.purchasables[id]) {
-    state.purchasables[id] = {
-      count: 0,
-      furloughed: 0,
-      savedProgress: 0,
-      automation: { enabled: false, type: 'fixed', targetValue: 0, targetItem: null, priority: 1 },
-    };
-  }
-  return state.purchasables[id];
-}
-
-// Create a proxy that delegates property access to purchasables
-function createPurchasesProxy(state) {
-  return new Proxy({}, {
-    get(target, id) {
-      if (typeof id !== 'string') return undefined;
-      return state.purchasables?.[id]?.count ?? 0;
-    },
-    set(target, id, value) {
-      if (typeof id !== 'string') return false;
-      ensurePurchasable(state, id);
-      state.purchasables[id].count = value;
-      return true;
-    },
-    has(target, id) {
-      return typeof id === 'string' && state.purchasables?.[id]?.count > 0;
-    },
-    ownKeys() {
-      return Object.keys(state.purchasables || {});
-    },
-    getOwnPropertyDescriptor(target, id) {
-      if (state.purchasables?.[id]) {
-        return { configurable: true, enumerable: true, value: state.purchasables[id].count };
-      }
-      return undefined;
-    },
-  });
-}
-
-// Set up purchases as a getter/setter property that handles object assignment
-function setupPurchasesProperty(state) {
-  let proxy = createPurchasesProxy(state);
-  Object.defineProperty(state, 'purchases', {
-    configurable: true,
-    enumerable: false,
-    get() {
-      return proxy;
-    },
-    set(obj) {
-      // Handle assignment of plain objects (e.g., from tests)
-      // Populate purchasables from the assigned object's entries
-      if (obj && typeof obj === 'object') {
-        for (const [id, count] of Object.entries(obj)) {
-          ensurePurchasable(state, id);
-          state.purchasables[id].count = count;
-        }
-      }
-      // Always keep using the existing proxy for subsequent access
-    },
-  });
-}
-setupPurchasesProperty(gameState);
-
 // Prepare a save-optimized copy of gameState.
 // Strips computed values, normalizes senders, and strips read message content.
 export function prepareSaveData() {
@@ -602,13 +547,23 @@ export function loadGame() {
         }
         gameState.ceoFocus = {
           selectedActivity: 'research',
-          buildup: { research: 0, ir: 0, operations: 0, public_positioning: 0 },
+          buildup: { grants: 0, research: 0, ir: 0, operations: 0, public_positioning: 0 },
+          mastery: { grants: 0, research: 0, ir: 0, operations: 0, public_positioning: 0 },
           completedFundraiseCount: fundraiseCount,
         };
         // Migrate existing ops bonus into operations buildup
         if (loaded.opsBonus > 0) {
           gameState.ceoFocus.buildup.operations = loaded.opsBonus / (loaded.opsMaxBonus || 0.25);
           gameState.ceoFocus.selectedActivity = 'operations';
+        }
+      }
+      // Backfill mastery and grants buildup for saves predating v0.9.0
+      if (gameState.ceoFocus) {
+        if (gameState.ceoFocus.buildup && gameState.ceoFocus.buildup.grants === undefined) {
+          gameState.ceoFocus.buildup.grants = 0;
+        }
+        if (gameState.ceoFocus.mastery === undefined) {
+          gameState.ceoFocus.mastery = { grants: 0, research: 0, ir: 0, operations: 0, public_positioning: 0 };
         }
       }
       // Backfill completedFundraiseCount for saves that have ceoFocus but no count
@@ -810,6 +765,11 @@ export function loadGame() {
 
       // Rehydration is deferred to rehydrateMessages() so tutorial content
       // can be registered first (avoids circular-dependency timing issue).
+
+      // Save migration: HR culture shift automation (#850)
+      if (loaded.cultureShiftAutomation === undefined) {
+        gameState.cultureShiftAutomation = { enabled: false, priority: 1 };
+      }
 
       // Save migration: computed namespace (always reset on load - populated by game loop)
       gameState.computed = createDefaultGameState().computed;
@@ -1023,9 +983,6 @@ export function loadGame() {
       // to sync the focus queue ID counter. Done in main.js to avoid
       // circular import (game-state <- focus-queue -> game-state).
 
-      // Set up purchases property after loading
-      setupPurchasesProperty(gameState);
-
       // Re-sync window.gameState since loadGame creates a new state object
       if (typeof window !== 'undefined') {
         window.gameState = gameState;
@@ -1097,7 +1054,6 @@ export function resetGame() {
 
   gameState = createDefaultGameState();
   resetAnalytics();
-  setupPurchasesProperty(gameState);
   localStorage.removeItem('agi-incremental-save');
   // Update window.gameState to point to the new state object
   if (typeof window !== 'undefined') {
@@ -1138,7 +1094,6 @@ export function importGameState(state) {
   gameState = deepMerge(defaults, state);
   gameState.lastTick = Date.now();
   gameState.paused = true;
-  setupPurchasesProperty(gameState);
 
   // Update window reference
   if (typeof window !== 'undefined') {

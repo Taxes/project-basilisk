@@ -445,7 +445,7 @@ export const purchasables = [
     category: 'data',
     requires: { capability: 'dataset_licensing', track: 'capabilities' },
     focusDuration: 3,
-    flavorText: 'Somewhere, a very patient PhD is rating their 10,000th response on the impact of early 19th century Austrian-Hungarian business cycles on German expansionism.',
+    flavorText: 'Somewhere, a very patient PhD is rating their 10,000th response on the impact of late 19th century Austrian-Hungarian business cycles on German expansionism.',
   },
   {
     id: 'data_user_interaction',
@@ -534,9 +534,11 @@ export function getPurchaseCost(purchasable) {
   // Get strategic choice cost multiplier (for personnel)
   const strategicCostMult = purchasable.category === 'personnel' ? getPersonnelCostMultiplier() : 1.0;
 
+  const masteryDiscount = gameState.computed?.ceoFocus?.purchaseCostDiscount ?? 1;
+
   const cost = {};
   for (let resource in purchasable.baseCost) {
-    cost[resource] = Math.floor(purchasable.baseCost[resource] * scaling * costReduction * strategicCostMult);
+    cost[resource] = Math.floor(purchasable.baseCost[resource] * scaling * costReduction * strategicCostMult * masteryDiscount);
   }
 
   return cost;

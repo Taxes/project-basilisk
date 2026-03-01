@@ -12,13 +12,10 @@ import {
   alignmentWarningMessages, researchMilestoneMessages, fundingMessages,
   boardMessages, moratoriumMessages, creditWarningMessage,
   creditWarningPreAdaMessage, alignmentTaxActionMessage,
-  kenJobApplicationMessage,
+  kenJobApplicationMessage, trackCompletionMessage,
 } from './content/message-content.js';
 import { farewellEntries } from './content/farewell-content.js';
 import { AI_REQUESTS } from './content/ai-requests.js';
-import { phase1Events } from './content/events-phase1.js';
-import { phase2Events } from './content/events-phase2.js';
-import { phase3Events } from './content/events-phase3.js';
 
 // Registry: triggeredBy -> { body, signature, choices }
 let registry = null;
@@ -167,21 +164,18 @@ function ensureBuilt() {
     });
   }
 
-  // --- 5. Events ---
-  const allEvents = [...phase1Events, ...phase2Events, ...phase3Events];
-  for (const event of allEvents) {
-    const messageChoices = event.choices?.map(choice => ({
-      id: choice.id || choice.text.substring(0, 20).replace(/\s+/g, '_').toLowerCase(),
-      label: choice.text,
-      effects: choice.effects || {},
-    })) || [];
-
-    register(`event:${event.id}`, {
-      body: event.text,
-      signature: null,
-      choices: messageChoices,
-    });
-  }
+  // --- 5. Legacy event stubs (rehydration only) ---
+  // The legacy event system was removed (#833). Only final_warning could have
+  // fired in player saves (time_elapsed trigger leaked into Arc 1).
+  register('event:final_warning', {
+    body: 'A coalition of AI researchers has published an open letter calling for a pause on superintelligence development. Some of your own team members have signed it. The media is calling it a \'Pivotal moment for humanity.\' The pressure to respond is immense.',
+    signature: null,
+    choices: [
+      { id: 'sign_pause', label: 'Sign the pause - some things are more important than being first', effects: {} },
+      { id: 'reject_publicly', label: 'Publicly reject the pause - the risks of stopping outweigh the risks of continuing', effects: {} },
+      { id: 'quiet_continue', label: 'Quietly continue - neither sign nor reject, maintain plausible deniability', effects: {} },
+    ],
+  });
 
   // --- 6. Phase completion ---
   register('phase_completion_1', {
@@ -257,6 +251,16 @@ Your call on next steps.`;
         { id: 'cleanup', label: 'Temporarily pause research to clean up data',
           effects: `Pause all research ${pauseDuration} days, purge 50% synthetic data, furlough generators` },
       ],
+    };
+  }
+
+  // Dynamic: track completion messages
+  if (triggeredBy.startsWith('track_complete_')) {
+    const trackName = contentParams?.trackName ?? triggeredBy.replace('track_complete_', '');
+    return {
+      body: trackCompletionMessage.body(trackName),
+      signature: trackCompletionMessage.signature,
+      choices: null,
     };
   }
 

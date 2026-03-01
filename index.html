@@ -130,6 +130,9 @@
           <div id="ceo-focus-bar-container" class="progress-bar-container" style="visibility: hidden">
             <div id="ceo-focus-bar" class="progress-bar"></div>
           </div>
+          <div id="ceo-focus-mastery-container" class="progress-bar-container mastery-bar-container" style="visibility: hidden">
+            <div id="ceo-focus-mastery-bar" class="progress-bar mastery-bar-fill"></div>
+          </div>
           <div id="ceo-focus-selector" class="ceo-focus-selector">
             <!-- Populated by JS -->
           </div>
@@ -496,6 +499,15 @@
                       </div>
                       <div id="allocation-note" class="allocation-note dim hidden"></div>
                       <button id="culture-shift-btn" class="btn-small hidden">Focus on Culture Shift</button>
+                      <div id="culture-auto-controls" class="automation-panel hidden">
+                        <div class="automation-controls">
+                          <input type="checkbox" id="culture-auto-enable">
+                          <span class="automation-label">HR → Culture Shift</span>
+                          <span class="automation-label">priority</span>
+                          <input type="text" id="culture-auto-priority" class="automation-input automation-priority-input" inputmode="numeric" value="1">
+                          <span id="culture-auto-status" class="automation-status-inline dim"></span>
+                        </div>
+                      </div>
                       <div id="passive-drift-estimate" class="dim hidden"></div>
                     </div>
                   </div>
@@ -696,15 +708,6 @@
     <!-- Notifications -->
     <div id="notification-container"></div>
 
-    <!-- Event Modal (hidden by default) -->
-    <div id="event-modal" class="modal hidden">
-      <div class="modal-content">
-        <h2 id="event-title"></h2>
-        <p id="event-text"></p>
-        <div id="event-choices"></div>
-      </div>
-    </div>
-
     <!-- Stats Modal -->
     <!-- Settings Modal (with tabbed changelog, stats) -->
     <div id="settings-modal" class="modal hidden">
@@ -718,6 +721,12 @@
         </div>
         <div id="settings-tab-settings" class="settings-tab-content">
           <div class="settings-grid">
+            <div class="settings-item" id="game-mode-display">
+              <span class="settings-label">Game Mode</span>
+              <div class="settings-control">
+                <span id="game-mode-value" class="settings-hotkey"></span>
+              </div>
+            </div>
             <div class="settings-item">
               <span class="settings-label">Time Display</span>
               <div class="settings-control">
@@ -732,7 +741,7 @@
               </div>
             </div>
           </div>
-          <div class="settings-controls-section">
+          <div class="settings-section">
             <div class="settings-section-header">Controls</div>
             <div class="settings-hotkey-list">
               <div class="settings-hotkey"><kbd>Space</kbd> Pause / Unpause</div>
@@ -746,7 +755,7 @@
               <div class="settings-hotkey">Hover over stats and ledger rows for breakdowns</div>
             </div>
           </div>
-          <div class="settings-tutorial-section">
+          <div class="settings-section settings-tutorial-section">
             <div class="settings-section-header">Tutorial</div>
             <div class="save-actions" id="tutorial-settings-buttons">
               <button id="tutorial-resume-button" class="btn-settings" disabled>Resume Tutorial</button>
@@ -755,7 +764,7 @@
             </div>
             <div id="tutorial-status" class="settings-hotkey" style="margin-top: 4px;"></div>
           </div>
-          <div class="settings-save-section">
+          <div class="settings-section">
             <div class="settings-section-header">Save Data</div>
             <div class="save-actions">
               <button id="save-now-button" class="btn-settings">Save Now</button>
@@ -781,7 +790,7 @@
               <div id="import-error" class="import-error hidden"></div>
             </div>
           </div>
-          <div class="settings-danger-zone">
+          <div class="settings-section settings-danger-zone">
             <button id="hard-reset-button" class="btn-danger">Reset All Progress</button>
           </div>
         </div>
