@@ -10,7 +10,7 @@ export const applicationsTrack = {
       id: 'chatbot_assistant',
       name: 'Chatbot Assistant',
       tier: 1,
-      threshold: 4000,
+      threshold: 2000,
       isMainline: true,  // Customer-facing product - counts for demand multiplier
       demandMultiplier: 3.0,
       requires: ['basic_transformer'],
@@ -26,7 +26,7 @@ export const applicationsTrack = {
       id: 'image_generation',
       name: 'Image Generation',
       tier: 1,
-      threshold: 10000,
+      threshold: 8000,
       isMainline: true,  // Customer-facing product - counts for demand multiplier
       demandMultiplier: 1.5,
       referencePriceMultiplier: 1.3,

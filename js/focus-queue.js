@@ -316,7 +316,7 @@ function processPurchaseItem(item, effectiveDelta, deltaTime, speed) {
   // Use reactivateTime for unfurlough (reactivating a furloughed unit)
   const state = getPurchasableState(item.target);
   if (state.furloughed > 0) {
-    duration = purchasable.reactivateTime || purchasable.focusDuration * 0.5;
+    duration = purchasable.reactivateTime ?? purchasable.focusDuration * 0.5;
   }
 
   if (purchasable.category === 'personnel' || purchasable.category === 'compute') {
@@ -589,7 +589,7 @@ function completeFundraise(item) {
   const { raiseAmount, effectiveEquity } = calculateFundraisePreview(round, annualRevenue, liveMultiplier, undefined, irBaseBonus, irMultFraction, irCapMult);
 
   // Tranche disbursement: money arrives over time instead of instantly
-  const disbursementDuration = round.disbursementDuration || 1; // fallback to instant
+  const disbursementDuration = round.disbursementDuration ?? 1; // fallback to instant
   const rate = raiseAmount / disbursementDuration;
   if (!gameState.disbursements) gameState.disbursements = [];
   gameState.disbursements.push({
@@ -753,7 +753,7 @@ export function enqueueFurlough(purchasableId, quantity = 1, priority = false) {
     .filter(item => item.type === 'furlough' && item.target === purchasableId)
     .reduce((sum, item) => sum + (item.quantity - item.completed), 0);
 
-  const duration = purchasable.furloughTime || purchasable.focusDuration * 0.5;
+  const duration = purchasable.furloughTime ?? purchasable.focusDuration * 0.5;
   const toFurlough = Math.min(quantity, active - queuedFurloughs);
   if (toFurlough <= 0) return null;
 

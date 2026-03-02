@@ -3,6 +3,25 @@
 
 export const changelog = [
   {
+    version: '0.9.1',
+    date: '2026-03-01',
+    changes: [
+      {
+        section: 'Content',
+        items: [
+          'Expanded post-breakthrough tutorial with information on new buyables',
+          'Split main tutorial and follow-up hints systems',
+        ],
+      },
+      {
+        section: 'Balance',
+        items: [
+          'Reduced requirements for early game research',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.9.0',
     date: '2026-03-01',
     changes: [

@@ -1062,7 +1062,7 @@ export function updateFundraiseDisplay() {
           }
         }
         if (round.floorMultiplier == null || round.floorMultiplier < round.startingMultiplier) {
-          html += `<div class="tooltip-row dim"><span>Decays 50% every ${formatDuration(round.halfLife || 1800)}</span></div>`;
+          html += `<div class="tooltip-row dim"><span>Decays 50% every ${formatDuration(round.halfLife ?? 1800)}</span></div>`;
         }
         html += `<div class="tooltip-row dim"><span>Started at ${Math.round(startMult)}x</span></div>`;
         return html;

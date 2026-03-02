@@ -4,7 +4,7 @@
 // Game auto-pauses when a card shows. Backdrop blocks interaction (no click-to-dismiss).
 
 import { gameState } from '../game-state.js';
-import { completeTutorialStep, skipTutorial, showTutorialStep } from '../tutorial-state.js';
+import { completeTutorialStep, skipTutorial, disableHints, showTutorialStep } from '../tutorial-state.js';
 import { switchTab } from './tab-navigation.js';
 import { TUTORIAL_STEPS, MAJOR_STEP_COUNT, STEP_NAMES } from '../content/tutorial-steps.js';
 import { isDebugMode } from '../debug-commands.js';
@@ -467,10 +467,10 @@ function unhighlightTarget() {
 
 // --- Toast ---
 
-function showSkipToast() {
+function showSkipToast(message = 'Tutorial skipped. Resume from Settings (gear icon, top-right).') {
   const el = document.createElement('div');
   el.className = 'cue-card-toast';
-  el.textContent = 'Tutorial skipped. Resume from Settings (gear icon, top-right).';
+  el.textContent = message;
   document.body.appendChild(el);
   // Trigger reflow then add visible class for transition
   el.offsetHeight; // eslint-disable-line no-unused-expressions
@@ -548,12 +548,21 @@ function handleDismiss() {
 function handleSkip() {
   if (!currentStepDef) return;
   const isWelcomeCard = currentStepDef.id === 1;
-  const source = currentStepDef.phase === 'post' ? 'post_tutorial' : 'main';
-  hideCard();
-  skipTutorial(source);
-  showSkipToast();
+  const isPostTutorial = currentStepDef.phase === 'post';
+  hideCard();  // clears currentStepDef
+
+  if (isPostTutorial) {
+    // Post-tutorial hints — disable hints only, don't touch main tutorial state
+    disableHints('post_tutorial');
+    showSkipToast('Hints hidden. Re-enable from Settings (gear icon, top-right).');
+  } else {
+    // Main tutorial — skip the sequential walkthrough
+    skipTutorial('main');
+    showSkipToast('Tutorial skipped. Resume from Settings (gear icon, top-right).');
+  }
+
   // Welcome card: stay paused so player can orient (they hit Play when ready)
-  // Mid-tutorial: unpause since they're already playing
+  // Mid-tutorial / post-tutorial: unpause since they're already playing
   if (!isWelcomeCard && gameState.paused) {
     gameState.paused = false;
   }

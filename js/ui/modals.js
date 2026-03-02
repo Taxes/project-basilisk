@@ -17,7 +17,7 @@ import { changelog } from '../changelog.js';
 import { VERSION } from '../version.js';
 import { attachTooltip } from './stats-tooltip.js';
 import { $ } from '../utils/dom-cache.js';
-import { resumeTutorial, restartTutorial, skipTutorial } from '../tutorial-state.js';
+import { restartTutorial, skipTutorial, disableHints, MAIN_SEQUENCE_END } from '../tutorial-state.js';
 import { requestFullUpdate } from './signals.js';
 import { applyDebugSettings } from '../debug-commands.js';
 import { getDebugMessageStatus } from '../tutorial-messages.js';
@@ -920,8 +920,13 @@ export function initSettingsModal() {
   initSaveDataSection();
 
   // Tutorial settings
-  document.getElementById('tutorial-resume-button')?.addEventListener('click', () => {
-    resumeTutorial();
+  document.getElementById('tutorial-toggle-button')?.addEventListener('click', () => {
+    if (gameState.tutorial.dismissed) {
+      gameState.tutorial.dismissed = false;
+      gameState.tutorial.disabled = false;
+    } else {
+      skipTutorial('settings');
+    }
     updateTutorialSettingsUI();
   });
 
@@ -930,33 +935,54 @@ export function initSettingsModal() {
     updateTutorialSettingsUI();
   });
 
-  document.getElementById('tutorial-off-button')?.addEventListener('click', () => {
-    skipTutorial('settings');
+  document.getElementById('hints-toggle-button')?.addEventListener('click', () => {
+    if (gameState.tutorial.hintsDisabled) {
+      gameState.tutorial.hintsDisabled = false;
+    } else {
+      disableHints('settings');
+    }
     updateTutorialSettingsUI();
   });
 }
 
 function updateTutorialSettingsUI() {
   const t = gameState.tutorial;
-  const resumeBtn = document.getElementById('tutorial-resume-button');
+  const toggleBtn = document.getElementById('tutorial-toggle-button');
   const statusEl = document.getElementById('tutorial-status');
+  const hintsToggleBtn = document.getElementById('hints-toggle-button');
+  const hintsStatusEl = document.getElementById('hints-status');
 
-  if (resumeBtn) {
-    resumeBtn.disabled = !(t.dismissed && t.currentStep > 0);
+  // Tutorial row
+  const isOff = t.dismissed || t.disabled;
+  const isComplete = t.currentStep >= MAIN_SEQUENCE_END;
+
+  if (toggleBtn) {
+    toggleBtn.textContent = isOff ? 'On' : 'Off';
+    // No toggle needed once complete — only Restart makes sense
+    toggleBtn.disabled = isComplete;
   }
 
   if (statusEl) {
-    if (t.dismissed) {
-      if (t.currentStep >= 26) {
-        statusEl.textContent = 'Tutorial & hints hidden';
-      } else {
-        statusEl.textContent = `Tutorial paused at step ${t.currentStep + 1}`;
-      }
+    if (isComplete) {
+      statusEl.textContent = 'Complete';
+    } else if (isOff && t.currentStep > 0) {
+      statusEl.textContent = `Off — step ${t.currentStep + 1}`;
+    } else if (isOff) {
+      statusEl.textContent = 'Off';
     } else if (t.currentStep > 0) {
-      statusEl.textContent = `Tutorial active — step ${t.currentStep + 1}`;
+      statusEl.textContent = `Active — step ${t.currentStep + 1}`;
     } else {
       statusEl.textContent = '';
     }
+  }
+
+  // Hints row
+  if (hintsToggleBtn) {
+    hintsToggleBtn.textContent = t.hintsDisabled ? 'Re-enable Hints' : 'Disable Hints';
+  }
+
+  if (hintsStatusEl) {
+    hintsStatusEl.textContent = t.hintsDisabled ? 'Disabled' : 'Enabled';
   }
 }
 

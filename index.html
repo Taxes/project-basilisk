@@ -756,13 +756,22 @@
             </div>
           </div>
           <div class="settings-section settings-tutorial-section">
-            <div class="settings-section-header">Tutorial</div>
-            <div class="save-actions" id="tutorial-settings-buttons">
-              <button id="tutorial-resume-button" class="btn-settings" disabled>Resume Tutorial</button>
-              <button id="tutorial-restart-button" class="btn-settings">Restart Tutorial</button>
-              <button id="tutorial-off-button" class="btn-settings">Tutorial Off</button>
+            <div class="settings-section-header">Tutorial & Hints</div>
+            <div class="settings-tutorial-row">
+              <span class="settings-tutorial-label">Tutorial</span>
+              <div class="save-actions" id="tutorial-settings-buttons">
+                <button id="tutorial-toggle-button" class="btn-settings">Off</button>
+                <button id="tutorial-restart-button" class="btn-settings">Restart</button>
+              </div>
+              <span id="tutorial-status" class="settings-hotkey"></span>
             </div>
-            <div id="tutorial-status" class="settings-hotkey" style="margin-top: 4px;"></div>
+            <div class="settings-tutorial-row">
+              <span class="settings-tutorial-label">Hints</span>
+              <div class="save-actions">
+                <button id="hints-toggle-button" class="btn-settings">Disable Hints</button>
+              </div>
+              <span id="hints-status" class="settings-hotkey"></span>
+            </div>
           </div>
           <div class="settings-section">
             <div class="settings-section-header">Save Data</div>

@@ -1,5 +1,5 @@
 // Tutorial Step Definitions
-// 35-step cue card tutorial: 26 sequential onboarding + 9 post-tutorial.
+// 40-step cue card tutorial: 31 sequential onboarding + 9 post-tutorial.
 // Steps are either "major" (player-facing, counted in "Step N of M") or
 // "nav" (tab-navigation, skipped if player is already on the correct tab).
 // See docs/design-docs/onboarding-spike.md for full design.
@@ -11,45 +11,22 @@ import { switchSubTab } from '../ui/infrastructure.js';
 
 // Step name lookup for analytics
 export const STEP_NAMES = {
-  1: 'welcome',
-  2: 'stats_resources',
-  3: 'stats_funding',
-  4: 'sidebar_intro',
-  5: 'nav_personnel',
-  6: 'hire_associates',
-  7: 'nav_compute',
-  8: 'buy_gpus',
-  9: 'nav_personnel_2',
-  10: 'hire_more',
-  11: 'funding_explain',
-  12: 'research_milestones',
-  13: 'nav_finance',
-  14: 'fundraising_explain',
-  15: 'nav_personnel_3',
-  16: 'research_allocation',
-  17: 'nav_compute_2',
-  18: 'compute_allocation',
-  19: 'nav_finance_2',
-  20: 'token_pricing',
-  21: 'revenue_target',
-  22: 'nav_finance_3',
-  23: 'seed_fundraise',
-  24: 'nav_admin',
-  25: 'admin_tab',
-  26: 'tutorial_complete',
-  27: 'nav_data',
-  28: 'data_explain',
-  29: 'competitor_awareness',
-  30: 'data_crisis',
-  31: 'nav_admin_automation',
-  32: 'automation_teams',
-  33: 'nav_personnel_automation',
-  34: 'automation_controls',
-  35: 'synthetic_unlock',
+  1: 'welcome', 2: 'stats_resources', 3: 'stats_funding', 4: 'sidebar_intro',
+  5: 'nav_personnel', 6: 'hire_associates', 7: 'nav_compute', 8: 'buy_gpus',
+  9: 'nav_personnel_2', 10: 'hire_more', 11: 'funding_explain', 12: 'research_milestones',
+  13: 'breakthrough_congrats', 14: 'nav_finance', 15: 'fundraising_explain',
+  16: 'nav_personnel_3', 17: 'research_allocation', 18: 't2_research',
+  19: 'nav_compute_t2', 20: 't2_compute', 21: 'funding_is_fuel',
+  22: 'nav_compute_2', 23: 'compute_allocation', 24: 'nav_finance_2',
+  25: 'token_pricing', 26: 'revenue_target', 27: 'nav_finance_3',
+  28: 'seed_fundraise', 29: 'nav_admin', 30: 'admin_tab', 31: 'tutorial_complete',
+  32: 'nav_data', 33: 'data_explain', 34: 'competitor_awareness',
+  35: 'data_crisis', 36: 'nav_admin_automation', 37: 'automation_teams',
+  38: 'nav_personnel_automation', 39: 'automation_controls', 40: 'synthetic_unlock',
 };
 
 // Player-visible step count (only major steps in main phase)
-export const MAJOR_STEP_COUNT = 17;
+export const MAJOR_STEP_COUNT = 21;
 
 // Helper: check if a capability is unlocked in a specific track
 function hasCapability(gs, trackName, capId) {
@@ -259,17 +236,32 @@ export const TUTORIAL_STEPS = [
     },
   },
 
+  // ===== Phase 2b: Post-breakthrough congratulations =====
+  {
+    id: 13,
+    name: 'breakthrough_congrats',
+    phase: 'main',
+    trigger: (gs) => gs.tutorial.currentStep >= 12 && hasCapability(gs, 'capabilities', 'basic_transformer'),
+    target: '#col-research',
+    position: 'left',
+    pauseOnShow: true,
+    unpauseOnDismiss: true,
+    content: {
+      body: `Your first breakthrough: Basic Transformer Architecture. Each breakthrough unlocks new personnel, equipment, and research paths. This one comes with a **Research Grant** ($4,000/d) to fund the next push.\nThe lab just got a lot more interesting.`,
+      buttons: [{ label: 'Got it', action: 'dismiss' }],
+    },
+  },
+
   // ===== Phase 3: Post-breakthrough =====
-  navStep(13, 'nav_finance',
+  navStep(14, 'nav_finance',
     'finance',
     `You've hit your first breakthrough. Click **Finance** to see how fundraising works.`,
-    (gs) => hasCapability(gs, 'capabilities', 'basic_transformer'),
   ),
   {
-    id: 14,
+    id: 15,
     name: 'fundraising_explain',
     phase: 'main',
-    trigger: (gs) => gs.tutorial.currentStep >= 13,
+    trigger: (gs) => gs.tutorial.currentStep >= 14,
     target: '#fundraise-section',
     position: 'right',
     pauseOnShow: true,
@@ -279,35 +271,88 @@ export const TUTORIAL_STEPS = [
       buttons: [{ label: 'Got it', action: 'dismiss' }],
     },
   },
-  navStep(15, 'nav_personnel_3',
+  navStep(16, 'nav_personnel_3',
     'personnel',
     `Head to **Personnel** to set your research allocation.`,
   ),
   {
-    id: 16,
+    id: 17,
     name: 'research_allocation',
     phase: 'main',
-    trigger: (gs) => gs.tutorial.currentStep >= 15,
+    trigger: (gs) => gs.tutorial.currentStep >= 16,
     target: '#research-allocation-section',
     position: 'left',
     pauseOnShow: true,
     unpauseOnDismiss: false,
     content: {
-      body: `You can now split research between **Capabilities** and **Applications**.\n__Set Applications to around 40%__ to start working toward your first product (Chatbot Assistant).\nYour team doesn't pivot instantly, by the way. The larger the lab, the slower the culture shift. You can focus on Culture Shift to speed it up.\nThen wait for your first application to unlock. If you have extra funding, you can buy personnel or compute to speed this up.`,
+      body: `You can now split research between **Capabilities** and **Applications**.\n__Set Applications to around 40%__ to start working toward your first product (Chatbot Assistant).\nYour team doesn't pivot instantly. The larger the lab, the slower the culture shift. You can focus on **Culture Shift** to speed it up.\nWhile you wait, invest in more researchers and compute. Your breakthrough unlocked higher-tier hires that make the whole team more effective.`,
       buttons: [{ label: 'Got it', action: 'dismiss' }],
     },
     advance: (gs) => (gs.targetAllocation?.applications ?? gs.tracks.applications.researcherAllocation) >= 0.20,
   },
-  navStep(17, 'nav_compute_2',
+  // ===== Phase 3b: T2 purchasables =====
+  {
+    id: 18,
+    name: 't2_research',
+    phase: 'main',
+    trigger: (gs) => gs.tutorial.currentStep >= 17,
+    target: '.compact-purchase-card[data-purchase-id="junior_researcher"]',
+    position: 'right',
+    pauseOnShow: true,
+    unpauseOnDismiss: false,
+    content: {
+      body: `**Research Scientists** are a tier above Research Associates. They do their own research, but they also boost the output of every Associate in the lab. Higher-tier personnel amplify all tiers below them.\n__Queue up a Research Scientist__ to start compounding your research output.`,
+      buttons: [{ label: 'Got it', action: 'dismiss' }],
+    },
+    advance: () => getCount('junior_researcher') + getQueuedPending('junior_researcher') >= 1,
+  },
+  navStep(19, 'nav_compute_t2',
+    'compute',
+    `New compute options are available. Head to **Compute**.`,
+  ),
+  {
+    id: 20,
+    name: 't2_compute',
+    phase: 'main',
+    trigger: (gs) => gs.tutorial.currentStep >= 19,
+    target: '.compact-purchase-card[data-purchase-id="gpu_datacenter"]',
+    position: 'right',
+    pauseOnShow: true,
+    unpauseOnDismiss: false,
+    content: {
+      body: `**GPU Clusters** deliver more compute per dollar than Consumer GPUs. They also save focus time. One cluster replaces several consumer units you'd otherwise queue individually.\nAs your lab scales, upgrading to higher tiers beats buying more of the cheap stuff. __Queue up a GPU Cluster__.`,
+      buttons: [{ label: 'Got it', action: 'dismiss' }],
+    },
+    advance: () => getCount('gpu_datacenter') + getQueuedPending('gpu_datacenter') >= 1,
+  },
+
+  // ===== Phase 3c: Funding-as-fuel reminder =====
+  {
+    id: 21,
+    name: 'funding_is_fuel',
+    phase: 'main',
+    trigger: (gs) => gs.tutorial.currentStep >= 20,
+    target: null,
+    position: 'center',
+    pauseOnShow: true,
+    unpauseOnDismiss: true,
+    content: {
+      body: `Your funding balance isn't a savings account — it's fuel. Every dollar sitting idle is a dollar your competitors are spending.\nKeep buying **compute** and **personnel**. Scaling your lab is how you outpace the competition. Hoarding cash while others invest is the fastest way to fall behind.`,
+      buttons: [{ label: 'Got it', action: 'dismiss' }],
+    },
+  },
+
+  // ===== Phase 4: Products & Revenue =====
+  navStep(22, 'nav_compute_2',
     'compute',
     `Your Chatbot is ready. Head to **Compute** to start serving it to customers.`,
     (gs) => hasCapability(gs, 'applications', 'chatbot_assistant'),
   ),
   {
-    id: 18,
+    id: 23,
     name: 'compute_allocation',
     phase: 'main',
-    trigger: (gs) => gs.tutorial.currentStep >= 17,
+    trigger: (gs) => gs.tutorial.currentStep >= 22,
     target: '#compute-allocation-section',
     position: 'right',
     pauseOnShow: true,
@@ -318,15 +363,15 @@ export const TUTORIAL_STEPS = [
     },
     advance: (gs) => gs.resources.computeAllocation <= 0.70,
   },
-  navStep(19, 'nav_finance_2',
+  navStep(24, 'nav_finance_2',
     'finance',
     `Time to set your pricing. Click **Finance**.`,
   ),
   {
-    id: 20,
+    id: 25,
     name: 'token_pricing',
     phase: 'main',
-    trigger: (gs) => gs.tutorial.currentStep >= 19,
+    trigger: (gs) => gs.tutorial.currentStep >= 24,
     target: '#pricing-panel',
     position: 'right',
     pauseOnShow: true,
@@ -345,10 +390,10 @@ export const TUTORIAL_STEPS = [
     },
   },
   {
-    id: 21,
+    id: 26,
     name: 'revenue_target',
     phase: 'main',
-    trigger: (gs) => gs.tutorial.currentStep >= 20,
+    trigger: (gs) => gs.tutorial.currentStep >= 25,
     target: '#fundraise-section',
     position: 'right',
     pauseOnShow: true,
@@ -358,16 +403,16 @@ export const TUTORIAL_STEPS = [
       buttons: [{ label: 'Got it', action: 'dismiss' }],
     },
   },
-  navStep(22, 'nav_finance_3',
+  navStep(27, 'nav_finance_3',
     'finance',
     `Your Seed Round is ready. Head to **Finance** to raise capital.`,
     (gs) => gs.fundraiseRounds?.seed?.available,
   ),
   {
-    id: 23,
+    id: 28,
     name: 'seed_fundraise',
     phase: 'main',
-    trigger: (gs) => gs.tutorial.currentStep >= 22 && gs.fundraiseRounds?.seed?.available,
+    trigger: (gs) => gs.tutorial.currentStep >= 27 && gs.fundraiseRounds?.seed?.available,
     target: '#fundraise-section',
     position: 'right',
     pauseOnShow: true,
@@ -377,16 +422,16 @@ export const TUTORIAL_STEPS = [
       buttons: [{ label: 'Got it', action: 'dismiss' }],
     },
   },
-  navStep(24, 'nav_admin',
+  navStep(29, 'nav_admin',
     'admin',
     `**Administration** is now available. Click **Admin** to take a look.`,
     (gs) => gs.fundraiseRounds?.seed?.raised,
   ),
   {
-    id: 25,
+    id: 30,
     name: 'admin_tab',
     phase: 'main',
-    trigger: (gs) => gs.tutorial.currentStep >= 24,
+    trigger: (gs) => gs.tutorial.currentStep >= 29,
     target: '#admin-tab-content',
     position: 'right',
     pauseOnShow: true,
@@ -397,10 +442,10 @@ export const TUTORIAL_STEPS = [
     },
   },
   {
-    id: 26,
+    id: 31,
     name: 'tutorial_complete',
     phase: 'main',
-    trigger: (gs) => gs.tutorial.currentStep >= 25,
+    trigger: (gs) => gs.tutorial.currentStep >= 30,
     target: null,
     position: 'center',
     pauseOnShow: true,
@@ -413,7 +458,7 @@ export const TUTORIAL_STEPS = [
 
   // ===== Post-tutorial (standalone triggers) =====
   {
-    id: 27,
+    id: 32,
     name: 'nav_data',
     phase: 'post',
     major: false,
@@ -429,7 +474,7 @@ export const TUTORIAL_STEPS = [
     advance: () => isSubTabActive('data'),
   },
   {
-    id: 28,
+    id: 33,
     name: 'data_explain',
     phase: 'post',
     trigger: (gs) => gs.data.dataTabRevealed && isSubTabActive('data'),
@@ -443,7 +488,7 @@ export const TUTORIAL_STEPS = [
     },
   },
   {
-    id: 29,
+    id: 34,
     name: 'competitor_awareness',
     phase: 'post',
     trigger: (gs) => gs.fundraiseRounds?.series_a?.raised,
@@ -459,7 +504,7 @@ export const TUTORIAL_STEPS = [
 
   // ===== Data crisis =====
   {
-    id: 30,
+    id: 35,
     name: 'data_crisis',
     phase: 'post',
     trigger: (gs) => gs.data.dataTabRevealed && (gs.data.quality ?? 1) <= 0.54,
@@ -475,7 +520,7 @@ export const TUTORIAL_STEPS = [
 
   // ===== Automation sequence =====
   {
-    id: 31,
+    id: 36,
     name: 'nav_admin_automation',
     phase: 'post',
     major: false,
@@ -491,10 +536,10 @@ export const TUTORIAL_STEPS = [
     advance: () => isSubTabActive('admin'),
   },
   {
-    id: 32,
+    id: 37,
     name: 'automation_teams',
     phase: 'post',
-    trigger: (gs) => gs.tutorial.completedPostSteps.includes(31)
+    trigger: (gs) => gs.tutorial.completedPostSteps.includes(36)
       && getCount('operations_dept') >= 1 && isSubTabActive('admin'),
     target: '.compact-purchase-card[data-purchase-id="hr_team"]',
     position: 'right',
@@ -506,11 +551,11 @@ export const TUTORIAL_STEPS = [
     },
   },
   {
-    id: 33,
+    id: 38,
     name: 'nav_personnel_automation',
     phase: 'post',
     major: false,
-    trigger: (gs) => gs.tutorial.completedPostSteps.includes(32)
+    trigger: (gs) => gs.tutorial.completedPostSteps.includes(37)
       && getCount('operations_dept') >= 1,
     target: '.sub-tab[data-category="personnel"]',
     position: 'below',
@@ -523,10 +568,10 @@ export const TUTORIAL_STEPS = [
     advance: () => isSubTabActive('personnel'),
   },
   {
-    id: 34,
+    id: 39,
     name: 'automation_controls',
     phase: 'post',
-    trigger: (gs) => gs.tutorial.completedPostSteps.includes(33)
+    trigger: (gs) => gs.tutorial.completedPostSteps.includes(38)
       && getCount('operations_dept') >= 1 && isSubTabActive('personnel'),
     target: '.compact-purchase-card[data-purchase-id="grad_student"] .automation-panel',
     position: 'right',
@@ -540,7 +585,7 @@ export const TUTORIAL_STEPS = [
 
   // ===== Synthetic data unlock =====
   {
-    id: 35,
+    id: 40,
     name: 'synthetic_unlock',
     phase: 'post',
     trigger: (gs) => hasCapability(gs, 'capabilities', 'synthetic_data'),

@@ -22,12 +22,12 @@ export function initTutorialController() {
 export function checkTutorialSteps() {
   if (!initialized) return;
 
-  // Main sequence (sequential, steps 1-26)
+  // Main sequence (sequential, steps 1-30)
   if (isTutorialActive()) {
     checkMainSequence();
   }
 
-  // Post-tutorial standalone steps (27+)
+  // Post-tutorial standalone steps (31+)
   if (isTutorialEnabled()) {
     checkPostTutorialSteps();
   }

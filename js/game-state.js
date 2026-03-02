@@ -217,14 +217,19 @@ export function createDefaultGameState() {
     },
 
     // Tutorial system (cue card onboarding)
+    // State model:
+    //   dismissed    — main sequence (1-30) skipped/completed. Set by skipTutorial(), cleared by resume/restart.
+    //   hintsDisabled — post-tutorial hints (31+) hidden. Set by disableHints(), cleared by restart.
+    //   disabled     — everything off (test harness only). Never cleared in production.
     tutorial: {
       currentStep: 0,          // last completed step (0 = none)
       dismissed: false,         // player clicked "Skip tutorial" (can resume from Settings)
-      disabled: false,          // player turned it off in Settings
+      hintsDisabled: false,     // player clicked "Hide hints" on a post-tutorial card
+      disabled: false,          // test harness only — suppresses everything
       active: false,            // a card is currently showing
       shownStep: 0,             // step currently displayed (0 = none)
       completedPostSteps: [],   // IDs of completed post-tutorial standalone steps
-      tutorialFormat: 3,        // save migration marker (1 = 23-step, 2 = 25-step, 3 = 26-step)
+      tutorialFormat: 6,        // save migration marker (1 = 23-step, 2 = 25-step, 3 = 26-step, 4 = 30-step, 5 = hints-decoupled, 6 = 31-step funding-is-fuel)
     },
 
     // Event tracking
@@ -553,7 +558,7 @@ export function loadGame() {
         };
         // Migrate existing ops bonus into operations buildup
         if (loaded.opsBonus > 0) {
-          gameState.ceoFocus.buildup.operations = loaded.opsBonus / (loaded.opsMaxBonus || 0.25);
+          gameState.ceoFocus.buildup.operations = loaded.opsBonus / (loaded.opsMaxBonus ?? 0.25);
           gameState.ceoFocus.selectedActivity = 'operations';
         }
       }
@@ -883,18 +888,18 @@ export function loadGame() {
       if (!loaded.tutorial) {
         // Infer progress from game state so existing players don't see stale tutorials
         let inferredStep = 0;
-        if (loaded.fundraiseRounds?.seed?.raised) inferredStep = 26;  // past tutorial scope
+        if (loaded.fundraiseRounds?.seed?.raised) inferredStep = 30;  // past tutorial scope
         else if (loaded.tracks?.capabilities?.unlockedCapabilities?.includes('basic_transformer')) inferredStep = 12;
         else if (loaded.onboardingComplete) inferredStep = 1;
 
         gameState.tutorial = {
           currentStep: inferredStep,
-          dismissed: inferredStep >= 26,  // auto-dismiss if past tutorial scope
+          dismissed: inferredStep >= 30,  // auto-dismiss if past tutorial scope
           disabled: false,
           active: false,
           shownStep: 0,
           completedPostSteps: [],
-          tutorialFormat: 3,
+          tutorialFormat: 4,
         };
       }
 
@@ -965,6 +970,54 @@ export function loadGame() {
           );
         }
         gameState.tutorial.tutorialFormat = 3;
+      }
+
+      // Save migration: tutorial step IDs changed from 26-step to 30-step sequence
+      // New steps inserted: 13 (breakthrough_congrats), 18 (t2_research), 19 (nav_compute_t2), 20 (t2_compute)
+      // Steps 13-16 shift +1, steps 17+ shift +4
+      if ((gameState.tutorial.tutorialFormat || 1) < 4) {
+        const cs = gameState.tutorial.currentStep;
+        if (cs >= 17 && cs <= 26) {
+          gameState.tutorial.currentStep = cs + 4;
+        } else if (cs >= 13 && cs <= 16) {
+          gameState.tutorial.currentStep = cs + 1;
+        }
+        // Migrate post-tutorial step IDs (27-35 → 31-39)
+        if (gameState.tutorial.completedPostSteps.length > 0) {
+          gameState.tutorial.completedPostSteps = gameState.tutorial.completedPostSteps.map(
+            id => (id >= 27 && id <= 35) ? id + 4 : id
+          );
+        }
+        gameState.tutorial.tutorialFormat = 4;
+      }
+
+      // Save migration: decouple hintsDisabled from dismissed
+      // Old saves used dismissed to suppress both main tutorial and post-tutorial hints.
+      // Players who completed the tutorial (currentStep >= MAIN_SEQUENCE_END) with dismissed=true
+      // had opted out of everything — preserve that by setting hintsDisabled=true.
+      // Players who skipped early get hintsDisabled=false so they'll see contextual hints.
+      if ((gameState.tutorial.tutorialFormat || 1) < 5) {
+        if (gameState.tutorial.hintsDisabled === undefined) {
+          const MAIN_SEQ_END = 30;  // mirrors MAIN_SEQUENCE_END in tutorial-state.js
+          gameState.tutorial.hintsDisabled =
+            gameState.tutorial.dismissed && gameState.tutorial.currentStep >= MAIN_SEQ_END;
+        }
+        gameState.tutorial.tutorialFormat = 5;
+      }
+
+      // Save migration: tutorial step IDs shifted +1 from 21 onward (funding_is_fuel inserted at 21)
+      // Main sequence: 21-30 → 22-31, post-tutorial: 31-39 → 32-40
+      if ((gameState.tutorial.tutorialFormat || 1) < 6) {
+        const cs = gameState.tutorial.currentStep;
+        if (cs >= 21) {
+          gameState.tutorial.currentStep = cs + 1;
+        }
+        if (gameState.tutorial.completedPostSteps.length > 0) {
+          gameState.tutorial.completedPostSteps = gameState.tutorial.completedPostSteps.map(
+            id => id >= 31 ? id + 1 : id
+          );
+        }
+        gameState.tutorial.tutorialFormat = 6;
       }
 
       // Save migration: lifetimeAllTime new fields (peaks, dataCollapses)

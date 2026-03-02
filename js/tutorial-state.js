@@ -5,7 +5,10 @@
 import { gameState } from './game-state.js';
 import { milestone } from './analytics.js';
 
-const MAIN_SEQUENCE_END = 26;  // Last step in the main tutorial sequence
+export const MAIN_SEQUENCE_END = 31;  // Last step in the main tutorial sequence
+
+// Track when a card was shown for duration measurement
+let cardShownAt = 0;
 
 // Advance to the next step (or skip ahead if conditions already met)
 export function completeTutorialStep(step, method = 'dismiss') {
@@ -22,10 +25,14 @@ export function completeTutorialStep(step, method = 'dismiss') {
   gameState.tutorial.shownStep = 0;
 
   if (MILESTONE_STEPS.has(step)) {
+    const durationSeconds = cardShownAt > 0
+      ? Math.round((performance.now() - cardShownAt) / 100) / 10
+      : null;
     milestone('tutorial_step_completed', {
       step,
       step_name: getStepName(step),
       method,  // 'action' | 'dismiss' | 'skip-ahead'
+      duration_seconds: durationSeconds,
     }, `tutorial_step_completed_${step}`);
   }
 
@@ -38,12 +45,13 @@ export function completeTutorialStep(step, method = 'dismiss') {
 }
 
 // Milestone steps for analytics — only these fire tutorial_step_completed
-const MILESTONE_STEPS = new Set([1, 6, 13, 23, 26]);
+const MILESTONE_STEPS = new Set([1, 4, 5, 6, 8, 13, 16, 20, 28, 31]);
 
 // Show a tutorial step card
 export function showTutorialStep(step) {
   gameState.tutorial.active = true;
   gameState.tutorial.shownStep = step;
+  cardShownAt = performance.now();
 }
 
 // Skip the entire tutorial
@@ -53,7 +61,7 @@ export function skipTutorial(source = 'main') {
   gameState.tutorial.active = false;
   gameState.tutorial.shownStep = 0;
 
-  milestone('tutorial_skipped', { step: currentStep, source }, 'tutorial_skipped');
+  milestone('tutorial_skipped', { step: currentStep, step_name: getStepName(currentStep), source }, 'tutorial_skipped');
 }
 
 // Resume tutorial from Settings — re-show the last completed step
@@ -74,7 +82,6 @@ export function restartTutorial() {
   gameState.tutorial.disabled = false;
   gameState.tutorial.active = false;
   gameState.tutorial.shownStep = 0;
-  gameState.tutorial.completedPostSteps = [];
   // Review mode: show all steps as informational until caught up
   gameState.tutorial.reviewMode = previousStep > 0 ? previousStep : 0;
 
@@ -90,14 +97,24 @@ export function disableTutorial() {
   gameState.tutorial.shownStep = 0;
 }
 
+// Disable post-tutorial hints (player clicked "Hide hints" on a hint card)
+export function disableHints(source = 'post_tutorial') {
+  gameState.tutorial.hintsDisabled = true;
+  gameState.tutorial.active = false;
+  gameState.tutorial.shownStep = 0;
+
+  milestone('hints_disabled', { source }, 'hints_disabled');
+}
+
 // Is the tutorial system active? (not disabled, not dismissed)
 export function isTutorialActive() {
   return !gameState.tutorial.disabled && !gameState.tutorial.dismissed && gameState.arc === 1;
 }
 
-// Is the tutorial system enabled at all? (for post-tutorial standalone steps)
+// Are post-tutorial hints enabled? (gates standalone steps 31+)
+// Independent of dismissed — players who skip the tutorial still get contextual hints.
 export function isTutorialEnabled() {
-  return !gameState.tutorial.disabled && !gameState.tutorial.dismissed && gameState.arc === 1;
+  return !gameState.tutorial.disabled && !gameState.tutorial.hintsDisabled && gameState.arc === 1;
 }
 
 // Review mode: returns the step the player had reached before restart (0 if not in review mode)

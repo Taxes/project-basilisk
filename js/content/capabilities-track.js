@@ -10,7 +10,7 @@ export const capabilitiesTrack = {
       id: 'basic_transformer',
       name: 'Basic Transformer',
       tier: 0,
-      threshold: 2000,
+      threshold: 1000,
       requires: [],
       effects: {
         researchRateMultiplier: 1.2,
