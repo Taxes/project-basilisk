@@ -128,6 +128,33 @@ function renderStatsContent() {
       </div>`;
   }
 
+  // Prestige bonuses — only in arcade mode when at least one is active
+  if (gameState.gameMode !== 'narrative') {
+    const ups = gameState.arc1Upgrades || {};
+    const research = ups.researchMultiplier ?? 1;
+    const funding = ups.startingFunding ?? 1;
+    const revenue = ups.revenueMultiplier ?? 1;
+    if (research > 1 || funding > 1 || revenue > 1) {
+      html += `
+      <div class="stats-section-header">PRESTIGE BONUSES</div>`;
+      if (research > 1) html += `
+      <div class="stats-item">
+        <span class="stats-item-label">Research Speed</span>
+        <span class="stats-item-value">×${research.toFixed(2)}</span>
+      </div>`;
+      if (funding > 1) html += `
+      <div class="stats-item">
+        <span class="stats-item-label">Starting Funding</span>
+        <span class="stats-item-value">×${funding.toFixed(2)}</span>
+      </div>`;
+      if (revenue > 1) html += `
+      <div class="stats-item">
+        <span class="stats-item-label">Token Revenue</span>
+        <span class="stats-item-value">×${revenue.toFixed(2)}</span>
+      </div>`;
+    }
+  }
+
   html += `</div>`;
 
   const { discovered, total } = getFlavorStats();
@@ -1219,8 +1246,8 @@ export function showPrestigeModal(ending) {
     stats.appendChild(item);
   });
 
-  // Add prestige bonus preview
-  if (gains.researchMultiplier > 0 || gains.startingFunding > 0 || gains.revenueMultiplier > 0) {
+  // Add prestige bonus preview (narrative mode has no prestige bonuses)
+  if (gameState.gameMode !== 'narrative' && (gains.researchMultiplier > 0 || gains.startingFunding > 0 || gains.revenueMultiplier > 0)) {
     const prestigeGains = document.createElement('div');
     prestigeGains.className = 'prestige-gains';
 

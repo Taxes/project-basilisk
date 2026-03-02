@@ -329,8 +329,11 @@ input[type="range"] {
 
 .stats-section-header {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-muted);
   letter-spacing: 0.1em;
+  padding-top: 4px;
   margin-bottom: 8px;
   border-bottom: 1px solid var(--border);
   padding-bottom: 4px;
@@ -341,6 +344,7 @@ input[type="range"] {
   justify-content: space-between;
   align-items: baseline;
   padding: 2px 0;
+  font-size: 14px;
 }
 
 .stats-item-label {

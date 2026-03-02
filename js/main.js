@@ -477,7 +477,7 @@ function initializeGame() {
 
   // Version update toast for returning players
   if (loaded && gameState.lastSeenVersion != null && gameState.lastSeenVersion < VERSION && changelog[0]?.version === VERSION) {
-    notify(`Updated to v${VERSION}`, 'Tutorial improvements and balance tweaks. View the full changelog in Settings or click here.', 'info', {
+    notify(`Updated to v${VERSION}`, 'Prestige bonus tracking and UI fixes. View the full changelog in Settings or click here.', 'info', {
       duration: BALANCE.VERSION_TOAST_DURATION,
       onClick: () => showChangelog(),
       onDismiss: () => { gameState.lastSeenVersion = VERSION; },

@@ -3,6 +3,14 @@
 
 export const changelog = [
   {
+    version: '0.9.1.1',
+    date: '2026-03-02',
+    changes: [
+      'Active prestige bonuses now visible in Settings > Stats (guided mode only)',
+      'Removed prestige bonuses appearing on the ending screen in narrative mode',
+    ],
+  },
+  {
     version: '0.9.1',
     date: '2026-03-01',
     changes: [

@@ -382,7 +382,7 @@ const debug = {
   },
 
   versionToast() {
-    notify(`Updated to v${VERSION}`, 'Tutorial improvements and balance tweaks. View the full changelog in Settings or click here.', 'info', {
+    notify(`Updated to v${VERSION}`, 'Prestige bonus tracking and UI fixes. View the full changelog in Settings or click here.', 'info', {
       duration: BALANCE.VERSION_TOAST_DURATION,
       onClick: () => showChangelog(),
       onDismiss: () => { gameState.lastSeenVersion = VERSION; },
