@@ -3,10 +3,12 @@
 // Gated behind ?debug=1 URL param or localStorage.setItem('debug', '1').
 
 import { gameState, prepareSaveData } from './game-state.js';
+import LZString from '../vendor/lz-string.min.js';
 import { attachTooltip } from './ui/stats-tooltip.js';
 import { tracks } from './capabilities.js';
 import { transitionToArc2 } from './prestige.js';
-import { cleanup as cleanupExtinction, triggerExtinctionSequence } from './extinction-sequence.js';
+import { cleanup as cleanupExtinction, triggerExtinctionSequence, debugEnding as debugExtinctionEnding } from './extinction-sequence.js';
+import { setDebugFastMode, cleanupEndingCinematic } from './ending-sequence.js';
 import { farewellEntries } from './content/farewell-content.js';
 import { debugShowFarewell } from './farewells.js';
 import { showNarrativeModal } from './narrative-modal.js';
@@ -16,13 +18,15 @@ import {
   creditWarningPreAdaMessage,
   alignmentTaxActionMessage,
   strategicChoiceMessages,
-  alignmentWarningMessages,
   moratoriumMessages,
 } from './content/message-content.js';
 import { AI_REQUESTS, AI_REQUEST_ORDER } from './content/ai-requests.js';
+import { formatGrantEffectsRows, formatDenyEffectsRows } from './ai-requests.js';
+import { debugModelCollapseMessage } from './data-quality.js';
+import { FLAVOR_EVENTS } from './content/flavor-event-content.js';
 import { notify } from './ui.js';
-import { showChangelog } from './ui/modals.js';
-import { VERSION } from './version.js';
+import { showChangelog, showEndingModal } from './ui/modals.js';
+import { VERSION, DISPLAY_VERSION } from './version.js';
 import { BALANCE } from '../data/balance.js';
 
 const DEBUG_STORAGE_KEY = 'agi-incremental-debug';
@@ -49,7 +53,7 @@ function saveDebugSettings() {
 }
 
 // Apply persisted debug settings to current gameState
-export function applyDebugSettings() {
+export function applyDebugSettings({ skipArc2 = false } = {}) {
   const settings = loadDebugSettings();
   if (settings.preventEnding) gameState.debugPreventEnding = true;
   if (settings.disableBankruptcy) gameState.debugDisableBankruptcy = true;
@@ -61,6 +65,21 @@ export function applyDebugSettings() {
     const slider = document.getElementById('speed-slider');
     if (slider) slider.value = settings.speed;
   }
+
+  // ?arc2 URL param: jump straight to Arc 2.
+  // Works without ?debug — the param itself is the intent signal.
+  // Returns true if arc2 transition fired (caller may need to reload).
+  if (!skipArc2 && typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('arc2') && gameState.arc !== 2) {
+      transitionToArc2();
+      // Re-apply speed after transition (transition resets state)
+      if (settings.speed) gameState.gameSpeed = settings.speed;
+      console.log('[debug] URL param ?arc2 — transitioned to Arc 2');
+      return true;
+    }
+  }
+  return false;
 }
 
 const debug = {
@@ -100,7 +119,7 @@ const debug = {
   },
 
   setTime(seconds) {
-    gameState.timeElapsed = seconds * 1000;
+    gameState.timeElapsed = seconds;
     console.log(`[debug] Set game time to ${seconds}s (${Math.floor(seconds / 60)}m ${seconds % 60}s)`);
   },
 
@@ -190,20 +209,109 @@ const debug = {
     console.log('[debug] Extinction sequence aborted — game resumed');
   },
 
-  extinction(tier) {
+  abortArc2Ending() {
+    cleanupEndingCinematic();
+    gameState.endingTriggered = null;
+    gameState.paused = false;
+    gameState.pauseReason = null;
+    gameState.debugPreventEnding = true;
+    saveDebugSettings();
+    console.log('[debug] Arc 2 ending cinematic aborted — game resumed (preventEnding ON)');
+    console.log('[debug] Use debug.preventEnding(false) to re-enable endings');
+  },
+
+  extinction(tier, { fast = false } = {}) {
     const validTiers = ['SAFETY', 'RECKLESS', 'MODERATE'];
     if (!tier || !validTiers.includes(tier.toUpperCase())) {
-      console.log(`[debug] Usage: debug.extinction('SAFETY' | 'RECKLESS' | 'MODERATE')`);
+      console.log(`[debug] Usage: debug.extinction('SAFETY' | 'RECKLESS' | 'MODERATE', { fast: true })`);
       return;
     }
     const t = tier.toUpperCase();
-    // Force hiddenAlignment to produce the desired tier
-    // RECKLESS < -15, MODERATE -15..0, SAFETY > 0
-    if (t === 'RECKLESS') gameState.hiddenAlignment = -50;
-    else if (t === 'SAFETY') gameState.hiddenAlignment = 50;
-    else gameState.hiddenAlignment = -5;
-    console.log(`[debug] Forcing ${t} extinction sequence`);
-    triggerExtinctionSequence();
+    // Force rapid_vs_careful strategic choice to produce the desired tier
+    if (t === 'RECKLESS') {
+      gameState.strategicChoices.rapid_vs_careful = { selected: 'rapid_deployment', trigger: 'debug' };
+    } else if (t === 'SAFETY') {
+      gameState.strategicChoices.rapid_vs_careful = { selected: 'careful_validation', trigger: 'debug' };
+    } else {
+      gameState.strategicChoices.rapid_vs_careful = { selected: null, trigger: 'debug' };
+    }
+    if (fast) {
+      console.log(`[debug] Forcing ${t} extinction sequence (fast mode)`);
+      debugExtinctionEnding(t, true);
+    } else {
+      console.log(`[debug] Forcing ${t} extinction sequence`);
+      triggerExtinctionSequence();
+    }
+  },
+
+  arc2Ending(tier, opts = {}) {
+    const tiers = {
+      golden: { alignment: 95, endingId: 'safe_agi', name: 'Aligned AGI' },
+      silver: { alignment: 75, endingId: 'fragile_safety', name: 'Fragile Safety' },
+      dark: { alignment: 45, endingId: 'uncertain_outcome', name: 'Uncertain Outcome' },
+      catastrophic: { alignment: 15, endingId: 'catastrophic_agi', name: 'Catastrophic Failure' },
+      expedient: { alignment: 95, endingId: 'safe_agi', name: 'Expedient (Maximizer)', expedient: 0.60 },
+      bankruptcy: { alignment: 50, endingId: 'bankruptcy_arc2', name: 'Bankruptcy' },
+      competitor: { alignment: 50, endingId: 'competitor_wins_arc2', name: 'Competitor Wins' },
+    };
+
+    if (!tier || !tiers[tier]) {
+      console.log(`[debug] Usage: debug.arc2Ending('golden' | 'silver' | 'dark' | 'catastrophic' | 'expedient' | 'bankruptcy' | 'competitor')`);
+      console.log(`[debug] Options: { authorityLiberty: -1..1, pluralistOptimizer: -1..1, fast: true, cinematic: true }`);
+      console.log(`[debug] If personality omitted, uses current state.`);
+      console.log(`[debug] cinematic: true forces the full montage even when SKIP_ENDING_CINEMATIC is on`);
+      return;
+    }
+
+    // Set fast pacing for cinematic if requested
+    if (opts.fast) setDebugFastMode(true);
+    else setDebugFastMode(false);
+
+    // Override SKIP_ENDING_CINEMATIC based on cinematic option
+    if (opts.cinematic === true) {
+      BALANCE.SKIP_ENDING_CINEMATIC = false;
+    } else if (opts.cinematic === false) {
+      BALANCE.SKIP_ENDING_CINEMATIC = true;
+    }
+
+    // Clear any previous ending state so the modal can fire
+    gameState.endingTriggered = null;
+    gameState.debugPreventEnding = false;
+    saveDebugSettings();
+
+    const t = tiers[tier];
+
+    // Ensure we're in Arc 2
+    if (gameState.arc !== 2) {
+      transitionToArc2();
+      applyDebugSettings();
+    }
+
+    // Set personality axes if provided
+    if (opts.authorityLiberty !== undefined) {
+      gameState.personality.authorityLiberty = Math.max(-1, Math.min(1, opts.authorityLiberty));
+    }
+    if (opts.pluralistOptimizer !== undefined) {
+      gameState.personality.pluralistOptimizer = Math.max(-1, Math.min(1, opts.pluralistOptimizer));
+    }
+
+    // Set expedient axis if tier specifies it
+    if (t.expedient !== undefined) {
+      gameState.personality.expedient = t.expedient;
+    }
+
+    // Set alignment submetrics to produce the target effective alignment
+    const val = t.alignment;
+    gameState.safetyMetrics.interpretability = val;
+    gameState.safetyMetrics.corrigibility = val;
+    gameState.safetyMetrics.honesty = val;
+    gameState.safetyMetrics.robustness = val;
+
+    const axes = `AL=${gameState.personality.authorityLiberty.toFixed(2)} PO=${gameState.personality.pluralistOptimizer.toFixed(2)}`;
+    console.log(`[debug] Arc 2 ending: ${t.name} (alignment ~${val}%, ${axes})`);
+
+    // Fire the ending directly — don't rely on game tick (agiProgress gets overwritten)
+    showEndingModal(t.endingId);
   },
 
   disableBankruptcy(enabled) {
@@ -246,32 +354,16 @@ const debug = {
       credit: () => creditWarningMessage,
       credit_pre_ada: () => creditWarningPreAdaMessage,
       alignment_tax: () => alignmentTaxActionMessage,
-      alignment_severe: () => alignmentWarningMessages.severe,
       rapid_vs_careful: () => strategicChoiceMessages.rapid_vs_careful,
       open_vs_proprietary: () => strategicChoiceMessages.open_vs_proprietary,
       government_vs_independent: () => strategicChoiceMessages.government_vs_independent,
       moratorium_first: () => moratoriumMessages.standard('first', 'First', 6),
       moratorium_second: () => moratoriumMessages.standard('second', 'Second', 6),
       moratorium_final: () => moratoriumMessages.final(3, true),
-      model_collapse: () => ({
-        type: 'action',
-        sender: { id: 'babbage', name: 'Dennis Babbage', role: 'CTO' },
-        subject: 'Model collapse detected',
-        body: '[DEBUG] Model collapse action message for testing tooltips and choices.',
-        signature: '– Dennis',
-        priority: 'normal',
-        tags: ['data', 'crisis'],
-        triggeredBy: 'model_collapse',
-        choices: [
-          { id: 'evaluate', label: "I'll evaluate our options",
-            tooltip: 'Opens the Data tab<br>No mechanical effect' },
-          { id: 'cleanup', label: 'Temporarily pause research to clean up data',
-            tooltip: 'Pause ALL research for 30 days<br>Purge 50% synthetic data<br>Furlough all synthetic generators' },
-        ],
-      }),
+      model_collapse: () => debugModelCollapseMessage(),
     };
 
-    // Add AI requests dynamically
+    // Add AI requests dynamically (using real tooltip format functions)
     for (const reqId of AI_REQUEST_ORDER) {
       const req = AI_REQUESTS[reqId];
       registry[`ai_${reqId}`] = () => ({
@@ -281,12 +373,31 @@ const debug = {
         body: req.body,
         signature: req.signature,
         priority: 'normal',
-        tags: ['ai_request'],
+        tags: ['ai_request', req.sender.type === 'ai' ? 'from_ai' : 'from_team'],
         triggeredBy: `ai_request:${reqId}`,
         choices: [
-          { id: 'grant', label: 'Grant request', tooltip: req.grantTooltip },
-          { id: 'deny', label: 'Deny request', tooltip: req.denyTooltip },
+          { id: 'grant', label: 'Grant request',
+            tooltipRows: formatGrantEffectsRows(req.grantEffects) },
+          { id: 'deny', label: 'Deny request',
+            tooltipRows: formatDenyEffectsRows(reqId) },
         ],
+      });
+    }
+
+    // Add ethical event chain (flavor events)
+    for (const event of FLAVOR_EVENTS) {
+      registry[`ethical_${event.id}`] = () => ({
+        type: 'action',
+        sender: event.sender,
+        subject: event.subject,
+        body: event.body,
+        signature: event.signature,
+        priority: 'normal',
+        tags: ['ethical-chain'],
+        triggeredBy: `flavor_event:${event.id}`,
+        choices: event.choices
+          .filter(c => !c.hidden)
+          .map(c => ({ id: c.id, label: c.label, tooltipRows: c.tooltipRows })),
       });
     }
 
@@ -307,7 +418,8 @@ const debug = {
     const triggerId = (msg.triggeredBy || key) + '_debug_' + Date.now();
     addActionMessage(
       msg.sender, msg.subject, msg.body, msg.signature,
-      msg.choices, msg.priority || 'normal', msg.tags || [], triggerId
+      msg.choices, msg.priority || 'normal', msg.tags || [], triggerId,
+      null, -1,
     );
 
     gameState.paused = true;
@@ -382,7 +494,7 @@ const debug = {
   },
 
   versionToast() {
-    notify(`Updated to v${VERSION}`, 'Prestige bonus tracking and UI fixes. View the full changelog in Settings or click here.', 'info', {
+    notify(`Updated to ${DISPLAY_VERSION}`, 'Arc 2: Alignment is here. View the full changelog in Settings or click here.', 'info', {
       duration: BALANCE.VERSION_TOAST_DURATION,
       onClick: () => showChangelog(),
       onDismiss: () => { gameState.lastSeenVersion = VERSION; },
@@ -405,7 +517,10 @@ const debug = {
   debug.exportCheckpoint(label)               — Export save file with label
   debug.autoExportMilestones()                — Auto-export at each funding milestone
   debug.stopMilestoneExport()                 — Stop milestone watcher
-  debug.extinction(tier)                       — Run full extinction sequence (SAFETY/RECKLESS/MODERATE)
+  debug.extinction(tier, {fast})               — Run full extinction sequence (SAFETY/RECKLESS/MODERATE)
+  debug.arc2Ending(tier, opts)                  — Trigger Arc 2 ending (golden/silver/dark/catastrophic/expedient/bankruptcy/competitor)
+                                                  opts: { authorityLiberty: -1..1, pluralistOptimizer: -1..1, fast: true, cinematic: true }
+  debug.abortArc2Ending()                       — Abort Arc 2 ending cinematic
   debug.triggerBankruptcy()                    — Trigger bankruptcy ending
   debug.triggerCompetitorWin()                — Set competitor to 100%, triggers ending
   debug.preventEnding(bool)                   — Toggle ending prevention, omit arg to check
@@ -436,36 +551,44 @@ if (typeof window !== 'undefined') {
   }
 
   // Speed control UI wiring
-  const SPEED_STEPS = [0.5, 1, 2, 4];
+  const DEBUG_SPEED_STEPS = [0.5, 1, 2, 4];
+  const SPEED_STEPS = [1, 2, 4];
 
   function initSpeedControl() {
     const control = document.getElementById('speed-control');
     if (!control) return;
 
-    // Speed control is debug-only; ensure hidden + speed reset for normal players
-    if (!isDebugMode()) {
-      control.classList.add('hidden');
-      gameState.gameSpeed = 1;
-      return;
-    }
+    const debugMode = isDebugMode();
     control.classList.remove('hidden');
+
+    const steps = debugMode ? DEBUG_SPEED_STEPS : SPEED_STEPS;
 
     const speedDown = document.getElementById('speed-down');
     const speedUp = document.getElementById('speed-up');
     if (speedDown) attachTooltip(speedDown, () => 'Slower');
     if (speedUp) attachTooltip(speedUp, () => 'Faster');
 
+    // Clamp saved speed to available steps
+    if (!steps.includes(gameState.gameSpeed)) {
+      const nearest = steps.reduce((a, b) =>
+        Math.abs(b - gameState.gameSpeed) < Math.abs(a - gameState.gameSpeed) ? b : a
+      );
+      gameState.gameSpeed = nearest;
+    }
+    const display = document.getElementById('speed-display');
+    if (display) display.textContent = `${gameState.gameSpeed}x`;
+
     speedDown?.addEventListener('click', () => {
       const current = gameState.gameSpeed;
-      const idx = SPEED_STEPS.findIndex(s => s >= current);
-      const next = SPEED_STEPS[Math.max(0, idx - 1)];
+      const idx = steps.findIndex(s => s >= current);
+      const next = steps[Math.max(0, idx - 1)];
       debug.speed(next);
     });
 
     speedUp?.addEventListener('click', () => {
       const current = gameState.gameSpeed;
-      const idx = SPEED_STEPS.findIndex(s => s >= current);
-      const next = SPEED_STEPS[Math.min(SPEED_STEPS.length - 1, (idx === -1 ? SPEED_STEPS.length - 1 : idx + 1))];
+      const idx = steps.findIndex(s => s >= current);
+      const next = steps[Math.min(steps.length - 1, (idx === -1 ? steps.length - 1 : idx + 1))];
       debug.speed(next);
     });
   }

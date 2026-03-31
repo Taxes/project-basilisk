@@ -16,12 +16,10 @@ import {
   getCultureShiftAutomation,
 } from './automation-state.js';
 import { getPurchaseCost, getPurchasableById, PERSONNEL_IDS } from './content/purchasables.js';
-import { canAfford, spendResources, getTeamCostMultiplier } from './resources.js';
+import { canAfford, spendResources, getRunningCostForCount } from './resources.js';
 import { getPurchasableState, getActiveCount, getCount, incrementCount } from './purchasable-state.js';
 import { calculateTarget } from './automation-policies.js';
 import { getHRCultureDrift } from './focus-queue.js';
-import { getEffectiveScaling } from './talent-pool.js';
-import { BALANCE } from '../data/balance.js';
 import { addNewsMessage } from './messages.js';
 
 const WARNING_COOLDOWN = 30; // seconds between repeated per-item throttle warnings
@@ -32,21 +30,6 @@ export function processAutomation(deltaTime) {
 
   // Process Procurement automation (compute items)
   processProcurementAutomation(deltaTime);
-}
-
-// Compute raw running cost (before ops discount) for an item at a given count.
-function getRunningCostForCount(itemId, purchasable, count) {
-  if (count <= 0) return 0;
-  const rawBaseCost = purchasable.salary || purchasable.runningCost || 0;
-  if (rawBaseCost <= 0) return 0;
-  const baseCost = rawBaseCost * getTeamCostMultiplier(itemId);
-
-  if (purchasable.runningCostFormula === 'superlinear') {
-    const alpha = BALANCE.DATA_RENEWABLE_COST_ALPHA;
-    return baseCost * Math.pow(count, 1 + alpha);
-  }
-  const factor = getEffectiveScaling(itemId);
-  return baseCost * count * (1 + factor * count);
 }
 
 function processHRAutomation(deltaTime) {
@@ -280,7 +263,7 @@ function processItemPoints(item, points, deltaTime) {
         const grossRevenue = gameState.computed?.revenue?.gross || 0;
         const opsDiscount = gameState.computed?.costs?.opsDiscount ?? 1;
         if (grossRevenue > 0) {
-          const costNext = getRunningCostForCount(itemId, purchasable, active + 1) * opsDiscount;
+          const costNext = getRunningCostForCount(itemId, active + 1) * opsDiscount;
           const wasThrottled = state.automation.throttled;
           state.automation.throttled = (costNext > grossRevenue * 2);
           if (state.automation.throttled && !wasThrottled) {

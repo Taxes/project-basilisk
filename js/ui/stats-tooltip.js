@@ -7,6 +7,9 @@ import { formatFunding, formatNumber, formatTime, getRateUnit } from '../utils/f
 import { getGovernmentFundingBonus } from '../strategic-choices.js';
 import { getGrantStatus } from '../economics.js';
 import { registerUpdate, EVERY_TICK } from './scheduler.js';
+import { isDebugMode } from '../debug-commands.js';
+import { calculateEffectiveAlignment, formatAlignmentStatusLabel } from '../safety-metrics.js';
+import { getTransparencyTier, formatMetricValue } from './alignment-display.js';
 
 // Default hover delay before showing tooltip (ms)
 const TOOLTIP_HOVER_DELAY = 150;
@@ -346,7 +349,7 @@ function buildAGITooltip() {
   const seriesARaised = gameState.fundraiseRounds?.series_a?.raised === true;
 
   let html = '<div class="tooltip-header"><span>AGI Progress</span>';
-  if (gameState.debug) {
+  if (isDebugMode()) {
     html += `<span class="tooltip-value">${progress.toFixed(1)}%</span>`;
   }
   html += '</div>';
@@ -357,7 +360,7 @@ function buildAGITooltip() {
   if (seriesARaised) {
     html += '<div class="tooltip-section">';
     html += '<div class="tooltip-section-header">Rival Lab</div>';
-    if (gameState.debug) {
+    if (isDebugMode()) {
       html += `<div class="tooltip-row"><span>Their progress</span><span>${cp.toFixed(1)}%</span></div>`;
     }
     html += '<div class="dim" style="margin-top:4px">A competing lab racing to AGI independently. If they get there first, you lose control of the outcome.</div>';
@@ -421,6 +424,49 @@ function buildDataTooltip() {
   return html;
 }
 
+/** Build alignment status tooltip HTML — respects transparency tiers. */
+function buildAlignmentTooltip() {
+  const revealed = gameState.computed?.revealedSubmetrics || [];
+  if (revealed.length === 0) return '';
+
+  const tier = getTransparencyTier();
+  const dangerTier = gameState.computed?.danger?.tier || 'healthy';
+  const status = formatAlignmentStatusLabel(dangerTier);
+  const metrics = gameState.safetyMetrics || {};
+
+  let html = '<div class="tooltip-header">';
+  html += '<span>Alignment Status</span>';
+  html += `<span class="tooltip-value ${status.cssClass}">${status.label}</span>`;
+  html += '</div>';
+
+  if (tier === 'quantitative') {
+    const effective = Math.round(calculateEffectiveAlignment());
+    html += `<div class="tooltip-row"><span>Effective alignment</span><span>${effective}%</span></div>`;
+    html += '<div class="tooltip-section">';
+    html += '<div class="tooltip-section-header">Submetrics:</div>';
+    for (const sub of ['robustness', 'interpretability', 'corrigibility', 'honesty']) {
+      const val = Math.round(metrics[sub] || 0);
+      html += `<div class="tooltip-row"><span>${titleCase(sub)}</span><span>${val}%</span></div>`;
+    }
+    html += '</div>';
+  } else {
+    // Opaque and qualitative: show revealed submetrics with tier-appropriate values
+    html += '<div class="tooltip-section">';
+    html += '<div class="tooltip-section-header">Revealed factors:</div>';
+    for (const sub of revealed) {
+      const val = metrics[sub] || 0;
+      html += `<div class="tooltip-row"><span>${titleCase(sub)}</span><span>${formatMetricValue(val)}</span></div>`;
+    }
+    if (revealed.length < 4) {
+      html += `<div class="tooltip-row dim"><span>${4 - revealed.length} factor${4 - revealed.length > 1 ? 's' : ''} not yet identified</span></div>`;
+    }
+    html += '</div>';
+    html += '<div class="dim" style="margin-top:4px">Check the AI tab for details</div>';
+  }
+
+  return html;
+}
+
 /** Initialize stats bar tooltips. */
 export function initStatsTooltips() {
   const fundingGroup = document.querySelector('#stats-bar .stats-group:first-child');
@@ -439,4 +485,8 @@ export function initStatsTooltips() {
   // Data effectiveness group
   const dataGroup = document.getElementById('data-effectiveness-group');
   if (dataGroup) attachTooltip(dataGroup, buildDataTooltip);
+
+  // Alignment status group
+  const alignGroup = document.getElementById('stat-alignment-group');
+  if (alignGroup) attachTooltip(alignGroup, buildAlignmentTooltip);
 }

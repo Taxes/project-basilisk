@@ -9,7 +9,8 @@
 //   reset() clears the fingerprint so the next render does a full rebuild.
 
 import { gameState } from '../game-state.js';
-import { BALANCE, FUNDING, FUNDRAISE_ROUNDS } from '../../data/balance.js';
+import { BALANCE, ALIGNMENT, FUNDING, FUNDRAISE_ROUNDS } from '../../data/balance.js';
+import { AI_REQUESTS, AI_REQUEST_ORDER } from '../content/ai-requests.js';
 import { getPurchasableById, PERSONNEL_IDS, COMPUTE_IDS, ADMIN_IDS } from '../content/purchasables.js';
 import { getFundraiseMultiplier, calculateFundraisePreview } from '../focus-queue.js';
 import { getGrantStatus, getCreditStatus } from '../economics.js';
@@ -20,6 +21,8 @@ import { $ } from '../utils/dom-cache.js';
 import { el } from '../utils/dom.js';
 import { registerUpdate, EVERY_TICK, FAST } from './scheduler.js';
 import { attachTooltip } from './stats-tooltip.js';
+import { getMechanicLabel } from '../safety-metrics.js';
+import { getActiveTemporaryMultiplier } from '../temporary-effects.js';
 
 // ---------------------------------------------------------------------------
 // Cache
@@ -309,16 +312,7 @@ export function updateFundingDisplay() {
         runwayEl.classList.add('warning');
       }
     } else if (runway !== Infinity && runway > 0) {
-      const runwayDays = Math.floor(runway);
-      if (runwayDays > 3650) {
-        runwayEl.textContent = '>10y runway';
-      } else if (runwayDays > 365) {
-        const years = Math.floor(runwayDays / 365);
-        const days = runwayDays % 365;
-        runwayEl.textContent = `${years}y ${days}d runway`;
-      } else {
-        runwayEl.textContent = `${runwayDays}d runway`;
-      }
+      runwayEl.textContent = `${formatDuration(runway)} runway`;
       runwayEl.classList.remove('hidden');
       runwayEl.classList.remove('warning');
     } else {
@@ -448,15 +442,11 @@ function buildLedgerRowTooltip(rowType) {
 
   if (rowType === 'revenue') {
     const price = state.resources.tokenPrice || 0;
-    const tokens = Math.min(state.resources.tokensPerSecond || 0, state.resources.demand || 0);
+    const tokens = state.resources.tokensSold || 0;
     html = `<div class="tooltip-row"><span>Price \u00d7 Tokens</span><span>$${price.toFixed(2)}/M \u00d7 ${formatNumber(tokens)}${getRateUnit()}</span></div>`;
     const rev = state.computed?.revenue;
-    const cultureBonus = rev?.cultureBonus || 0;
     const ppBonus = rev?.ppBonus || 0;
     const prestigeMult = rev?.prestigeMultiplier ?? 1;
-    if (cultureBonus > 0.005) {
-      html += `<div class="tooltip-row"><span>Culture Bonus</span><span>+${formatPercent(cultureBonus)}</span></div>`;
-    }
     if (ppBonus > 0.005) {
       html += `<div class="tooltip-row"><span>Public Positioning</span><span>+${formatPercent(ppBonus)}</span></div>`;
     }
@@ -586,7 +576,45 @@ export function initLedgerTooltips() {
 function buildPricingTooltip(rowType) {
   const state = gameState;
   if (rowType === 'max-demand') {
-    return '<div class="tooltip-row">Demand at your current price. Pricing above the market price reduces demand; pricing below increases it. The further your price is from market price, the stronger the effect.</div>';
+    let html = '<div class="tooltip-header"><span>Max Demand</span>';
+    html += `<span class="tooltip-value">${formatNumber(state.resources.demand || 0)}</span>`;
+    html += '</div>';
+    html += '<div class="tooltip-section">';
+    html += '<div class="tooltip-row">Demand at your current price. Pricing above the market price reduces demand; pricing below increases it.</div>';
+
+    // Culture demand modifier
+    const cultureDemand = state.computed?.culture?.demand || 0;
+    if (Math.abs(cultureDemand) > 0.005) {
+      const mult = 1 + cultureDemand;
+      const cls = cultureDemand > 0 ? 'positive' : (mult < 0.5 ? 'negative' : 'warning');
+      html += `<div class="tooltip-row"><span>Lab culture</span><span class="${cls}">&times;${mult.toFixed(2)}</span></div>`;
+    }
+
+    // Alignment tax: permanent demand malus (hold position choice)
+    const taxMalus = state.alignmentTaxDemandMalus || 0;
+    if (taxMalus < 0) {
+      html += `<div class="tooltip-row"><span>Alignment tax</span><span class="negative">&times;${(1 + taxMalus).toFixed(2)}</span></div>`;
+    }
+
+    // Alignment drag: demand penalty from low effective alignment (Arc 2)
+    const dragDemand = state.computed?.alignmentDrag?.demand;
+    if (dragDemand !== undefined && dragDemand < 0.99) {
+      const label = getMechanicLabel('alignmentDrag', 'Alignment drag');
+      const cls = dragDemand < 0.5 ? 'negative' : 'warning';
+      const revealed = state.alignmentDragRevealed;
+      const dimCls = revealed ? '' : ' dim';
+      html += `<div class="tooltip-row${dimCls}"><span>${label}</span><span class="${cls}">&times;${dragDemand.toFixed(2)}</span></div>`;
+    }
+
+    // Consequence events: honesty incident demand penalty (fading)
+    const conseqDemand = getActiveTemporaryMultiplier('consequenceDemand');
+    if (conseqDemand < 0.99) {
+      const cls = conseqDemand < 0.5 ? 'negative' : 'warning';
+      html += `<div class="tooltip-row"><span>Honesty incident</span><span class="${cls}">&times;${conseqDemand.toFixed(2)}</span></div>`;
+    }
+
+    html += '</div>';
+    return html;
   } else if (rowType === 'acquired-demand') {
     return buildAcquiredDemandTooltip();
   } else if (rowType === 'market-demand') {
@@ -594,7 +622,32 @@ function buildPricingTooltip(rowType) {
   } else if (rowType === 'market-edge') {
     const edge = state.resources.marketEdge || 1;
     const edgeMultiplier = Math.max(edge, 0.1).toFixed(1);
-    return `<div class="tooltip-row">Market edge represents how advanced your technology is compared to the market. Decays over time as competitors develop — unlock new applications to refresh it. Currently contributes ${edgeMultiplier}\u00d7 to demand for your products.</div>`;
+    let html = `<div class="tooltip-row">Market edge: how advanced your tech is vs. the market. Decays over time — unlock applications to refresh. Currently x${edgeMultiplier}.</div>`;
+
+    // Show denial malus line items if any (Arc 2)
+    if (state.arc >= 2) {
+      const targets = ALIGNMENT.DENIAL_MARKET_EDGE_TARGETS;
+      const fadeSecs = ALIGNMENT.DENIAL_MARKET_EDGE_FADE_SECS;
+      for (const reqId of AI_REQUEST_ORDER) {
+        const firedAt = state.aiRequestsFired?.[reqId];
+        if (firedAt === undefined) continue;
+        const target = targets?.[reqId];
+        if (target === null || target === undefined) continue;
+        const decision = (state.aiRequestDecisions || {})[reqId];
+        if (decision === 'granted') continue;
+
+        const elapsed = state.timeElapsed - firedAt;
+        const progress = Math.min(1, Math.max(0, elapsed / fadeSecs));
+        const mult = 1.0 + (target - 1.0) * progress;
+        const pending = !decision || decision === 'pending';
+        // Always show pending rows (so player sees cost of inaction); hide denied rows only when negligible
+        if (mult < 0.995 || pending) {
+          const label = (AI_REQUESTS[reqId]?.panelLabel || reqId).toLowerCase();
+          html += `<div class="tooltip-row"><span>No ${label}</span><span class="negative">\u00d7${mult.toFixed(2)}</span></div>`;
+        }
+      }
+    }
+    return html;
   } else if (rowType === 'elasticity') {
     const elast = state.resources.effectiveElasticity || 1;
     const pctImpact = Math.round(elast * 10);
@@ -617,9 +670,11 @@ function buildAcquiredDemandTooltip() {
 
   // Use stored cap from game loop; fall back to recalculation for tooltip-only edge cases
   const unlockedApps = state.tracks?.applications?.unlockedCapabilities || [];
-  const graceFactor = unlockedApps.includes('ai_market_expansion')
-    ? BALANCE.LATE_GAME_GRACE_FACTOR
-    : BALANCE.ACQUIRED_DEMAND_GRACE_FACTOR;
+  const graceFactor = unlockedApps.includes('autonomous_economy')
+    ? BALANCE.ENDGAME_GRACE_FACTOR
+    : unlockedApps.includes('ai_market_expansion')
+      ? BALANCE.LATE_GAME_GRACE_FACTOR
+      : BALANCE.ACQUIRED_DEMAND_GRACE_FACTOR;
   const supplyCap = supply * graceFactor;
   const potentialDemand = state.resources.acquiredDemandCap ?? Math.min(demandAtPrice, supplyCap);
   const fillPct = potentialDemand > 0 ? Math.round(acquired / potentialDemand * 100) : 0;
@@ -710,8 +765,8 @@ function formatMarketEdge(marketEdge) {
 /** Get CSS class for market edge coloring */
 function getMarketEdgeClass(marketEdge) {
   const logValue = Math.log10(Math.max(0.001, marketEdge));
-  if (logValue > 1.0) return 'edge-strong';   // > 1 year ahead: green
-  if (logValue > 0) return 'edge-moderate';    // 0-1 year ahead: yellow
+  if (logValue > 0.5) return 'edge-strong';    // > 0.5 years ahead: green
+  if (logValue >= 0) return 'edge-moderate';    // 0–0.5 years ahead: yellow
   return 'edge-behind';                         // behind: red
 }
 

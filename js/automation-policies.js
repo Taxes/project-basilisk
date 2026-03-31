@@ -7,10 +7,8 @@ import {
   canHRHire,
   canProcurementBuy,
 } from './automation-state.js';
-import { getPurchasableById } from './content/purchasables.js';
-import { BALANCE } from '../data/balance.js';
 import { getCount, getPurchasableState, getActiveCount } from './purchasable-state.js';
-import { getTeamCostMultiplier } from './resources.js';
+import { maxAffordableCount } from './resources.js';
 
 // Calculate the target active count for an item based on its policy
 export function calculateTarget(itemId, policy, options = {}) {
@@ -29,31 +27,11 @@ export function calculateTarget(itemId, policy, options = {}) {
 
     case 'percent_revenue': {
       const revenue = gameState.computed?.revenue?.gross || 0;
-      const purchasable = getPurchasableById(itemId);
-      if (!purchasable) return 0;
-      const rawBaseCost = purchasable.salary || purchasable.runningCost || 1;
-      const baseCost = rawBaseCost * getTeamCostMultiplier(itemId);
-      const opsDiscount = 1 - (gameState.computed?.ceoFocus?.opsBonus ?? gameState.opsBonus ?? 0);
+      const opsBonus = gameState.computed?.ceoFocus?.opsBonus ?? 0;
+      const opsDiscount = 1 - opsBonus;
+      if (opsDiscount <= 0) return 0;
       const budget = revenue * (policy.targetValue / 100);
-      const scaling = BALANCE.COST_SCALING[itemId] || 0;
-
-      if (scaling > 0 && opsDiscount > 0) {
-        // Solve: baseCost * N * (1 + scaling * N) * opsDiscount = budget
-        // scaling * N² + N = budget / (baseCost * opsDiscount)
-        const c = budget / (baseCost * opsDiscount);
-        return Math.floor((-1 + Math.sqrt(1 + 4 * scaling * c)) / (2 * scaling));
-      } else {
-        // No scaling or zero costs — simple division
-        const effectiveCost = baseCost * opsDiscount;
-        if (effectiveCost <= 0) return 0;
-        return Math.floor(budget / effectiveCost);
-      }
-    }
-
-    case 'percent_item': {
-      if (!policy.targetItem) return 0;
-      const referenceCount = getActiveCount(policy.targetItem);
-      return Math.ceil(referenceCount * (policy.targetValue / 100));
+      return maxAffordableCount(itemId, budget / opsDiscount);
     }
 
     default:

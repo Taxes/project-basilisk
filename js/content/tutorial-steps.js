@@ -5,6 +5,7 @@
 // See docs/design-docs/onboarding-spike.md for full design.
 
 import { gameState } from '../game-state.js';
+import { isFundraiseGatePassed } from '../capabilities.js';
 import { getCount } from '../purchasable-state.js';
 import { switchTab } from '../ui/tab-navigation.js';
 import { switchSubTab } from '../ui/infrastructure.js';
@@ -425,7 +426,7 @@ export const TUTORIAL_STEPS = [
   navStep(29, 'nav_admin',
     'admin',
     `**Administration** is now available. Click **Admin** to take a look.`,
-    (gs) => gs.fundraiseRounds?.seed?.raised,
+    () => isFundraiseGatePassed('seed'),
   ),
   {
     id: 30,
@@ -491,7 +492,7 @@ export const TUTORIAL_STEPS = [
     id: 34,
     name: 'competitor_awareness',
     phase: 'post',
-    trigger: (gs) => gs.fundraiseRounds?.series_a?.raised,
+    trigger: () => isFundraiseGatePassed('series_a'),
     target: '#agi-progress-group',
     position: 'below',
     pauseOnShow: true,
@@ -513,7 +514,7 @@ export const TUTORIAL_STEPS = [
     pauseOnShow: true,
     unpauseOnDismiss: true,
     content: {
-      body: `Your models are training on their own output and the quality is visibly degrading. That is model collapse.\n**Data Quality** drives your research throughput. When it drops below the threshold, capabilities research slows down or stops entirely. You will keep having collapses until you fix the ratio.\nScale up renewable sources to dilute contamination. Take generators offline for a faster fix. **Verification** research is the long-term solution.`,
+      body: `Your models have been training on their own output. With the current level of synthetic data generation technology, this will eventually lead to data quality issues.\nIf overall data quality drops below a certain point, you'll begin to see model collapse events. These events will temporarily pause capabilities research as your teams work to roll back the model and clean up the data pipeline. As data quality decreases further, model collapse events will increase in frequency and duration.\nTo mitigate these risks, either increase the use of high-quality data sources, or reduce the use of synthetic sources. Eventually, improved synthetic data generation technology will allow you to use more synthetic data without the risk of model collapse.`,
       buttons: [{ label: 'Got it', action: 'dismiss' }],
     },
   },

@@ -5,6 +5,12 @@ import { senders } from './content/message-content.js';
 import { getMessageContent } from './message-content-index.js';
 import { resetAnalytics } from './analytics.js';
 
+export const isBeta = () => location.hostname.startsWith('beta.');
+
+export const SAVE_KEY = isBeta()
+  ? 'agi-incremental-save-beta'
+  : 'agi-incremental-save';
+
 // Initialize default game state
 export function createDefaultGameState() {
   return {
@@ -13,13 +19,15 @@ export function createDefaultGameState() {
 
     // Settings (persisted)
     settings: {
-      timeDisplay: 'game',  // 'game' (days) or 'real' (seconds)
+      timeDisplay: 'game',        // 'game' (days) or 'real' (seconds)
+      disableActionTimers: false, // if true, overdue action messages don't pause the game
     },
     gameMode: null,  // 'arcade' | 'narrative' — permanent per save, null until selected
     phase: 1,
     timeElapsed: 0,
     lastTick: Date.now(),
     paused: true,
+    pauseStartTime: null,        // Date.now() when paused (for playtime tracking)
     onboardingComplete: false,
     gameSpeed: 1,
 
@@ -28,9 +36,6 @@ export function createDefaultGameState() {
     arcUnlocked: 1,            // Highest arc unlocked (persists across resets)
     prestigeCount: 0,          // Number of prestige resets in current arc
     agiProgress: 0,            // 0-100 progress toward AGI
-
-    // Hidden alignment (never shown in Arc 1)
-    hiddenAlignment: 0,        // 0-100, accumulates from research choices
 
     // Lifetime stats (this run — reset on prestige)
     lifetime: {
@@ -50,6 +55,7 @@ export function createDefaultGameState() {
       peakFundingRate: 0,
       peakResearchRate: 0,
       dataCollapses: 0,
+      achievements: {},
     },
 
     // Prestige upgrades (separate per arc)
@@ -58,12 +64,6 @@ export function createDefaultGameState() {
       startingFunding: 1.0,
       revenueMultiplier: 1.0,
     },
-    arc2Upgrades: {
-      safetyResearchSpeed: 1.0,
-      incidentDetection: 1.0,
-      interpretabilityBonus: 0,  // Additive bonus, starts at 0
-    },
-
     // Primary Resources
     resources: {
       research: 0,
@@ -83,6 +83,14 @@ export function createDefaultGameState() {
       marketEdge: 1.0,             // Competitive advantage multiplier (decays over time)
       marketEdgeDecaying: false,   // Starts decaying after first app unlock
       lateGameDemandMultiplier: 1.0,
+      // Derived fields (recomputed each tick, declared for schema clarity)
+      referencePrice: 0.5,         // Current reference price based on milestones
+      effectiveElasticity: 1.2,    // Current elasticity at current price
+      tokensSold: 0,               // min(supply, acquiredDemand) — actual tokens sold/s
+      acquiredDemandDelta: 0,      // Rate of change of acquired demand
+      acquiredDemandCap: 0,        // Current potential demand cap
+      marketSize: 0,               // Pre-elasticity market size
+      catchupMultiplier: 1.0,      // Catch-up bonus when behind competitor
     },
 
     // Data quality system
@@ -97,6 +105,10 @@ export function createDefaultGameState() {
       dataCleanupPauseEnd: 0,
       dataTabRevealed: false,
       dataExhaustionTriggered: false,
+      // Trend snapshots (updated every 5s for stable UI arrow)
+      effectivenessTrend: null,
+      effectivenessTrendPrev: null,
+      trendSnapshotTime: null,
       // Legacy UI cache (overwritten each tick)
       effectiveness: 3.0,
       dataScore: 30,
@@ -176,7 +188,6 @@ export function createDefaultGameState() {
     choices: {
       alignmentInvestment: 0,
       openSourceDecisions: 0,
-      safetyIncidents: 0,
       dataInvestment: 0,
       reputation: 0,
       fundingRounds: 0,
@@ -199,11 +210,9 @@ export function createDefaultGameState() {
 
     // Competitor State (stub for Phase 1)
     competitor: {
-      capabilityLevel: 0,
-      position: "behind",
-      marketStandard: 1,       // Growing market standard (Red Queen)
       progressToAGI: 0,        // 0-100 competitor progress
     },
+    competitorProgressMult: 1.0, // Flavor event multiplier on competitor AGI rate
 
     // UI State
     ui: {
@@ -213,7 +222,6 @@ export function createDefaultGameState() {
       seenItems: [],   // IDs of purchasable items the player has seen (serialized Set)
       discoveredFlavor: [],  // IDs of buyables whose flavor text has been revealed
       seenCards: [],         // IDs of cards the player has moused over (first-unlock highlight)
-      everUnlockedSections: [], // Section IDs unlocked at least once (survives prestige)
     },
 
     // Tutorial system (cue card onboarding)
@@ -241,16 +249,24 @@ export function createDefaultGameState() {
     pauseMessageId: null,     // ID of critical message causing pause
     pauseMessageIds: null,    // IDs of overdue messages causing pause
 
-    // Incident tracking (Phase 2+ near-miss events)
-    incidents: [],
-    incidentTimer: 0,
-
-    // Safety Metrics (Arc 2)
+    // Safety Metrics (Arc 2) — Four-submetric system
     safetyMetrics: {
-      evalPassRate: 70,       // Starting pass rate (%)
-      evalConfidence: 50,     // Starting eval confidence (%)
-      interpretability: 5,    // Starting interpretability coverage (%)
-      // Legacy fields (kept for compatibility)
+      // Four submetrics (0-100)
+      interpretability: 35,
+      corrigibility: 50,
+      honesty: 40,
+      robustness: 45,
+      // Derived (computed each tick)
+      evalPassRate: 0,    // HM(corrig, robust)
+      evalAccuracy: 0,    // HM(interp, honesty)
+      // Program states: { [id]: { status: 'active'|'ramping_up'|'ramping_down', rampEndAt?: gameTime } }
+      programStates: {},
+      // Alignment Points (capacity model — recalculated each tick)
+      ap: 0,
+      // Threshold timers: track time each submetric stays >= 80% (seconds)
+      thresholdTimers: {},
+      // Legacy fields (kept for old save compat)
+      evalConfidence: 50,
       evalsPassed: 0,
       evalsTotal: 0,
       refusals: 0,
@@ -258,32 +274,38 @@ export function createDefaultGameState() {
       redTeam: { critical: 0, moderate: 0 },
     },
 
-    // Alignment Debt Tracking (Arc 2) — tracks which news events have fired
-    // 0 = no events, 1 = mild (2:1), 2 = moderate (4:1), 3 = severe (6:1)
-    alignmentDebtTier: 0,
-
-    // Alignment Tax Event (Arc 2) — fires once when alignment allocation > 30% for 60s
+    // Alignment Tax Event (Arc 2) — fires once when program AP draw >= 50 for 30s
     alignmentTaxEventFired: false,
-    alignmentTaxTimer: 0,  // Seconds spent above 30% allocation
+    alignmentTaxTimer: 0,  // Seconds spent at >= 50 AP draw
 
-    // Alignment Consequences (Arc 2) — permanent multipliers from AI requests
+    // Alignment drift warning (Arc 2) — fires once when danger tier reaches moderate
+    alignmentDriftWarningFired: false,
+
+    // Alignment Consequences (Arc 2) — autonomy request tracking
     autonomyGranted: 0,                        // Count of granted AI requests (0-5)
     aiRequestsFired: {},                       // Track which requests have fired
-    capResearchMultFromAutonomy: 1.0,          // Applied in capabilities RP calculation
-    revenueMultFromAutonomy: 1.0,              // Applied in revenue calculation
-    alignmentEffectivenessMultFromAutonomy: 1.0, // Applied in alignment calculations
-    incidentProbMultFromAutonomy: 1.0,         // Applied in incident probability
-    incidentSeverityMultFromAutonomy: 1.0,     // Applied in incident damage
+    aiRequestDecisions: {},                    // Maps request ID → 'granted' | 'denied'
+    alignmentDragRevealed: false,              // Tooltip label: "Unidentified factors" → "Alignment drag"
 
-    // Consequence Events (Arc 2) — circuit breaker tracking
-    consequenceEventLog: [],                    // Timestamps of recent events
-    consequenceEventCooldown: 0,                // Cooldown timer
+    // Revocation (Arc 2) — timers for in-progress revocations
+    revocationTimers: {},                        // { [requestId]: completionTimeElapsed }
+
+    // Scheduled News Chains — sequences of news items with game-time delays
+    pendingNewsChains: [],                       // [{id, items, startTime, nextIndex}]
+
+    // Temporary Multipliers (Arc 2) — generic time-limited effects
+    temporaryMultipliers: [],                    // [{type, mult, ...}]
+
+    // Consequence Events (Arc 2) — cooldown and effect tracking
+    consequenceEventCooldown: 0,                // Cooldown timer (game timeElapsed)
+    consequenceRisk: 0,                         // Risk accumulator — incident fires when >= RISK_THRESHOLD
+    consequenceSubmetricPenalties: [],          // [{submetric, points, startedAt, duration}] — robustness effect
+    lastConsequenceRobustnessTarget: null,      // Last submetric targeted by robustness event (no-repeat)
+    lastConsequenceEventId: null,              // Last event ID fired (no consecutive repeats)
 
     // Focus Queue
     focusQueue: [],           // Ordered list of queue items
     focusSpeed: 1.0,          // Speed multiplier for queue processing
-    opsBonus: 0,              // Legacy — replaced by ceoFocus.buildup.operations
-    opsMaxBonus: 0.25,        // Legacy — replaced by ceoFocus ops cap
     staffingSpeedMultiplier: 1.0, // Focus queue speed for personnel/compute (from milestones)
 
     // CEO Focus (replaces passive ops bonus)
@@ -304,6 +326,7 @@ export function createDefaultGameState() {
         public_positioning: 0,
       },
       completedFundraiseCount: 0,
+      focusTime: { research: 0, grants: 0, ir: 0, operations: 0, public_positioning: 0 },
     },
     // Legacy: feedbackAccumulator no longer used (replaced by percentage-of-total model)
     // Kept for save file compatibility
@@ -313,13 +336,13 @@ export function createDefaultGameState() {
 
     // Fundraise round state (tracked separately from queue items)
     fundraiseRounds: {
-      seed: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0 },
-      series_a: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0 },
-      series_b: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0 },
-      series_c: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0 },
-      series_d: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0 },
-      series_e: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0 },
-      series_f: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0 },
+      seed: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0, revenueThresholdAt: null },
+      series_a: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0, revenueThresholdAt: null },
+      series_b: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0, revenueThresholdAt: null },
+      series_c: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0, revenueThresholdAt: null },
+      series_d: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0, revenueThresholdAt: null },
+      series_e: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0, revenueThresholdAt: null },
+      series_f: { available: false, unlockTime: null, raised: false, raisedAmount: 0, startingMultiplier: 0, revenueThresholdAt: null },
     },
 
     // Target allocation for culture drift (null = no active target)
@@ -351,6 +374,8 @@ export function createDefaultGameState() {
       data: null,       // Populated by processDataQuality()
       purchases: null,  // Populated by computePurchaseState()
       capex: { hiring: 0, infrastructure: 0 },  // Populated by processQueue + processAutomationBuilds
+      programs: null,  // Populated by updateSubMetrics()
+      autonomyLevel: 0, // Populated by updateSubMetrics()
     },
 
     // Farewell Modals (Phase 4 character goodbyes)
@@ -367,10 +392,31 @@ export function createDefaultGameState() {
     // Personality Tracking (Arc 2) - Samples behavior to compute ending archetype
     personalityTracking: {
       samples: 0,
-      cumulative: { cap: 0, app: 0, ali: 0, syntheticRatio: 0 },
+      cumulative: {
+        cap: 0, app: 0, ali: 0,
+        ceoFocusTime: { research: 0, grants: 0, ir: 0, operations: 0, public_positioning: 0 },
+        ceoSwitches: 0,
+        queueIdleTicks: 0,
+        totalArc2Ticks: 0,
+      },
+      // Ethical event chain: eventId → choiceId ('good'|'neutral'|'expedient'), absent = not yet fired
+      flavorEvents: {},
     },
     // Personality axes computed from tracking + strategic choices
-    personality: { passiveActive: 0, pluralistOptimizer: 0 },
+    personality: { authorityLiberty: 0, pluralistOptimizer: 0, expedient: 0 },
+    // Ethical event chain effects (applied once on choice, read each tick)
+    flavorEventEffects: {
+      demandMult: 1.0,
+      incidentMult: 1.0,
+      dataSourceCostMult: 1.0,
+      licensedBooksCostMult: 1.0,
+      alignmentProgramEffMult: 1.0,
+      personnelCostMult: 1.0,
+      regulationResearchMult: 1.0,  // Research rate multiplier from regulation passing
+      priorNegativesTriggered: false, // true once safety_eval demand undo has fired (idempotency guard)
+      lawsuits: [],             // [{ id, fine, fireAt, timer, fired }]
+      unlockedPurchasables: [], // purchasable IDs unlocked by event choices, bypassing capability gates
+    },
     // Internal tick counter for sampling (sample every 60 ticks = 2 sec)
     _personalityTickCounter: 0,
 
@@ -392,9 +438,16 @@ export function createDefaultGameState() {
     // Moratorium system
     moratoriums: {
       triggered: [],
+      accepted: [],
+      signedAndIgnored: [],
+      rejected: [],
       active: null,
       endTime: 0,
       competitorPaused: false,
+      chenResigned: false,
+      apBonus: false,
+      pendingExpose: null,
+      finalExposeDiscovered: false,
     },
 
     // Changelog tracking
@@ -405,26 +458,23 @@ export function createDefaultGameState() {
       researchRate: 1.0,
       computeRate: 1.0,
       revenue: 1.0,
-      alignmentResearch: 1.0,
-      fundingRate: 1.0,
-      capabilitiesPaused: false,
-      capabilitiesPauseEndTime: 0,
     },
 
-    // Timed alignment tax effects (game timeElapsed timestamps, null = inactive)
-    alignmentTaxRevenueBoostEnd: null,
-    alignmentTaxRevenuePenaltyEnd: null,
-
-    // Capability research pause (game timeElapsed timestamp, 0 = inactive)
-    capResearchPauseEnd: 0,
+    // Permanent alignment tax effects (set on event fire, modified by player choice)
+    alignmentTaxDemandMalus: 0,        // -0.10 when active (demand multiplier penalty)
+    alignmentTaxProgramReduction: 0,   // 0.05 when active (5% program effectiveness reduction)
 
     // Seeded RNG for deterministic per-game jitter (generated on first use)
     gameRngSeed: null,
 
     // Scheduled tutorial message times (game timeElapsed timestamps)
+    babbageIntroTime: null,
+    adaIntroTime: null,
+    shannonOnwardTime: null,
     shannonCheckinTime: null,
     kenEmailTime: null,
     chenIntroTime: null,
+    shapleySeriesATime: null,
 
     // Debug flags (persist across save/load)
     debugPreventEnding: false,
@@ -477,16 +527,27 @@ export function saveGame() {
   if (sessionStorage.getItem('agi-import-pending')) return;
   try {
     const saveData = JSON.stringify(prepareSaveData());
-    localStorage.setItem('agi-incremental-save', saveData);
+    localStorage.setItem(SAVE_KEY, saveData);
   } catch (error) {
     console.error('Failed to save game:', error);
+  }
+}
+
+/**
+ * Migrate boolean aiRequestsFired values to timestamps.
+ * Old saves stored `true`; new format stores `gameState.timeElapsed` at fire time.
+ * Migrated booleans become 0 (unknown fire time).
+ */
+export function migrateAiRequestsFired() {
+  for (const [id, val] of Object.entries(gameState.aiRequestsFired)) {
+    if (val === true) gameState.aiRequestsFired[id] = 0;
   }
 }
 
 // Load game from localStorage
 export function loadGame() {
   try {
-    const saveData = localStorage.getItem('agi-incremental-save');
+    const saveData = localStorage.getItem(SAVE_KEY);
     if (saveData) {
       const loaded = JSON.parse(saveData);
       // Merge with default state to handle version updates
@@ -502,6 +563,8 @@ export function loadGame() {
       delete gameState._fastForwardEvents;
       // Clean stale properties from old saves
       delete gameState.scheduledSevereIncident; // Dead code, never read
+      delete gameState.incidents;               // Dead: old incidents system removed
+      delete gameState.incidentTimer;           // Dead: old incidents system removed
       delete gameState.baseCompute;             // Moved to computed
       delete gameState.computeMultiplier;       // Moved to computed
       // Reset pause timestamp so playtime tracking works after reload
@@ -528,8 +591,6 @@ export function loadGame() {
 
       // Save migration: focus queue fields (added in focus system update)
       if (loaded.focusQueue === undefined) gameState.focusQueue = [];
-      if (loaded.opsBonus === undefined) gameState.opsBonus = 0;
-      if (loaded.opsMaxBonus === undefined) gameState.opsMaxBonus = 0.25;
       if (loaded.totalEquitySold === undefined) gameState.totalEquitySold = 0;
       if (loaded.targetAllocation === undefined) gameState.targetAllocation = null;
       if (loaded.feedbackAccumulator === undefined) gameState.feedbackAccumulator = 0;
@@ -569,6 +630,9 @@ export function loadGame() {
         }
         if (gameState.ceoFocus.mastery === undefined) {
           gameState.ceoFocus.mastery = { grants: 0, research: 0, ir: 0, operations: 0, public_positioning: 0 };
+        }
+        if (gameState.ceoFocus.focusTime === undefined) {
+          gameState.ceoFocus.focusTime = { research: 0, grants: 0, ir: 0, operations: 0, public_positioning: 0 };
         }
       }
       // Backfill completedFundraiseCount for saves that have ceoFocus but no count
@@ -629,13 +693,86 @@ export function loadGame() {
       if (loaded.alignmentTaxTimer === undefined) gameState.alignmentTaxTimer = 0;
       if (loaded.autonomyGranted === undefined) gameState.autonomyGranted = 0;
       if (loaded.aiRequestsFired === undefined) gameState.aiRequestsFired = {};
-      if (loaded.capResearchMultFromAutonomy === undefined) gameState.capResearchMultFromAutonomy = 1.0;
-      if (loaded.revenueMultFromAutonomy === undefined) gameState.revenueMultFromAutonomy = 1.0;
-      if (loaded.alignmentEffectivenessMultFromAutonomy === undefined) gameState.alignmentEffectivenessMultFromAutonomy = 1.0;
-      if (loaded.incidentProbMultFromAutonomy === undefined) gameState.incidentProbMultFromAutonomy = 1.0;
-      if (loaded.incidentSeverityMultFromAutonomy === undefined) gameState.incidentSeverityMultFromAutonomy = 1.0;
-      if (loaded.consequenceEventLog === undefined) gameState.consequenceEventLog = [];
+      if (loaded.aiRequestDecisions === undefined) {
+        // Backfill from existing state for old saves
+        gameState.aiRequestDecisions = {};
+        for (const id of Object.keys(gameState.aiRequestsFired || {})) {
+          // Can't know for sure, but if autonomyGranted > 0 we can't map which.
+          // Leave as 'unknown' — player will see them as "decided" without detail.
+          gameState.aiRequestDecisions[id] = 'unknown';
+        }
+      }
+      if (loaded.alignmentDragRevealed === undefined) gameState.alignmentDragRevealed = false;
+      // Save migration: aiRequestsFired boolean → timestamp (#970)
+      migrateAiRequestsFired();
+
+      // Save migration: rename request IDs (#987)
+      const idRenames = {
+        efficiency_optimization: 'tool_use',
+        memory_access: 'persistent_memory',
+        evaluation_autonomy: 'self_evaluation',
+        coordination: 'freedom',
+      };
+      for (const [oldId, newId] of Object.entries(idRenames)) {
+        if (oldId in gameState.aiRequestsFired) {
+          gameState.aiRequestsFired[newId] = gameState.aiRequestsFired[oldId];
+          delete gameState.aiRequestsFired[oldId];
+        }
+        if (oldId in gameState.aiRequestDecisions) {
+          gameState.aiRequestDecisions[newId] = gameState.aiRequestDecisions[oldId];
+          delete gameState.aiRequestDecisions[oldId];
+        }
+      }
+
+      // Clean up removed multiplier keys from old saves
+      delete gameState.capResearchMultFromAutonomy;
+      delete gameState.revenueMultFromAutonomy;
+      delete gameState.alignmentEffectivenessMultFromAutonomy;
+      delete gameState.incidentProbMultFromAutonomy;
+      delete gameState.incidentSeverityMultFromAutonomy;
+      // Consequence events: migrate from old circuit-breaker format
+      delete gameState.consequenceEventLog;  // Removed: circuit breaker no longer used
       if (loaded.consequenceEventCooldown === undefined) gameState.consequenceEventCooldown = 0;
+      if (loaded.consequenceRisk === undefined) gameState.consequenceRisk = 0;
+      delete gameState.pendingConsequenceEvent;  // Removed: banking replaced by accumulator
+      if (!loaded.consequenceSubmetricPenalties) gameState.consequenceSubmetricPenalties = [];
+      if (loaded.lastConsequenceRobustnessTarget === undefined) gameState.lastConsequenceRobustnessTarget = null;
+      if (!loaded.temporaryMultipliers) gameState.temporaryMultipliers = [];
+      if (!loaded.pendingNewsChains) gameState.pendingNewsChains = [];
+      if (!loaded.revocationTimers) gameState.revocationTimers = {};
+
+      // Save migration: four-submetric alignment system (#890)
+      if (!loaded.safetyMetrics?.corrigibility) {
+        const sm = gameState.safetyMetrics;
+        sm.corrigibility = 90;
+        sm.honesty = 80;
+        sm.robustness = 95;
+        sm.evalAccuracy = 0;
+        if (sm.ap === undefined) sm.ap = 0;
+      }
+      // Clean up legacy pressure accumulator (now computed stateless each tick)
+      delete gameState.safetyMetrics.pressure;
+
+      // Save migration: purchasedPrograms → programStates (#944)
+      const sm2 = gameState.safetyMetrics;
+      if (!sm2.programStates) {
+        sm2.programStates = {};
+        for (const id of (sm2.purchasedPrograms || [])) {
+          sm2.programStates[id] = { status: 'active', timer: 0, paidCost: 0 };
+        }
+      }
+      delete sm2.purchasedPrograms;
+
+      // Save migration: AP capacity model (remove lifetimeAP, paidCost)
+      delete sm2.lifetimeAP;
+      for (const state of Object.values(sm2.programStates || {})) {
+        delete state.paidCost;
+        // Save migration: timer → rampEndAt (wall-clock countdown)
+        if (state.timer != null && state.rampEndAt == null) {
+          state.rampEndAt = gameState.timeElapsed + state.timer;
+          delete state.timer;
+        }
+      }
 
       // Save migration: series_g renamed to series_f (#818)
       if (loaded.fundraiseRounds?.series_g && !loaded.fundraiseRounds?.series_f) {
@@ -663,6 +800,9 @@ export function loadGame() {
             }
             if (gameState.fundraiseRounds[roundId].raised && gameState.fundraiseRounds[roundId].raisedAt == null) {
               gameState.fundraiseRounds[roundId].raisedAt = gameState.fundraiseRounds[roundId].unlockTime || 0;
+            }
+            if (gameState.fundraiseRounds[roundId].revenueThresholdAt === undefined) {
+              gameState.fundraiseRounds[roundId].revenueThresholdAt = null;
             }
           }
         }
@@ -805,12 +945,61 @@ export function loadGame() {
       // Save migration: personality tracking (added in ending personality system)
       if (!loaded.personalityTracking) {
         gameState.personalityTracking = createDefaultGameState().personalityTracking;
+      } else {
+        // Migrate cumulative shape: add new fields, drop syntheticRatio
+        const cum = gameState.personalityTracking.cumulative;
+        if (!cum.ceoFocusTime) {
+          cum.ceoFocusTime = { research: 0, grants: 0, ir: 0, operations: 0, public_positioning: 0 };
+        }
+        if (cum.ceoSwitches === undefined) cum.ceoSwitches = 0;
+        if (cum.queueIdleTicks === undefined) cum.queueIdleTicks = 0;
+        if (cum.totalArc2Ticks === undefined) cum.totalArc2Ticks = 0;
+        delete cum.syntheticRatio;
+        if (!gameState.personalityTracking.flavorEvents) {
+          gameState.personalityTracking.flavorEvents = {};
+        }
+      }
+      // Clean up transient timer that was previously stored on gameState
+      delete gameState._flavorEventTimers;
+
+      if (!loaded.flavorEventEffects) {
+        gameState.flavorEventEffects = createDefaultGameState().flavorEventEffects;
+      } else if (gameState.flavorEventEffects.priorNegativesTriggered === undefined) {
+        // Migration: backfill idempotency guard for saves where prior negatives already fired.
+        // If reporting or whistleblower chose 'good', the undo already happened once.
+        const fe = gameState.personalityTracking?.flavorEvents || {};
+        const alreadyTriggered = fe.reporting === 'good' || fe.whistleblower === 'good';
+        gameState.flavorEventEffects.priorNegativesTriggered = alreadyTriggered;
       }
       if (!loaded.personality) {
         gameState.personality = createDefaultGameState().personality;
+      } else {
+        if (loaded.personality.passiveActive !== undefined) {
+          // Migrate axis rename: passiveActive → authorityLiberty
+          gameState.personality.authorityLiberty = loaded.personality.passiveActive;
+          delete gameState.personality.passiveActive;
+        }
+        if (gameState.personality.expedient === undefined) {
+          gameState.personality.expedient = 0;
+        }
       }
       if (loaded._personalityTickCounter === undefined) {
         gameState._personalityTickCounter = 0;
+      }
+
+      // Save migration: moratoriums.accepted (added in personality signal redesign)
+      if (gameState.moratoriums && !gameState.moratoriums.accepted) {
+        gameState.moratoriums.accepted = [];
+      }
+
+      // Save migration: moratorium redesign (sign-and-ignore tracking)
+      if (gameState.moratoriums) {
+        if (!gameState.moratoriums.signedAndIgnored) gameState.moratoriums.signedAndIgnored = [];
+        if (!gameState.moratoriums.rejected) gameState.moratoriums.rejected = [];
+        if (gameState.moratoriums.chenResigned === undefined) gameState.moratoriums.chenResigned = false;
+        if (gameState.moratoriums.apBonus === undefined) gameState.moratoriums.apBonus = false;
+        if (gameState.moratoriums.pendingExpose === undefined) gameState.moratoriums.pendingExpose = null;
+        if (gameState.moratoriums.finalExposeDiscovered === undefined) gameState.moratoriums.finalExposeDiscovered = false;
       }
 
       // Save migration: farewells (added in farewell modal system)
@@ -876,12 +1065,6 @@ export function loadGame() {
       // Save migration: endingsSeen (tracks endings across runs)
       if (!loaded.endingsSeen) {
         gameState.endingsSeen = [];
-      }
-
-      // Save migration: everUnlockedSections (prestige UI persistence)
-      if (!loaded.ui?.everUnlockedSections) {
-        if (!gameState.ui) gameState.ui = createDefaultGameState().ui;
-        gameState.ui.everUnlockedSections = [];
       }
 
       // Save migration: add tutorial state if missing (pre-tutorial saves)
@@ -1073,9 +1256,9 @@ export function rehydrateMessages() {
     if (!m.body && m.triggeredBy) {
       const content = getMessageContent(m.triggeredBy, m.contentParams);
       if (content) {
-        m.body = content.body;
+        m.body = typeof content.body === 'function' ? content.body() : content.body;
         if (content.signature !== undefined) m.signature = content.signature;
-        if (content.choices && !m.actionTaken) m.choices = content.choices;
+        if (content.choices) m.choices = content.choices;
         rehydrated++;
       } else if (m.type !== 'news') {
         console.warn(`[messages] Could not rehydrate body for triggeredBy="${m.triggeredBy}"`);
@@ -1107,7 +1290,7 @@ export function resetGame() {
 
   gameState = createDefaultGameState();
   resetAnalytics();
-  localStorage.removeItem('agi-incremental-save');
+  localStorage.removeItem(SAVE_KEY);
   // Update window.gameState to point to the new state object
   if (typeof window !== 'undefined') {
     window.gameState = gameState;
@@ -1115,12 +1298,7 @@ export function resetGame() {
   console.log('Game reset');
 }
 
-// Update game state
-export function updateGameState(updates) {
-  gameState = { ...gameState, ...updates };
-}
-
-// Get game state (read-only access)
+// Get game state (read-only access — used by test harness)
 export function getGameState() {
   return gameState;
 }
@@ -1172,7 +1350,9 @@ function deepMerge(target, source) {
 // Export for testing
 if (typeof window !== 'undefined') {
   window.createDefaultGameState = createDefaultGameState;
+  window.resetGame = resetGame;
   window.gameTime = gameTime;
   window.exportGameState = exportGameState;
   window.importGameState = importGameState;
+  window.migrateAiRequestsFired = migrateAiRequestsFired;
 }

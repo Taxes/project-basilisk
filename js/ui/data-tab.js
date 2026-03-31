@@ -1,8 +1,8 @@
 import { gameState } from '../game-state.js';
 import { BALANCE } from '../../data/balance.js';
-import { getCapForCopies } from '../data-quality.js';
+import { getCapForCopies, EQUILIBRIUM_RATIO, getCollapseMTTH } from '../data-quality.js';
 import { getRateUnit, formatFunding, formatDuration, formatNumber, formatPercent } from '../utils/format.js';
-import { getPurchasableById, getPurchaseCost, canQueuePurchase } from '../content/purchasables.js';
+import { getPurchasableById, getPurchaseCost, canQueuePurchase, areRequirementsMet } from '../content/purchasables.js';
 import { getCount, getActiveCount } from '../purchasable-state.js';
 import { createPurgeItem, findPurgeIndex, addToQueue, removeFromQueue, enqueuePurchase, enqueueFurlough } from '../focus-queue.js';
 import { requestFullUpdate } from './signals.js';
@@ -11,7 +11,7 @@ import { capabilitiesTrack } from '../content/capabilities-track.js';
 import { createAutomationPanel, updateAutomationPanel } from './automation-panel.js';
 import { isAutomationUnlocked } from '../automation-state.js';
 
-import { recordFlavorDiscovery } from '../flavor-discovery.js';
+import { attachFlavorTooltip } from '../flavor-discovery.js';
 
 /** Apply first-unlock highlight to a card if not yet seen by the player. */
 function applyNewCardHighlight(card, purchasableId) {
@@ -147,6 +147,10 @@ function buildDataFingerprint() {
   }
   parts.push('caps:' + capBits.join(','));
 
+  // Event-chain unlocked purchasables (triggers rebuild when a choice unlocks a source)
+  const eventUnlocked = gameState.flavorEventEffects?.unlockedPurchasables || [];
+  parts.push('evunlock:' + eventUnlocked.join(','));
+
   return parts.join('|');
 }
 
@@ -229,9 +233,8 @@ function createStatsPanel() {
   const effectiveScore = scores.effective ?? scores.total;
 
   const effClass = effectiveness >= 1.5 ? 'positive' : effectiveness >= 0.8 ? 'warning' : 'negative';
-  const effMultiplier = effectiveness <= 1.0
-    ? (effectiveness * effectiveness).toFixed(2)
-    : (1.0 + Math.log(1 + (effectiveness - 1.0))).toFixed(2);
+  const effMultiplier = (cd?.effectivenessMultiplier ?? 1).toFixed(2);
+  const atCap = cd?.effectivenessAtCap ?? false;
 
   // Trend arrow from 5s snapshot comparison
   const trend = cd?.trend || 'stable';
@@ -284,6 +287,7 @@ function createStatsPanel() {
       <span class="stat-value ${effClass}" id="data-eff-value">${effMultiplier}x</span>
       <span class="stat-value ${trendClass}" id="data-eff-trend">${trendArrow}</span>
       <span class="dim" id="data-eff-label">research speed</span>
+      ${atCap ? '<span class="dim" id="data-eff-cap">(max)</span>' : ''}
     </div>
     <div class="data-effectiveness-detail" id="data-eff-detail">
       <span id="data-eff-score">${formatNumber(Math.round(effectiveScore))} effective / ${formatNumber(Math.round(required))} needed</span>
@@ -430,14 +434,8 @@ function createBulkCard(src) {
   const desc = document.createElement('div');
   desc.className = 'purchase-description';
   desc.textContent = purchasable?.description || src.name;
-  if (purchasable?.flavorText) {
-    desc.classList.add('has-flavor');
-    const flavorText = purchasable.flavorText;
-    const pId = purchId;
-    attachTooltip(desc, () => {
-      recordFlavorDiscovery(pId);
-      return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
-    }, { delay: 400 });
+  if (purchasable?.flavor) {
+    attachFlavorTooltip(desc, purchId, purchasable.flavor);
   }
 
   const costInfo = document.createElement('span');
@@ -461,7 +459,7 @@ function createBulkCard(src) {
 
   // === Row 4: Requirements hint ===
   let reqEl = null;
-  if (purchasable?.requires?.capability && !isCapUnlocked(purchasable.requires.capability)) {
+  if (purchasable?.requires?.capability && !areRequirementsMet(purchId)) {
     reqEl = document.createElement('div');
     reqEl.className = 'purchase-requires dim';
     reqEl.textContent = `[requires: ${purchasable.requires.capability.replace(/_/g, ' ')}]`;
@@ -479,6 +477,67 @@ function createBulkCard(src) {
   card._purchasableName = src.name;
 
   return card;
+}
+
+// --- Renewable rate helpers (shared by creation + dynamic update) ---
+
+/** Update a rate span's text and class from current values. */
+function applyRateDisplay(el, active, growthRate) {
+  if (active <= 0) {
+    el.className = 'dim';
+    el.textContent = 'paused';
+  } else if (growthRate < 0) {
+    el.className = 'warning';
+    el.textContent = `${growthRate.toFixed(1)}${getRateUnit()} (decaying)`;
+  } else {
+    el.className = 'positive';
+    el.textContent = `+${growthRate.toFixed(1)}${getRateUnit()}`;
+  }
+}
+
+/** Update a score span's text from current values. */
+function applyScoreDisplay(el, curScore, maxScore, active, growthRate) {
+  const pct = maxScore > 0 ? (curScore / maxScore * 100) : 0;
+  let timeToCapText = '';
+  if (active > 0 && growthRate > 0 && pct < 99) {
+    const remaining = maxScore - curScore;
+    const estSeconds = remaining / growthRate;
+    timeToCapText = estSeconds < 3600
+      ? `~${Math.ceil(estSeconds / 60)}m to cap`
+      : `~${(estSeconds / 3600).toFixed(1)}h to cap`;
+  }
+  const html = ` \u00b7 ${curScore.toFixed(0)}/${maxScore.toFixed(0)} (${pct.toFixed(0)}%)${timeToCapText ? ' \u00b7 ' + timeToCapText : ''}`;
+  if (el._prevHTML !== html) {
+    el.innerHTML = html;
+    el._prevHTML = html;
+  }
+}
+
+/** Tooltip builder: generation vs decay breakdown for a renewable source. */
+function buildRateTooltip(srcId) {
+  const cd = gameState.computed?.data?.renewables?.[srcId];
+  if (!cd) return '';
+  const score = cd.score ?? 0;
+  const rawCap = cd.rawCap ?? 0;
+  const active = getActiveCount('data_' + srcId);
+  const unit = getRateUnit();
+
+  const genRate = (active > 0 && score < rawCap)
+    ? (rawCap - score) / BALANCE.DATA_RENEWABLE_TAU
+    : 0;
+  const decayRate = score / BALANCE.DATA_RENEWABLE_FRESH_TAU;
+  const net = genRate - decayRate;
+
+  let html = '';
+  if (active > 0) {
+    html += `<div class="tooltip-row"><span>Generation</span><span class="positive">+${genRate.toFixed(1)}${unit}</span></div>`;
+  }
+  html += `<div class="tooltip-row"><span>Decay</span><span class="warning">\u2212${decayRate.toFixed(1)}${unit}</span></div>`;
+  if (active <= 0 && score > 0) {
+    html += `<div class="tooltip-row dim"><span>No active sources</span></div>`;
+  }
+  html += `<div class="tooltip-row"><span>Net</span><span>${net >= 0 ? '+' : ''}${net.toFixed(1)}${unit}</span></div>`;
+  return html;
 }
 
 function createRenewableCard(src) {
@@ -581,21 +640,15 @@ function createRenewableCard(src) {
   const desc = document.createElement('div');
   desc.className = 'purchase-description';
   desc.textContent = purchasable?.description || src.name;
-  if (purchasable?.flavorText) {
-    desc.classList.add('has-flavor');
-    const flavorText = purchasable.flavorText;
-    const pId = purchId;
-    attachTooltip(desc, () => {
-      recordFlavorDiscovery(pId);
-      return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
-    }, { delay: 400 });
+  if (purchasable?.flavor) {
+    attachFlavorTooltip(desc, purchId, purchasable.flavor);
   }
 
   const costInfo = document.createElement('span');
   costInfo.className = 'purchase-cost-info';
   if (isOwned) {
     // Cost info: purchase cost + duration + marginal cap from next copy
-    const marginalCap = Math.round(getCapForCopies(src, active + 1, gameState) - getCapForCopies(src, active, gameState));
+    const marginalCap = Math.round((getCapForCopies(src, active + 1, gameState) - getCapForCopies(src, active, gameState)) * EQUILIBRIUM_RATIO);
     const costText = formatFunding(cost.funding || 0);
     const durationText = purchasable?.focusDuration ? formatDuration(purchasable.focusDuration) : '';
     costInfo.textContent = `${costText} \u00b7 ${durationText} \u00b7 +${marginalCap} cap`;
@@ -614,24 +667,26 @@ function createRenewableCard(src) {
   const stats = document.createElement('div');
   stats.className = 'purchase-stats';
   if (isOwned) {
-    const pct = maxScore > 0 ? (curScore / maxScore * 100) : 0;
-    let timeToCapText = '';
-    if (active > 0 && growthRate > 0 && pct < 99) {
-      const remaining = maxScore - curScore;
-      const estSeconds = remaining / growthRate;
-      timeToCapText = estSeconds < 3600
-        ? `~${Math.ceil(estSeconds / 60)}m to cap`
-        : `~${(estSeconds / 3600).toFixed(1)}h to cap`;
-    }
-    const rateText = active > 0
-      ? `<span class="positive">+${growthRate.toFixed(1)}${getRateUnit()}</span>`
-      : '<span class="dim">paused</span>';
-    stats.innerHTML = `${rateText} \u00b7 ${curScore.toFixed(0)}/${maxScore.toFixed(0)} (${pct.toFixed(0)}%)${timeToCapText ? ' \u00b7 ' + timeToCapText : ''}`;
+    // Rate element (stable — tooltip attached once, updated dynamically)
+    const rateEl = document.createElement('span');
+    rateEl.style.cursor = 'help';
+    applyRateDisplay(rateEl, active, growthRate);
+    const srcId = src.id;
+    attachTooltip(rateEl, () => buildRateTooltip(srcId));
+    stats.appendChild(rateEl);
+
+    // Score/pct/time element (updated dynamically)
+    const scoreEl = document.createElement('span');
+    applyScoreDisplay(scoreEl, curScore, maxScore, active, growthRate);
+    stats.appendChild(scoreEl);
+    card._rateEl = rateEl;
+    card._scoreEl = scoreEl;
   } else {
-    const potentialRate = src.growthCap / BALANCE.DATA_RENEWABLE_TAU;
-    const effectiveCap = src.growthCap * src.quality;
+    const eqCap = Math.round(src.growthCap * EQUILIBRIUM_RATIO);
+    const potentialRate = eqCap / BALANCE.DATA_RENEWABLE_TAU;
+    const effectiveCap = eqCap * src.quality;
     const effText = cost.funding > 0 && effectiveCap > 0 ? ` · ${formatFunding(cost.funding / effectiveCap)}/eff. cap` : '';
-    stats.innerHTML = `<span class="dim">Peak +${potentialRate.toFixed(1)}${getRateUnit()} · cap ${src.growthCap}${effText}</span>`;
+    stats.innerHTML = `<span class="dim">Peak +${potentialRate.toFixed(1)}${getRateUnit()} · cap ${eqCap}${effText}</span>`;
   }
   card.appendChild(stats);
 
@@ -648,12 +703,14 @@ function createRenewableCard(src) {
     stats2.textContent = text;
   } else if (isOwned) {
     stats2.innerHTML = `<span class="dim">All copies furloughed</span>`;
+  } else if (purchasable?.runningCost) {
+    stats2.innerHTML = `<span class="dim">Running: ${formatFunding(purchasable.runningCost)}${getRateUnit()}</span>`;
   }
   card.appendChild(stats2);
 
   // === Row 4: Requirements hint (when unowned) ===
   let reqEl = null;
-  if (!isOwned && purchasable?.requires?.capability && !isCapUnlocked(purchasable.requires.capability)) {
+  if (!isOwned && purchasable?.requires?.capability && !areRequirementsMet(purchId)) {
     reqEl = document.createElement('div');
     reqEl.className = 'purchase-requires dim';
     reqEl.textContent = `[requires: ${purchasable.requires.capability.replace(/_/g, ' ')}]`;
@@ -790,12 +847,8 @@ function createSyntheticSection() {
   const genDesc = document.createElement('div');
   genDesc.className = 'purchase-description';
   genDesc.textContent = purchasable?.description || 'Generates synthetic training data.';
-  if (purchasable?.flavorText) {
-    genDesc.classList.add('has-flavor');
-    attachTooltip(genDesc, () => {
-      recordFlavorDiscovery('synthetic_generator');
-      return `<div class="tooltip-section"><div>${purchasable.flavorText}</div></div>`;
-    }, { delay: 400 });
+  if (purchasable?.flavor) {
+    attachFlavorTooltip(genDesc, 'synthetic_generator', purchasable.flavor);
   }
 
   const genCostInfo = document.createElement('span');
@@ -896,14 +949,8 @@ function createSyntheticSection() {
     const upgDesc = document.createElement('div');
     upgDesc.className = 'purchase-description';
     upgDesc.textContent = upgPurchasable?.description || '';
-    if (upgPurchasable?.flavorText) {
-      upgDesc.classList.add('has-flavor');
-      const flavorText = upgPurchasable.flavorText;
-      const pId = nextUpgradeId;
-      attachTooltip(upgDesc, () => {
-        recordFlavorDiscovery(pId);
-        return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
-      }, { delay: 400 });
+    if (upgPurchasable?.flavor) {
+      attachFlavorTooltip(upgDesc, nextUpgradeId, upgPurchasable.flavor);
     }
 
     const upgCostInfo = document.createElement('span');
@@ -925,7 +972,7 @@ function createSyntheticSection() {
 
     // Row 4: Requirements
     let upgReqEl = null;
-    if (!upgQueueable && upgPurchasable?.requires?.capability && !isCapUnlocked(upgPurchasable.requires.capability)) {
+    if (!upgQueueable && upgPurchasable?.requires?.capability && !areRequirementsMet(nextUpgradeId)) {
       upgReqEl = document.createElement('div');
       upgReqEl.className = 'purchase-requires dim';
       upgReqEl.textContent = `[requires: ${upgPurchasable.requires.capability.replace(/_/g, ' ')}]`;
@@ -980,16 +1027,10 @@ function createSyntheticSection() {
       if (cPurch.description) {
         const descEl = document.createElement('div');
         descEl.className = 'completed-card-desc';
-        if (cPurch.flavorText) descEl.classList.add('has-flavor');
         descEl.textContent = cPurch.description;
         item.appendChild(descEl);
-        if (cPurch.flavorText) {
-          const flavorText = cPurch.flavorText;
-          const pId = cId;
-          attachTooltip(descEl, () => {
-            recordFlavorDiscovery(pId);
-            return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
-          }, { delay: 400 });
+        if (cPurch.flavor) {
+          attachFlavorTooltip(descEl, cId, cPurch.flavor);
         }
       }
 
@@ -1049,9 +1090,7 @@ function createSyntheticSection() {
       riskLabel = `COLLAPSE ACTIVE (${remaining.toFixed(0)}s)`;
       riskClass = 'negative';
     } else if (belowThreshold) {
-      const qualityRatio = quality / BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD;
-      const mtth = BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MAX * qualityRatio +
-                   BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MIN * (1 - qualityRatio);
+      const mtth = getCollapseMTTH(quality);
       riskLabel = `~${Math.round(mtth)}s between events`;
       riskClass = mtth < 60 ? 'negative' : 'warning';
     } else {
@@ -1114,13 +1153,25 @@ function updateStatsPanelDynamic() {
   const effectiveScore = scores.effective ?? scores.total;
 
   const effClass = effectiveness >= 1.5 ? 'positive' : effectiveness >= 0.8 ? 'warning' : 'negative';
-  const effMultiplier = effectiveness <= 1.0
-    ? (effectiveness * effectiveness).toFixed(2)
-    : (1.0 + Math.log(1 + (effectiveness - 1.0))).toFixed(2);
+  const effMultiplier = (cd.effectivenessMultiplier ?? 1).toFixed(2);
+  const atCap = cd.effectivenessAtCap ?? false;
 
   // Multiplier
   const effValue = document.getElementById('data-eff-value');
   if (effValue) { effValue.textContent = effMultiplier + 'x'; effValue.className = 'stat-value ' + effClass; }
+
+  // Cap indicator
+  let capEl = document.getElementById('data-eff-cap');
+  if (atCap && !capEl) {
+    capEl = document.createElement('span');
+    capEl.id = 'data-eff-cap';
+    capEl.className = 'dim';
+    capEl.textContent = '(max)';
+    const label = document.getElementById('data-eff-label');
+    if (label) label.after(capEl);
+  } else if (!atCap && capEl) {
+    capEl.remove();
+  }
 
   // Trend arrow
   const trend = cd.trend || 'stable';
@@ -1266,30 +1317,13 @@ function updateRenewableDynamic() {
     // Update border color
     card.style.borderLeft = `3px solid var(--${active > 0 ? 'positive' : 'warning'})`;
 
-    // Update stats via stashed ref (skip if unchanged to avoid flash)
-    if (card._statsEl) {
-      const pct = maxScore > 0 ? (curScore / maxScore * 100) : 0;
-      let timeToCapText = '';
-      if (active > 0 && growthRate > 0 && pct < 99) {
-        const remaining = maxScore - curScore;
-        const estSeconds = remaining / growthRate;
-        timeToCapText = estSeconds < 3600
-          ? `~${Math.ceil(estSeconds / 60)}m to cap`
-          : `~${(estSeconds / 3600).toFixed(1)}h to cap`;
-      }
-      let rateText;
-      if (active <= 0) {
-        rateText = '<span class="dim">paused</span>';
-      } else if (growthRate < 0) {
-        rateText = `<span class="warning">${growthRate.toFixed(1)}${getRateUnit()} (decaying)</span>`;
-      } else {
-        rateText = `<span class="positive">+${growthRate.toFixed(1)}${getRateUnit()}</span>`;
-      }
-      const html = `${rateText} \u00b7 ${curScore.toFixed(0)}/${maxScore.toFixed(0)} (${pct.toFixed(0)}%)${timeToCapText ? ' \u00b7 ' + timeToCapText : ''}`;
-      if (card._statsEl._prevHTML !== html) {
-        card._statsEl.innerHTML = html;
-        card._statsEl._prevHTML = html;
-      }
+    // Update rate element (stable — tooltip stays attached)
+    if (card._rateEl) {
+      applyRateDisplay(card._rateEl, active, growthRate);
+    }
+    // Update score/pct/time element
+    if (card._scoreEl) {
+      applyScoreDisplay(card._scoreEl, curScore, maxScore, active, growthRate);
     }
 
     // Update stats line 2 (running cost — matches infrastructure pattern)
@@ -1387,9 +1421,7 @@ function updateSyntheticDynamic() {
       riskLabel = `COLLAPSE ACTIVE (${remaining.toFixed(0)}s)`;
       riskClass = 'negative';
     } else if (belowThreshold) {
-      const qualityRatio = quality / BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD;
-      const mtth = BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MAX * qualityRatio +
-                   BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MIN * (1 - qualityRatio);
+      const mtth = getCollapseMTTH(quality);
       riskLabel = `~${Math.round(mtth)}s between events`;
       riskClass = mtth < 60 ? 'negative' : 'warning';
     } else {
@@ -1427,7 +1459,7 @@ function updateAffordability() {
       if (card._isFurloughable && count > 0 && purchId.startsWith('data_') && purchId !== 'synthetic_generator') {
         // Renewable data: purchase cost + duration + marginal cap
         const renewSrc = BALANCE.DATA_RENEWABLE_SOURCES.find(s => 'data_' + s.id === purchId);
-        const marginalCap = renewSrc ? Math.round(getCapForCopies(renewSrc, active + 1, gameState) - getCapForCopies(renewSrc, active, gameState)) : 0;
+        const marginalCap = renewSrc ? Math.round((getCapForCopies(renewSrc, active + 1, gameState) - getCapForCopies(renewSrc, active, gameState)) * EQUILIBRIUM_RATIO) : 0;
         const costText = formatFunding(cost.funding || 0);
         const durationText = getPurchasableById(purchId)?.focusDuration ? formatDuration(getPurchasableById(purchId).focusDuration) : '';
         card._costInfoEl.textContent = `${costText} \u00b7 ${durationText} \u00b7 +${marginalCap} cap`;
@@ -1507,11 +1539,11 @@ function isCapUnlocked(capId) {
   return false;
 }
 
-/** Show a data source if: no requirement, or required capability is unlocked. */
+/** Show a data source if: no requirement or all requirement gates are satisfied (by any path). */
 function isDataSourceVisible(sourceId) {
   const p = getPurchasableById('data_' + sourceId);
   if (!p?.requires?.capability) return true;
-  return isCapUnlocked(p.requires.capability);
+  return areRequirementsMet('data_' + sourceId);
 }
 
 // Export reset function for game reset / tab switch.

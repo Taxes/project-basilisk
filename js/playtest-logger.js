@@ -112,6 +112,16 @@ function createSnapshot() {
   const supply = res.tokensPerSecond || 0;
   const demand = res.demand || 0;
   const acquired = res.acquiredDemand || 0;
+  const refPrice = res.referencePrice || 0;
+  const marketEdge = res.marketEdge || 0;
+
+  // Research multiplier breakdown
+  const capMultiplier = computed.research?.capMultiplier || 1;
+  const computeBoost = computed.research?.computeBoost || 0;
+
+  // Pacing
+  const agiProgress = gs.agiProgress || 0;
+  const competitorProgress = gs.competitor?.progressToAGI || 0;
 
   // Build buyables string (only non-zero)
   const buyables = [];
@@ -140,8 +150,9 @@ function createSnapshot() {
 
   // Format with section labels for LLM parsing
   const fundingPart = `funding=$${formatNumber(res.funding)} gross=${formatRate(grossIncome)} token=${formatRate(tokenRevenue)} other=${formatRate(otherIncome)} costs=${formatRate(costs)} net=${formatRate(netRate)}`;
-  const econPart = `econ price=$${tokenPrice.toFixed(2)} supply=${formatNumber(supply)} demand=${formatNumber(demand)} acquired=${formatNumber(acquired)}`;
-  const rpPart = `research rp=${formatNumber(res.research)} ${formatRate(rpRate)} feedback=${formatRate(feedbackRP)} custFB=${formatRate(customerFeedback)} capRP=${formatNumber(capRP)} appRP=${formatNumber(appRP)} alignRP=${formatNumber(alignRP)}`;
+  const econPart = `econ price=$${tokenPrice.toFixed(2)} ref=$${refPrice.toFixed(2)} supply=${formatNumber(supply)} demand=${formatNumber(demand)} acquired=${formatNumber(acquired)} edge=${marketEdge.toFixed(2)}`;
+  const rpPart = `research rp=${formatNumber(res.research)} ${formatRate(rpRate)} capMult=${capMultiplier.toFixed(2)}x boost=${computeBoost.toFixed(2)}x feedback=${formatRate(feedbackRP)} custFB=${formatRate(customerFeedback)} capRP=${formatNumber(capRP)} appRP=${formatNumber(appRP)} alignRP=${formatNumber(alignRP)}`;
+  const pacingPart = `pacing agi=${agiProgress.toFixed(1)}% rival=${competitorProgress.toFixed(1)}%`;
 
   // Data quality system
   const dataComputed = computed.data || {};
@@ -154,7 +165,7 @@ function createSnapshot() {
 
   const buyablesStr = buyables.length > 0 ? ` | units ${buyables.join(' ')}` : '';
 
-  return `${getTimestamp()} SNAPSHOT ${fundingPart} | ${econPart} | ${rpPart} | ${dataPart}${buyablesStr}`;
+  return `${getTimestamp()} SNAPSHOT ${fundingPart} | ${econPart} | ${rpPart} | ${dataPart} | ${pacingPart}${buyablesStr}`;
 }
 
 function checkSnapshot() {

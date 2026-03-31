@@ -4,13 +4,13 @@
 import { gameState } from './game-state.js';
 import { getActiveCount } from './purchasable-state.js';
 import { BALANCE, FUNDRAISE_ROUNDS } from '../data/balance.js';
+import { isFundraiseGatePassed } from './capabilities.js';
 
 // --- Constants ---
 export const BUILDUP_TIME = 120;   // seconds to reach max for continuous activities
 export const IR_BUILDUP_TIME = 90; // IR-specific: faster base time-to-cap (uses sqrt of efficiency)
 export const DECAY_TIME = 360;     // seconds to fully decay
 export const MASTERY_BUILDUP_TIME = 5 * 365; // 5 game-years (~1825 seconds real-time)
-export const MASTERY_DECAY_TIME = 5 * 365;   // 5 game-years (~1825 seconds real-time)
 
 // Activity definitions
 const ACTIVITIES = {
@@ -30,19 +30,19 @@ const ACTIVITIES = {
     id: 'ir',
     name: 'Investor Relations',
     type: 'continuous',
-    unlock: () => gameState.fundraiseRounds?.seed?.raised === true,
+    unlock: () => isFundraiseGatePassed('seed'),
   },
   operations: {
     id: 'operations',
     name: 'Operations',
     type: 'continuous',
-    unlock: () => gameState.fundraiseRounds?.series_a?.raised === true,
+    unlock: () => isFundraiseGatePassed('series_a'),
   },
   public_positioning: {
     id: 'public_positioning',
     name: 'Public Positioning',
     type: 'continuous',
-    unlock: () => gameState.fundraiseRounds?.series_b?.raised === true,
+    unlock: () => isFundraiseGatePassed('series_b'),
   },
 };
 
@@ -56,6 +56,10 @@ export function getSelectedActivity() {
 
 export function selectActivity(activityId) {
   if (ACTIVITIES[activityId] && ACTIVITIES[activityId].unlock()) {
+    // Track CEO switches for personality system (only real changes, not initial/load)
+    if (gameState.arc >= 2 && gameState.ceoFocus.selectedActivity !== activityId) {
+      gameState.personalityTracking.cumulative.ceoSwitches++;
+    }
     gameState.ceoFocus.selectedActivity = activityId;
     computeEffects();  // Update computed state immediately (needed for paused UI)
   }
@@ -66,7 +70,7 @@ export function isQueueEmpty() {
 }
 
 /** CEO is idle when queue is empty or the active item is paused (e.g. insufficient funds) */
-function isEffectivelyIdle() {
+export function isEffectivelyIdle() {
   if (gameState.focusQueue.length === 0) return true;
   return gameState.focusQueue[0].paused === true;
 }
@@ -80,6 +84,12 @@ export function processCEOFocus(deltaTime) {
   const idle = isEffectivelyIdle();
   const selected = gameState.ceoFocus.selectedActivity;
   const buildup = gameState.ceoFocus.buildup;
+
+  // Track time spent on each focus activity (for analytics)
+  if (idle) {
+    const ft = gameState.ceoFocus.focusTime || (gameState.ceoFocus.focusTime = {});
+    ft[selected] = (ft[selected] || 0) + deltaTime;
+  }
 
   // Update buildup/decay for all continuous activities
   for (const [id, activity] of Object.entries(ACTIVITIES)) {
@@ -100,18 +110,14 @@ export function processCEOFocus(deltaTime) {
     }
   }
 
-  // Mastery: builds when active buildup is maxed, decays otherwise
+  // Mastery: builds when active buildup is maxed, no decay
   const mastery = gameState.ceoFocus.mastery || (gameState.ceoFocus.mastery = {});
   for (const [id, activity] of Object.entries(ACTIVITIES)) {
     const isContinuous = activity.type === 'continuous' || activity.type === 'mixed';
     if (!isContinuous) continue;
 
     if (idle && id === selected && (buildup[id] || 0) >= 1.0) {
-      // Active buildup is maxed — build mastery
       mastery[id] = Math.min(1, (mastery[id] || 0) + deltaTime / MASTERY_BUILDUP_TIME);
-    } else {
-      // Decay mastery
-      mastery[id] = Math.max(0, (mastery[id] || 0) - deltaTime / MASTERY_DECAY_TIME);
     }
   }
 
@@ -281,6 +287,18 @@ if (typeof window !== 'undefined') {
   window.processCEOFocus = processCEOFocus;
   window.selectCEOActivity = selectActivity;
   window.onFundraiseCompleted = onFundraiseCompleted;
+}
+
+/** Return focus time as percentages (0–100) for analytics. */
+export function getFocusTimePercents() {
+  const ft = gameState.ceoFocus.focusTime || {};
+  const total = Object.values(ft).reduce((s, v) => s + v, 0);
+  if (total === 0) return null;
+  const result = {};
+  for (const [k, v] of Object.entries(ft)) {
+    result[`focus_pct_${k}`] = Math.round((v / total) * 1000) / 10; // one decimal
+  }
+  return result;
 }
 
 export { ACTIVITIES };

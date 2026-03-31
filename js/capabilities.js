@@ -4,7 +4,6 @@
 // RP is never spent — it accumulates monotonically as a level.
 
 import { gameState } from './game-state.js';
-import { addAlignmentLevel, getCultureBonuses } from './resources.js';
 import { triggerNewsForEvent, addNewsItem } from './news-feed.js';
 import { notify } from './ui.js';
 import { FUNDRAISE_ROUNDS, BALANCE } from '../data/balance.js';
@@ -28,23 +27,6 @@ export function getCapabilityThreshold(capability) {
   return (capability?.threshold || 0) * (BALANCE.RP_THRESHOLD_SCALE || 1);
 }
 
-// Apply hidden alignment effect from research choices
-// Positive values = better alignment, negative values = worse alignment
-// This is never shown to the player in Arc 1, but affects ending outcomes
-// Culture bonus: alignment-heavy allocation multiplies the effect
-export function applyHiddenAlignmentEffect(capabilityId, amount) {
-  const culture = getCultureBonuses();
-  const scaledAmount = amount * culture.aliMult;
-  gameState.hiddenAlignment = Math.max(-100, Math.min(100,
-    (gameState.hiddenAlignment || 0) + scaledAmount
-  ));
-}
-
-// Export for testing
-if (typeof window !== 'undefined') {
-  window.applyHiddenAlignmentEffect = applyHiddenAlignmentEffect;
-}
-
 // Import track content files
 import { capabilitiesTrack } from './content/capabilities-track.js';
 import { applicationsTrack } from './content/applications-track.js';
@@ -56,6 +38,17 @@ export const tracks = {
   applications: applicationsTrack,
   alignment: alignmentTrack,
 };
+
+// Build union of all unlocked capabilities across all tracks
+export function getAllUnlockedCapabilities(state = gameState) {
+  const all = new Set();
+  for (const trackId of Object.keys(state.tracks || {})) {
+    for (const id of state.tracks[trackId].unlockedCapabilities || []) {
+      all.add(id);
+    }
+  }
+  return all;
+}
 
 // Get a capability from a specific track
 export function getCapability(trackId, capabilityId) {
@@ -74,25 +67,36 @@ export function meetsPrerequisites(trackId, capabilityId, state) {
   // Check if already unlocked
   if (trackState.unlockedCapabilities.includes(capabilityId)) return false;
 
-  // Build union of all unlocked capabilities across all tracks
-  const allUnlocked = new Set();
-  for (const tid of Object.keys(state.tracks)) {
-    for (const id of state.tracks[tid].unlockedCapabilities || []) {
-      allUnlocked.add(id);
-    }
-  }
+  const allUnlocked = getAllUnlockedCapabilities(state);
 
   // Check prerequisites against the union
   for (const reqId of capability.requires || []) {
     if (!allUnlocked.has(reqId)) return false;
   }
 
-  // Check alignment requirements (Arc 2+ only — alignment level is always 0 in Arc 1)
-  if (state.arc >= 2 && capability.requiresAlignment) {
-    if (state.tracks.alignment.alignmentLevel < capability.requiresAlignment) return false;
+  return true;
+}
+
+// Check if a track has any tech the player can currently research toward.
+// Returns false when unfinished techs exist but all are gated behind prerequisites.
+// Returns true when all techs are already unlocked (track complete — no malus).
+export function trackHasAvailableTech(trackId, state) {
+  const track = tracks[trackId];
+  if (!track) return true;  // unknown track — no malus
+
+  const trackState = state.tracks[trackId];
+  if (!trackState) return true;
+
+  // Track complete — all techs unlocked
+  if ((trackState.unlockedCapabilities || []).length >= track.capabilities.length) return true;
+
+  // Check if any unfinished tech has all prerequisites met
+  // meetsPrerequisites returns false for already-unlocked techs, so this is exact
+  for (const capability of track.capabilities) {
+    if (meetsPrerequisites(trackId, capability.id, state)) return true;
   }
 
-  return true;
+  return false;  // unfinished techs exist but all are gated
 }
 
 // Check if a milestone has been reached (prerequisites met AND threshold crossed)
@@ -126,10 +130,8 @@ function applyMilestoneEffects(trackId, capabilityId) {
   trackState.unlockTimestamps = trackState.unlockTimestamps || {};
   trackState.unlockTimestamps[capabilityId] = gameState.timeElapsed;
 
-  // Apply alignment bonus
-  if (capability.effects?.alignmentBonus) {
-    addAlignmentLevel(capability.effects.alignmentBonus);
-  }
+  // Arc 2: submetric effects are computed stateless each tick from unlocked lists
+  // (no incremental pressure mutation needed)
 
   // Apply market edge multiplier
   if (capability.effects?.marketEdgeMultiplier) {
@@ -138,11 +140,6 @@ function applyMilestoneEffects(trackId, capabilityId) {
     if (!gameState.resources.marketEdgeDecaying) {
       gameState.resources.marketEdgeDecaying = true;
     }
-  }
-
-  // Apply hidden alignment effect
-  if (capability.hiddenAlignmentEffect) {
-    applyHiddenAlignmentEffect(capabilityId, capability.hiddenAlignmentEffect);
   }
 
   // Check for fundraise round unlocks (delegate to shared gate check)
@@ -165,11 +162,6 @@ function applyMilestoneEffects(trackId, capabilityId) {
 
   // Trigger news
   triggerNewsForEvent('track_unlock', capabilityId);
-
-  // Trigger alignment-specific unlock news (shows what problems alignment research solves)
-  if (trackId === 'alignment') {
-    triggerNewsForEvent('alignment_unlock', capabilityId);
-  }
 
   // Force UI rebuild so cards with capability requirements update immediately
   requestFullUpdate();
@@ -199,13 +191,11 @@ export function checkMilestones(trackId) {
 // Check all milestones across all tracks. Returns map of trackId -> [unlocked IDs].
 export function checkAllMilestones() {
   const results = {};
-  let totalUnlocked = 0;
 
   for (const trackId of Object.keys(tracks)) {
     const unlocked = checkMilestones(trackId);
     if (unlocked.length > 0) {
       results[trackId] = unlocked;
-      totalUnlocked += unlocked.length;
     }
   }
 
@@ -232,70 +222,58 @@ export function checkAllMilestones() {
     }
   }
 
-  // Check for newly completed tracks and redistribute allocation
+  // Check for newly completed tracks — optionally redistribute allocation
   for (const trackId of Object.keys(results)) {
     if (trackId === 'capabilities') continue; // capabilities completing is not player-notable
     if (!isTrackComplete(trackId)) continue;
     const triggerKey = `track_complete_${trackId}`;
     if (hasMessageBeenTriggered(triggerKey)) continue;
 
-    const target = gameState.targetAllocation;
-    if (!target) continue;
+    if (BALANCE.AUTO_REDISTRIBUTE_ON_TRACK_COMPLETE) {
+      const target = gameState.targetAllocation;
+      if (target) {
+        const completedShare = target[trackId];
+        if (completedShare > 0) {
+          // Find remaining incomplete tracks (exclude alignment in Arc 1 — not player-visible)
+          const otherTracks = Object.keys(gameState.tracks).filter(
+            t => t !== trackId && !isTrackComplete(t) && !(gameState.arc === 1 && t === 'alignment')
+          );
+          const otherSum = otherTracks.reduce((s, t) => s + (target[t] || 0), 0);
 
-    const completedShare = target[trackId];
-    if (completedShare <= 0) {
-      // Track already at 0% — just send the message
-      const trackName = tracks[trackId].name;
-      addInfoMessage(
-        trackCompletionMessage.sender,
-        trackCompletionMessage.subject(trackName),
-        trackCompletionMessage.body(trackName),
-        trackCompletionMessage.signature,
-        trackCompletionMessage.tags,
-        triggerKey,
-        { trackName },
-      );
-      markMessageTriggered(triggerKey);
-      continue;
-    }
+          // Redistribute proportionally
+          target[trackId] = 0;
+          if (otherSum > 0) {
+            for (const t of otherTracks) {
+              target[t] = (target[t] || 0) + completedShare * ((target[t] || 0) / otherSum);
+            }
+          } else if (otherTracks.length > 0) {
+            const share = completedShare / otherTracks.length;
+            for (const t of otherTracks) {
+              target[t] = share;
+            }
+          }
 
-    // Find remaining incomplete tracks (exclude alignment in Arc 1 — not player-visible)
-    const otherTracks = Object.keys(gameState.tracks).filter(
-      t => t !== trackId && !isTrackComplete(t) && !(gameState.arc === 1 && t === 'alignment')
-    );
-    const otherSum = otherTracks.reduce((s, t) => s + (target[t] || 0), 0);
+          // Cancel any queued culture shift (targets stale allocation)
+          const cultureIdx = gameState.focusQueue.findIndex(item => item.type === 'culture');
+          if (cultureIdx >= 0) {
+            gameState.focusQueue.splice(cultureIdx, 1);
+          }
+        }
 
-    // Redistribute proportionally
-    target[trackId] = 0;
-    if (otherSum > 0) {
-      for (const t of otherTracks) {
-        target[t] = (target[t] || 0) + completedShare * ((target[t] || 0) / otherSum);
+        // Send Babbage message (only when redistribution is enabled)
+        const trackName = tracks[trackId].name;
+        addInfoMessage(
+          trackCompletionMessage.sender,
+          trackCompletionMessage.subject(trackName),
+          trackCompletionMessage.body(trackName),
+          trackCompletionMessage.signature,
+          trackCompletionMessage.tags,
+          triggerKey,
+          { trackName },
+        );
       }
-    } else if (otherTracks.length > 0) {
-      // All other tracks at 0 — split evenly
-      const share = completedShare / otherTracks.length;
-      for (const t of otherTracks) {
-        target[t] = share;
-      }
     }
 
-    // Cancel any queued culture shift (targets stale allocation)
-    const cultureIdx = gameState.focusQueue.findIndex(item => item.type === 'culture');
-    if (cultureIdx >= 0) {
-      gameState.focusQueue.splice(cultureIdx, 1);
-    }
-
-    // Send Babbage message
-    const trackName = tracks[trackId].name;
-    addInfoMessage(
-      trackCompletionMessage.sender,
-      trackCompletionMessage.subject(trackName),
-      trackCompletionMessage.body(trackName),
-      trackCompletionMessage.signature,
-      trackCompletionMessage.tags,
-      triggerKey,
-      { trackName },
-    );
     markMessageTriggered(triggerKey);
   }
 
@@ -374,7 +352,30 @@ export function checkFundraiseGates() {
         addNewsItem(`Finance: ${round.name} investors retreat, citing insufficient revenue`, 'warning');
       }
     }
+
+    // Private path: stamp revenueThresholdAt when player reaches 5× the round's
+    // revenue gate without raising. Used as a fallback unlock for gated features.
+    if (!state.raised && !state.revenueThresholdAt && minRevenue > 0) {
+      if (currentRevenue >= minRevenue * 5) {
+        state.revenueThresholdAt = gameState.timeElapsed;
+      }
+    }
   }
+}
+
+// Returns true if a fundraise round has been passed.
+// TODO: re-enable private company path (revenue fallback) after testing — see #1115
+// Original: return s?.raised || !!s?.revenueThresholdAt;
+export function isFundraiseGatePassed(roundId) {
+  const s = gameState.fundraiseRounds?.[roundId];
+  return !!s?.raised;
+}
+
+// Returns the timestamp when the gate was passed (raisedAt or revenueThresholdAt).
+// Use as a jitter reference point for delayed messages.
+export function getFundraiseGateTime(roundId) {
+  const s = gameState.fundraiseRounds?.[roundId];
+  return s?.raisedAt ?? s?.revenueThresholdAt ?? null;
 }
 
 // Expose to window for testing
@@ -390,5 +391,7 @@ if (typeof window !== 'undefined') {
   window.getAllTrackCapabilities = getAllTrackCapabilities;
   window.isTrackComplete = isTrackComplete;
   window.checkFundraiseGates = checkFundraiseGates;
+  window.isFundraiseGatePassed = isFundraiseGatePassed;
+  window.getFundraiseGateTime = getFundraiseGateTime;
 }
 

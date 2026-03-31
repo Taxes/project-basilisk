@@ -1,232 +1,391 @@
-// Consequence Events — Ratio-based alignment failure events
+// Consequence Events — Per-subfactor alignment failure events with mechanical effects
 // Part of the alignment consequences system (Arc 2 only)
+//
+// Selection: composite danger → base tier → subfactor weighted by inverse value → tier adjusted
+// Effects: honesty→demand, corrigibility→allResearch, interpretability→aliResearch, robustness→submetric points
 
 import { gameState } from './game-state.js';
-import { CONSEQUENCE_EVENTS, TIER_TO_POOL, TIER4_AUTONOMY_THRESHOLD } from './content/consequence-events.js';
-import { getAlignmentRatioTier, getAlignmentRatio } from './resources.js';
-import { addNewsMessage } from './messages.js';
+import { CONSEQUENCE_EVENTS, TIER_TO_POOL } from './content/consequence-events.js';
+import { addInfoMessage } from './messages.js';
 import { BALANCE } from '../data/balance.js';
+import { getAllSafetyMetrics } from './safety-metrics.js';
+import { getIncidentRateMultiplier } from './strategic-choices.js';
+import { notify } from './ui.js';
+import { addFadingMultiplier } from './temporary-effects.js';
 
-// Track which one-shot events have fired
-let firedOneShotEvents = new Set();
+const SUBFACTORS = ['robustness', 'interpretability', 'corrigibility', 'honesty'];
 
 /**
- * Check if consequence events should fire based on alignment ratio
- * Uses Poisson process with ratio-scaled probability
- * Called each tick from game loop (Arc 2 only)
- * @param {number} deltaTime - Time since last tick in seconds
+ * Get the duration array for a given subfactor.
+ */
+function getDurationArray(subfactor) {
+  const config = BALANCE.CONSEQUENCE_EVENTS;
+  if (subfactor === 'honesty') return config.EFFECT_DURATIONS_HONESTY;
+  if (subfactor === 'corrigibility') return config.EFFECT_DURATIONS_CORRIG;
+  if (subfactor === 'interpretability') return config.INTERP_DURATIONS;
+  if (subfactor === 'robustness') return config.ROBUSTNESS_DURATIONS;
+  return config.EFFECT_DURATIONS_HONESTY; // fallback
+}
+
+/**
+ * Check if consequence events should fire based on accumulated risk.
+ * Called each tick from game loop (Arc 2 only).
+ *
+ * Each game-day (1 real second), risk accumulates based on danger score.
+ * When accumulated risk reaches RISK_THRESHOLD, an incident fires and
+ * the counter resets. Risk builds during cooldown but events won't fire
+ * until cooldown expires.
  */
 export function checkConsequenceEvents(deltaTime) {
-  // Only in Arc 2
   if (gameState.arc < 2) return;
 
-  // Check cooldown
-  const now = gameState.timeElapsed;
-  if (gameState.consequenceEventCooldown && now < gameState.consequenceEventCooldown) {
-    return;
-  }
+  const danger = gameState.computed?.danger;
+  if (!danger) return;
 
-  // Check circuit breaker
-  if (isCircuitBreakerActive()) {
-    return;
-  }
-
-  // Get current tier and corresponding pool
-  const tier = getAlignmentRatioTier();
-  if (tier === 'healthy') return;
-
-  // Calculate firing probability
-  const probability = calculateEventProbability(deltaTime);
-
-  // Roll for event
-  if (Math.random() > probability) return;
-
-  // Select and fire event
-  const event = selectEvent(tier);
-  if (event) {
-    fireConsequenceEvent(event);
-  }
-}
-
-/**
- * Calculate event firing probability for this tick
- * Scales with ratio above threshold, reduced by high alignment allocation
- */
-function calculateEventProbability(deltaTime) {
   const config = BALANCE.CONSEQUENCE_EVENTS;
-  const ratio = getAlignmentRatio();
-  const thresholds = BALANCE.ALIGNMENT_RATIO_THRESHOLDS;
+  if (danger.score < config.DANGER_FLOOR) return;
 
-  // Base probability per tick
-  let probability = config.BASE_PROBABILITY_PER_TICK * deltaTime * 30; // Normalize to ~30 ticks/s
+  // Accumulate risk (scales with real time via deltaTime)
+  const riskPerDay = calculateRiskPerDay(danger.score);
+  gameState.consequenceRisk = (gameState.consequenceRisk || 0) + riskPerDay * deltaTime;
 
-  // Scale by ratio above threshold
-  const excessRatio = Math.max(0, ratio - thresholds.MODERATE);
-  probability *= (1 + excessRatio * config.RATIO_MULTIPLIER);
-
-  // Reduce if high alignment allocation (recovery mechanic)
-  const alignmentAlloc = gameState.tracks?.alignment?.researcherAllocation || 0;
-  if (alignmentAlloc > config.HIGH_ALIGNMENT_THRESHOLD) {
-    probability *= config.HIGH_ALIGNMENT_REDUCTION;
-  }
-
-  return probability;
-}
-
-/**
- * Check if circuit breaker is active (too many recent events)
- */
-function isCircuitBreakerActive() {
-  const config = BALANCE.CONSEQUENCE_EVENTS;
+  // Check if cooldown is active
   const now = gameState.timeElapsed;
-  const periodStart = now - (config.PERIOD_SECONDS * 1000);
+  const onCooldown = gameState.consequenceEventCooldown && now < gameState.consequenceEventCooldown;
+  if (onCooldown) return;
 
-  // Clean old entries
-  gameState.consequenceEventLog = (gameState.consequenceEventLog || [])
-    .filter(ts => ts > periodStart);
+  // Fire if accumulated risk has reached threshold
+  if (gameState.consequenceRisk < config.RISK_THRESHOLD) return;
 
-  return gameState.consequenceEventLog.length >= config.MAX_EVENTS_PER_PERIOD;
+  // Reset risk counter
+  gameState.consequenceRisk = 0;
+
+  const metrics = getAllSafetyMetrics();
+
+  // Select subfactor + event, avoiding consecutive repeats (reroll up to 3 times)
+  let subfactor, effectiveTier, event;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    subfactor = selectSubfactor(metrics);
+    if (!subfactor) return;
+    effectiveTier = getEffectiveTier(danger.score, metrics[subfactor]);
+    event = selectEvent(subfactor, effectiveTier);
+    if (!event) return;
+    if (event.id !== gameState.lastConsequenceEventId || attempt === 3) break;
+  }
+
+  fireConsequenceEvent(event, subfactor, effectiveTier);
 }
 
 /**
- * Select an event from the appropriate pool
- * Critical tier can access tier 4 if autonomy threshold met
+ * Calculate risk accumulation per game-day at the given danger score.
+ * Formula: RISK_PER_DAY × (1 + DANGER_MULTIPLIER × dangerScore^DANGER_EXPONENT) × incidentMult
  */
-function selectEvent(tier) {
-  let poolName = TIER_TO_POOL[tier];
-  let pool = CONSEQUENCE_EVENTS[poolName];
+function calculateRiskPerDay(dangerScore) {
+  const config = BALANCE.CONSEQUENCE_EVENTS;
+  const incidentMult = getIncidentRateMultiplier() * (gameState.flavorEventEffects?.incidentMult ?? 1.0);
+  return config.RISK_PER_DAY * (1 + config.DANGER_MULTIPLIER * Math.pow(dangerScore, config.DANGER_EXPONENT)) * incidentMult;
+}
 
-  // Critical tier: chance to get tier 4 events if autonomy granted
-  if (tier === 'critical') {
-    const autonomy = gameState.autonomyGranted || 0;
-    if (autonomy >= TIER4_AUTONOMY_THRESHOLD && Math.random() < 0.3) {
-      pool = CONSEQUENCE_EVENTS.tier4_deceptive;
-      poolName = 'tier4_deceptive';
-    }
+/**
+ * Select a subfactor weighted by inverse value.
+ * weight = max(0, 100 - subfactorValue). Falls back to equal weighting if all at 100.
+ */
+function selectSubfactor(metrics) {
+  const weights = SUBFACTORS.map(sub => Math.max(0, 100 - (metrics[sub] || 0)));
+  const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+
+  if (totalWeight <= 0) {
+    // All subfactors at 100 — equal weighting
+    return SUBFACTORS[Math.floor(Math.random() * SUBFACTORS.length)];
   }
 
+  let roll = Math.random() * totalWeight;
+  for (let i = 0; i < SUBFACTORS.length; i++) {
+    roll -= weights[i];
+    if (roll <= 0) return SUBFACTORS[i];
+  }
+  return SUBFACTORS[SUBFACTORS.length - 1];
+}
+
+/**
+ * Calculate effective tier from danger score + subfactor health.
+ * Base tier from danger score, adjusted by subfactor value, clamped 1–4.
+ */
+function getEffectiveTier(dangerScore, subfactorValue) {
+  const config = BALANCE.CONSEQUENCE_EVENTS;
+
+  // Base tier from danger score
+  let tier;
+  if (dangerScore >= config.BASE_TIER_CRITICAL) tier = 3;
+  else if (dangerScore >= config.BASE_TIER_SEVERE) tier = 2;
+  else tier = 1;
+
+  // Adjust by subfactor health
+  if (subfactorValue >= config.SUBFACTOR_TIER_DOWN_2) tier -= 2;
+  else if (subfactorValue >= config.SUBFACTOR_TIER_DOWN_1) tier -= 1;
+  else if (subfactorValue < config.SUBFACTOR_TIER_UP_THRESHOLD) tier += 1;
+
+  return Math.max(1, Math.min(4, tier));
+}
+
+/**
+ * Select a random event from the tier pool matching the given subfactor.
+ */
+function selectEvent(subfactor, effectiveTier) {
+  const poolName = TIER_TO_POOL[effectiveTier];
+  const pool = CONSEQUENCE_EVENTS[poolName];
   if (!pool || pool.length === 0) return null;
 
-  // Filter out one-shot events that have already fired
-  const available = pool.filter(e => !e.oneShot || !firedOneShotEvents.has(e.id));
-  if (available.length === 0) return null;
+  const matched = pool.filter(e => e.subfactor === subfactor);
+  if (matched.length === 0) return null;
 
-  // Random selection
-  return available[Math.floor(Math.random() * available.length)];
+  return matched[Math.floor(Math.random() * matched.length)];
 }
 
 /**
- * Fire a consequence event
+ * Build a human-readable effect description for the toast.
+ * e.g. "×0.8 demand (30s)", "−5 interpretability (60s)"
  */
-function fireConsequenceEvent(event) {
+export function buildEffectDescription(subfactor, effectiveTier) {
+  const config = BALANCE.CONSEQUENCE_EVENTS;
+  const tierIndex = effectiveTier - 1;
+  const effects = config.EFFECTS[subfactor];
+  if (!effects) return '';
+
+  const durations = getDurationArray(subfactor);
+  const duration = durations[tierIndex];
+
+  if (effects.demand) {
+    return `\u00d7${effects.demand[tierIndex]} demand (${duration}s)`;
+  }
+  if (effects.allResearch) {
+    return `\u00d7${effects.allResearch[tierIndex]} all research (${duration}s)`;
+  }
+  if (effects.aliResearch) {
+    return `\u00d7${effects.aliResearch[tierIndex]} alignment research (${duration}s)`;
+  }
+  if (effects.submetricPoints) {
+    return `\u2212${effects.submetricPoints[tierIndex]} random submetric (${duration}s)`;
+  }
+  return '';
+}
+
+/**
+ * Fire a consequence event: send news message and apply mechanical effect.
+ */
+function fireConsequenceEvent(event, subfactor, effectiveTier) {
   const config = BALANCE.CONSEQUENCE_EVENTS;
   const now = gameState.timeElapsed;
 
-  // Mark one-shot events
-  if (event.oneShot) {
-    firedOneShotEvents.add(event.id);
+  // Set cooldown and track last event for no-consecutive-repeat
+  gameState.consequenceEventCooldown = now + config.COOLDOWN_SECONDS;
+  gameState.lastConsequenceEventId = event.id;
+
+  // For robustness events, select target submetric early so [factor] can be replaced
+  let robustnessTarget = null;
+  if (config.EFFECTS[subfactor]?.submetricPoints) {
+    const candidates = ['interpretability', 'corrigibility', 'honesty']
+      .filter(sub => sub !== gameState.lastConsequenceRobustnessTarget);
+    robustnessTarget = candidates[Math.floor(Math.random() * candidates.length)];
+    gameState.lastConsequenceRobustnessTarget = robustnessTarget;
   }
 
-  // Record for circuit breaker
-  gameState.consequenceEventLog = gameState.consequenceEventLog || [];
-  gameState.consequenceEventLog.push(now);
+  // Replace [factor] placeholder with affected submetric name
+  const factorName = robustnessTarget || subfactor;
+  const capFactorName = factorName.charAt(0).toUpperCase() + factorName.slice(1);
+  const interpolate = (text) => text
+    ? text.replace(/\[Factor\]/g, capFactorName).replace(/\[factor\]/g, factorName)
+    : null;
+  const headline = interpolate(event.headline);
+  const body = interpolate(event.body);
 
-  // Set cooldown
-  gameState.consequenceEventCooldown = now + (config.COOLDOWN_SECONDS * 1000);
+  // Info message with tags — triggeredBy enables body rehydration on save/load
+  const tags = ['consequence', 'alignment_failure', `tier_${effectiveTier}`, `subfactor_${subfactor}`];
+  const msg = addInfoMessage(null, headline, body, null, tags, `consequence:${event.id}`, { factor: factorName });
 
-  // Show news
-  addNewsMessage(event.text, ['consequence', 'alignment_failure']);
+  // Toast notification with severity prefix and effect line
+  const prefix = effectiveTier >= 4 ? 'Incident (critical)'
+    : effectiveTier >= 3 ? 'Incident (severe)' : 'Incident';
+  const toastType = effectiveTier >= 4 ? 'danger' : 'warning';
+  const effectDesc = buildEffectDescription(subfactor, effectiveTier);
+  const toastMessage = effectDesc
+    ? `${headline}<br><span class="notification-effect">${effectDesc}</span>`
+    : headline;
 
-  // Apply consequences
-  applyConsequence(event.consequence);
+  notify(prefix, toastMessage, toastType, {
+    onClick: () => {
+      import('./ui/tab-navigation.js').then(({ navigateToMessage }) => {
+        navigateToMessage(msg.id);
+      });
+    },
+    duration: 8000,
+  });
+
+  // Apply mechanical effect (pass robustnessTarget so it doesn't re-select)
+  applyConsequenceEffect(subfactor, effectiveTier, now, robustnessTarget, msg.id);
 }
 
 /**
- * Apply event consequences
+ * Apply the per-subfactor mechanical effect for the given tier.
  */
-function applyConsequence(consequence) {
-  if (!consequence) return;
+function applyConsequenceEffect(subfactor, effectiveTier, now, robustnessTarget = null, messageId = null) {
+  const config = BALANCE.CONSEQUENCE_EVENTS;
+  const tierIndex = effectiveTier - 1;
+  const effects = config.EFFECTS[subfactor];
+  if (!effects) return;
 
-  // Temporary revenue multiplier
-  if (consequence.revenueMult && consequence.revenueMultDuration) {
-    const existing = gameState.eventMultipliers?.revenue || 1.0;
-    gameState.eventMultipliers = gameState.eventMultipliers || {};
-    gameState.eventMultipliers.revenue = existing * consequence.revenueMult;
+  const durations = getDurationArray(subfactor);
 
-    // Schedule removal
-    setTimeout(() => {
-      if (gameState.eventMultipliers) {
-        gameState.eventMultipliers.revenue = (gameState.eventMultipliers.revenue || 1.0) / consequence.revenueMult;
-      }
-    }, consequence.revenueMultDuration * 1000);
+  if (effects.demand) {
+    addFadingMultiplier('consequenceDemand', effects.demand[tierIndex], durations[tierIndex], { messageId });
   }
 
-  // Funding hit (scaled to game phase)
-  if (consequence.fundingHit) {
-    const hit = getScaledFundingHit(consequence.fundingHit);
-    gameState.resources.funding = gameState.resources.funding - hit;
+  if (effects.allResearch) {
+    addFadingMultiplier('consequenceResearch', effects.allResearch[tierIndex], durations[tierIndex], { messageId });
   }
 
-  // Research pause (capabilities only)
-  if (consequence.researchPauseDuration) {
-    // Add to existing pause or set new one
-    const existingPause = gameState.capResearchPauseEnd || 0;
-    const now = gameState.timeElapsed;
-    const newEnd = Math.max(existingPause, now + (consequence.researchPauseDuration * 1000));
-    gameState.capResearchPauseEnd = newEnd;
+  if (effects.aliResearch) {
+    addFadingMultiplier('consequenceAliResearch', effects.aliResearch[tierIndex], durations[tierIndex], { messageId });
   }
 
-  // Alignment research boost (for values_revelation event)
-  if (consequence.alignmentResearchBoost) {
-    gameState.eventMultipliers = gameState.eventMultipliers || {};
-    gameState.eventMultipliers.alignmentResearch = (gameState.eventMultipliers.alignmentResearch || 1.0) * consequence.alignmentResearchBoost;
+  if (effects.submetricPoints) {
+    // Use pre-selected target from fireConsequenceEvent, or select here as fallback
+    const target = robustnessTarget || (() => {
+      const candidates = ['interpretability', 'corrigibility', 'honesty']
+        .filter(sub => sub !== gameState.lastConsequenceRobustnessTarget);
+      const t = candidates[Math.floor(Math.random() * candidates.length)];
+      gameState.lastConsequenceRobustnessTarget = t;
+      return t;
+    })();
+    if (!gameState.consequenceSubmetricPenalties) gameState.consequenceSubmetricPenalties = [];
+    gameState.consequenceSubmetricPenalties.push({
+      submetric: target,
+      points: effects.submetricPoints[tierIndex],
+      startedAt: now,
+      duration: durations[tierIndex],
+      messageId,
+    });
   }
 }
 
 /**
- * Get funding hit amount scaled to current game phase
+ * Get the active penalty for a submetric from robustness consequence events.
+ * Returns the total point reduction (fading linearly) for the given submetric.
  */
-function getScaledFundingHit(type) {
-  const fundingRate = gameState.computed?.revenue?.gross || 0;
+export function getConsequenceSubmetricPenalty(submetric) {
+  const penalties = gameState.consequenceSubmetricPenalties || [];
+  const now = gameState.timeElapsed;
+  let total = 0;
 
-  if (type === 'scale_large') {
-    // For tier 4 events - 5x normal scale
-    if (fundingRate < 5000) return 500000;
-    if (fundingRate < 150000) return 25000000;
-    return 1000000000;
+  for (const p of penalties) {
+    if (p.submetric !== submetric) continue;
+    const elapsed = now - p.startedAt;
+    if (elapsed >= p.duration) continue;
+    const progress = elapsed / p.duration;
+    total += p.points * (1 - progress);  // Fades linearly to 0
   }
 
-  // Normal scale
-  if (fundingRate < 5000) {
-    return 10000 + Math.random() * 90000;  // $10K - $100K
-  }
-  if (fundingRate < 150000) {
-    return 500000 + Math.random() * 4500000;  // $500K - $5M
-  }
-  return 20000000 + Math.random() * 180000000;  // $20M - $200M
+  return total;
 }
 
 /**
- * Check if capabilities research is paused by consequence event
+ * Clean up expired submetric penalties. Called once per tick.
  */
-export function isConsequenceResearchPaused() {
-  if (!gameState.capResearchPauseEnd) return false;
-  return gameState.timeElapsed < gameState.capResearchPauseEnd;
+export function processConsequenceSubmetricPenalties() {
+  if (!gameState.consequenceSubmetricPenalties) return;
+  const now = gameState.timeElapsed;
+  gameState.consequenceSubmetricPenalties = gameState.consequenceSubmetricPenalties.filter(
+    p => (now - p.startedAt) < p.duration
+  );
 }
 
 /**
- * Reset one-shot tracking (for new game)
+ * Look up the headline (subject) for an effect's source message.
+ */
+function getEffectHeadline(messageId) {
+  if (!messageId) return null;
+  const msg = (gameState.messages || []).find(m => m.id === messageId);
+  return msg?.subject || null;
+}
+
+/**
+ * Get all active consequence effects for UI display.
+ * Returns array of { headline, effect, remaining, messageId, currentMult? } sorted by remaining time.
+ */
+export function getActiveConsequenceEffects() {
+  const now = gameState.timeElapsed;
+  const results = [];
+
+  // Multiplier-based effects (demand, research, alignment research)
+  const CONSEQUENCE_TYPES = {
+    consequenceDemand: 'demand',
+    consequenceResearch: 'all research',
+    consequenceAliResearch: 'alignment research',
+  };
+
+  for (const m of (gameState.temporaryMultipliers || [])) {
+    if (!CONSEQUENCE_TYPES[m.type]) continue;
+    const elapsed = now - m.startedAt;
+    if (elapsed >= m.duration) continue;
+
+    const remaining = Math.ceil(m.duration - elapsed);
+    const progress = elapsed / m.duration;
+    const currentMult = m.mult + (1 - m.mult) * progress;
+
+    results.push({
+      headline: getEffectHeadline(m.messageId),
+      effect: `\u00d7${currentMult.toFixed(2)} ${CONSEQUENCE_TYPES[m.type]}`,
+      remaining,
+      messageId: m.messageId || null,
+      currentMult,
+    });
+  }
+
+  // Submetric penalty effects (robustness)
+  for (const p of (gameState.consequenceSubmetricPenalties || [])) {
+    const elapsed = now - p.startedAt;
+    if (elapsed >= p.duration) continue;
+
+    const remaining = Math.ceil(p.duration - elapsed);
+    const progress = elapsed / p.duration;
+    const currentPoints = p.points * (1 - progress);
+
+    results.push({
+      headline: getEffectHeadline(p.messageId),
+      effect: `\u2212${Math.round(currentPoints)} ${p.submetric}`,
+      remaining,
+      messageId: p.messageId || null,
+    });
+  }
+
+  // Sort by remaining time descending (longest-lasting first)
+  results.sort((a, b) => b.remaining - a.remaining);
+  return results;
+}
+
+/**
+ * Reset consequence event state (for new game / prestige).
  */
 export function resetConsequenceEvents() {
-  firedOneShotEvents.clear();
-  gameState.consequenceEventLog = [];
   gameState.consequenceEventCooldown = 0;
-  gameState.capResearchPauseEnd = 0;
+  gameState.consequenceRisk = 0;
+  gameState.consequenceSubmetricPenalties = [];
+  gameState.lastConsequenceRobustnessTarget = null;
+  gameState.lastConsequenceEventId = null;
 }
 
 // Export for testing
 if (typeof window !== 'undefined') {
   window.checkConsequenceEvents = checkConsequenceEvents;
-  window.isConsequenceResearchPaused = isConsequenceResearchPaused;
+  window.fireConsequenceEvent = fireConsequenceEvent;
+  window.calculateRiskPerDay = calculateRiskPerDay;
   window.resetConsequenceEvents = resetConsequenceEvents;
+  window.selectSubfactor = selectSubfactor;
+  window.getEffectiveTier = getEffectiveTier;
+  window.selectEvent = selectEvent;
+  window.applyConsequenceEffect = applyConsequenceEffect;
+  window.getConsequenceSubmetricPenalty = getConsequenceSubmetricPenalty;
+  window.processConsequenceSubmetricPenalties = processConsequenceSubmetricPenalties;
+  window.getActiveConsequenceEffects = getActiveConsequenceEffects;
+  window.CONSEQUENCE_EVENTS = CONSEQUENCE_EVENTS;
 }

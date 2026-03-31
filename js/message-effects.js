@@ -52,18 +52,7 @@ export function applyMessageChoiceEffects(effects) {
     gameState.eventMultipliers.computeRate *= effects.computeRateMultiplier;
   }
 
-  // Pause capabilities research (real mechanical effect)
-  // Sets cap RP generation to 0 for specified duration, bypasses culture shift
-  if (effects.pauseCapabilities) {
-    const duration = effects.pauseCapabilities.duration || 30000; // Default 30 seconds
-    gameState.eventMultipliers.capabilitiesPaused = true;
-    gameState.eventMultipliers.capabilitiesPauseEndTime = gameState.timeElapsed + duration;
-    addNewsMessage('Capabilities research paused for safety review', ['internal']);
-  }
-
   // Strategic choice effects
-  // Note: The hiddenAlignment effect in the choice will handle alignment changes,
-  // so we just need to set the selected option here.
   if (effects.strategicChoice) {
     const { choiceId, optionId } = effects.strategicChoice;
     if (gameState.strategicChoices[choiceId]) {
@@ -71,14 +60,6 @@ export function applyMessageChoiceEffects(effects) {
     } else {
       gameState.strategicChoices[choiceId] = { selected: optionId, trigger: 'message' };
     }
-  }
-
-  // Competitor boost
-  if (effects.competitorBoost) {
-    if (!gameState.competitor) {
-      gameState.competitor = { capabilityLevel: 0, position: "behind", progressToAGI: 0 };
-    }
-    gameState.competitor.progressToAGI += effects.competitorBoost;
   }
 
   // Choice tracking (for endings)
@@ -89,20 +70,6 @@ export function applyMessageChoiceEffects(effects) {
       }
       gameState.choices[choice] += effects.choices[choice];
     }
-  }
-
-  // Hidden alignment effect
-  if (effects.hiddenAlignment) {
-    gameState.hiddenAlignment = (gameState.hiddenAlignment || 0) + effects.hiddenAlignment;
-  }
-
-  // Funding rate modifier (temporary or permanent)
-  if (effects.fundingRateMultiplier) {
-    // For now, store as event multiplier
-    if (!gameState.eventMultipliers.fundingRate) {
-      gameState.eventMultipliers.fundingRate = 1.0;
-    }
-    gameState.eventMultipliers.fundingRate *= effects.fundingRateMultiplier;
   }
 
   // Add news message if specified
@@ -123,30 +90,8 @@ export function applyMessageChoiceEffects(effects) {
   }
 }
 
-// Check if capabilities are currently paused
-export function areCapabilitiesPaused() {
-  if (!gameState.eventMultipliers) return false;
-  if (!gameState.eventMultipliers.capabilitiesPaused) return false;
-
-  // Check if pause has expired
-  if (gameState.timeElapsed >= gameState.eventMultipliers.capabilitiesPauseEndTime) {
-    gameState.eventMultipliers.capabilitiesPaused = false;
-    addNewsMessage('Capabilities research resumed', ['internal']);
-    return false;
-  }
-
-  return true;
-}
-
-// Get capabilities pause time remaining (ms)
-export function getCapabilitiesPauseRemaining() {
-  if (!areCapabilitiesPaused()) return 0;
-  return gameState.eventMultipliers.capabilitiesPauseEndTime - gameState.timeElapsed;
-}
 
 // Export for testing
 if (typeof window !== 'undefined') {
   window.applyMessageChoiceEffects = applyMessageChoiceEffects;
-  window.areCapabilitiesPaused = areCapabilitiesPaused;
-  window.getCapabilitiesPauseRemaining = getCapabilitiesPauseRemaining;
 }

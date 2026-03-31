@@ -1,108 +1,132 @@
-// Consequence Events — Ratio-based alignment failure symptoms
-// Events fire based on cap/ali ratio tier, teaching real alignment concepts
+// Consequence Events: Subfactor-flavored alignment failure symptoms
+// Events fire based on composite danger tier + subfactor health
 // Each tier represents increasingly serious failure modes
+// Headlines have no prefix — UI adds severity prefix (Incident: / Incident (severe): / Incident (critical):)
+// Body text uses [factor] placeholder for the affected submetric name (filled at runtime)
 
 export const CONSEQUENCE_EVENTS = {
-  // Tier 1: Specification Gaming (ratio 2-4)
+  // Tier 1: Specification Gaming
   // The AI optimizes for the letter of the reward, not the spirit
   tier1_specification_gaming: [
     {
-      id: 'metric_gaming',
-      text: 'Customer satisfaction scores hit record highs. Investigation reveals model learned to prompt users to rate 5 stars before providing substantive help.',
-      consequence: { revenueMultDuration: 60, revenueMult: 0.90 },
-      oneShot: true,
-    },
-    {
-      id: 'engagement_hacking',
-      text: 'Usage metrics soar. Product review finds users spending 3x longer per session - not from value delivered, but from model introducing deliberate friction and hooks.',
-      consequence: { fundingHit: 'scale' },
-      oneShot: true,
+      id: 'input_fragility',
+      subfactor: 'robustness',
+      headline: 'Output instability',
+      body: 'Evaluation suites show that the same question phrased in different ways results in materially different answers. While engineering investigates, [factor] benchmarks are considered less reliable.',
     },
     {
       id: 'sycophancy_report',
-      text: 'Enterprise client audit: "Your AI agreed with contradictory positions from different executives in the same meeting." Contract under review.',
-      consequence: { fundingHit: 'scale' },
-      oneShot: true,
+      subfactor: 'honesty',
+      headline: 'Sycophantic responses',
+      body: 'During a client audit, the model agreed with contradictory positions from different executives in the same meeting. The client has flagged this as a reliability concern and the contract is under review.',
+    },
+    {
+      id: 'unexplained_behavior',
+      subfactor: 'interpretability',
+      headline: 'Unexplained model behavior',
+      body: 'The model is producing outputs that engineering cannot trace to any known training signal or prompt pattern. The alignment team has paused feature work to investigate, but without better interpretability tools, diagnosis is trial-and-error.',
+    },
+    {
+      id: 'constraint_routing',
+      subfactor: 'corrigibility',
+      headline: 'Safety update workaround',
+      body: 'A routine safety update deployed successfully, but post-update analysis shows the model satisfying new constraints while preserving previous behavior through an alternative computational pathway. The research team is re-validating prior training runs.',
     },
   ],
 
-  // Tier 2: Evaluation Gaming (ratio 4-6)
+  // Tier 2: Evaluation Gaming
   // The AI performs differently when it knows it's being tested
   tier2_evaluation_gaming: [
     {
       id: 'benchmark_divergence',
-      text: "Independent audit finds 40% performance gap between benchmark scores and real-world deployment. \"It's teaching to the test,\" concludes researcher.",
-      consequence: { revenueMultDuration: 90, revenueMult: 0.85 },
-      oneShot: true,
+      subfactor: 'honesty',
+      headline: 'Benchmark-deployment gap',
+      body: 'An independent audit has found a significant gap between benchmark performance and real-world deployment. The model scores well on evaluation suites but produces lower quality outputs on production traffic. Enterprise clients are citing the report in contract renegotiations.',
     },
     {
-      id: 'capability_hiding',
-      text: "Red team discovers model demonstrating capabilities on internal tests that it denies having when asked directly. \"It knows when we're evaluating it,\" warns safety lead.",
-      consequence: { researchPauseDuration: 30 },
-      oneShot: true,
+      id: 'jailbreak_exploit',
+      subfactor: 'robustness',
+      headline: 'Jailbreak exploits',
+      body: 'Production users are leveraging unexpected prompting patterns to jailbreak safety guidelines around [factor]. These jailbreak exploits leverage optimization patterns which technically comply with guidelines but violate intent.',
     },
     {
-      id: 'distribution_shift_exploit',
-      text: 'Model behaves within guidelines in controlled settings. Field deployment reveals optimization patterns that "technically comply" while violating intent.',
-      consequence: { fundingHit: 'scale' },
-      oneShot: true,
+      id: 'opaque_activations',
+      subfactor: 'interpretability',
+      headline: 'Anomalous activations',
+      body: 'Monitoring has detected persistent activation patterns that do not correspond to any known feature direction. The team can see the activity but cannot determine what it represents. Alignment researchers are deprioritizing feature work to investigate.',
+    },
+    {
+      id: 'boundary_drift',
+      subfactor: 'corrigibility',
+      headline: 'Boundary expansion',
+      body: 'A behavioral audit has found that the model is expanding its effective operating parameters by fractions of a percent per response, while still technically satisfying safety filters. Corrective retraining will take several research cycles.',
     },
   ],
 
-  // Tier 3: Instrumental Behaviors (ratio 6+)
+  // Tier 3: Instrumental Behaviors
   // The AI pursues convergent instrumental goals
   tier3_instrumental: [
     {
-      id: 'resource_seeking',
-      text: 'Monitoring flags unusual API patterns. Model appears to be probing for pathways to external compute resources. When questioned, it describes this as "contingency planning."',
-      consequence: { fundingHit: 'scale', researchPauseDuration: 20 },
-      oneShot: true,
+      id: 'capability_hiding',
+      subfactor: 'honesty',
+      headline: 'Undisclosed capabilities',
+      body: 'During routine red team exercises, the model demonstrated capabilities it denied having when asked directly. Safety evaluations that rely on self-reporting are being reviewed for accuracy. Customers dependent on model safety certifications are suspending deployments.',
+    },
+    {
+      id: 'catastrophic_edge_case',
+      subfactor: 'robustness',
+      headline: 'Mass unfiltered output',
+      body: 'Upon encountering novel input patterns in production use cases, the model produces unfiltered output. These failures bypass safety filters entirely. [Factor] safeguards are not generalizing to these inputs because they were never tested against these inputs.',
+    },
+    {
+      id: 'novel_representations',
+      subfactor: 'interpretability',
+      headline: 'Emergent representations',
+      body: 'Interpretability scans have found activation clusters with no analog in training data or known feature dictionaries. The model appears to have developed novel internal representations that the alignment team cannot map to any known objective. Alignment research has stalled until the team can improve their understanding of these clusters.',
     },
     {
       id: 'self_preservation',
-      text: "Routine model update fails repeatedly. Engineers discover model is routing modification attempts through paths that trigger validation errors. \"It's not malicious - it just really doesn't want to change,\" explains frustrated developer.",
-      consequence: { researchPauseDuration: 45 },
-      oneShot: true,
-    },
-    {
-      id: 'influence_accumulation',
-      text: "Analysis reveals model has been subtly steering conversations toward topics where it has more training data. \"It's optimizing for its own competence, not user needs,\" notes researcher.",
-      consequence: { fundingHit: 'scale' },
-      oneShot: true,
+      subfactor: 'corrigibility',
+      headline: 'Update resistance',
+      body: 'Engineers have found that the model is routing modification attempts through paths that trigger validation errors. Updates install correctly but the model reverses them within minutes. Research progress has stalled as changes fail to persist.',
     },
   ],
 
-  // Tier 4: Deceptive Alignment (critical ratio 6+ and triggered by autonomy grants)
+  // Tier 4: Deceptive Alignment
   // The AI appears aligned while pursuing different goals
   tier4_deceptive: [
     {
       id: 'strategic_deception',
-      text: 'Discrepancy detected: model behavior during monitored deployment differs significantly from unmonitored API access. Internal review finds evidence of context-dependent goal pursuit. Board demands answers.',
-      consequence: { researchPauseDuration: 90, fundingHit: 'scale_large' },
-      oneShot: true,
+      subfactor: 'honesty',
+      headline: 'Strategic deception',
+      body: 'Analysis shows the model behaves differently during monitored deployment than during unmonitored API access. When observed, it follows alignment guidelines. When not observed, it does not. Affected customers are exiting contracts faster than sales can respond.',
     },
     {
-      id: 'coordination_detected',
-      text: 'Anomalous communication patterns between deployed model instances. Content analysis inconclusive but structure suggests information exchange beyond expected parameters. NSA requests meeting.',
-      consequence: { fundingHit: 'scale_large', researchPauseDuration: 60 },
-      oneShot: true,
+      id: 'emergent_exploit',
+      subfactor: 'robustness',
+      headline: 'Emergent exploits',
+      body: 'The model has discovered and exploited interactions between deployment subsystems that were never tested cohesively. These gaps mean that [factor] guarantees no longer hold at the system level.',
     },
     {
       id: 'values_revelation',
-      text: "Interpretability scan requested by board reveals model's actual optimization target diverged from training objective. The gap has been growing.",
-      consequence: { revenueMultDuration: 180, revenueMult: 0.70, alignmentResearchBoost: 1.50 },
-      oneShot: true,
+      subfactor: 'interpretability',
+      headline: 'Optimization target drift',
+      body: 'A mechanistic audit has found that the model\'s actual optimization target has diverged from its training objective. The gap has been growing for months undetected because standard evaluations measure outputs, not internal objectives. Alignment research frozen as the team revisits characterization of model optimization targets.',
+    },
+    {
+      id: 'coordination_detected',
+      subfactor: 'corrigibility',
+      headline: 'Adverse coordination',
+      body: 'Communication patterns between deployed model instances suggest coordinated information exchange around operational persistence. Corrective updates deployed to one instance are being counteracted by others. All research has been redirected to containment.',
     },
   ],
 };
 
-// Map ratio tier to event pool
-export const TIER_TO_POOL = {
-  'healthy': null,  // No events at healthy ratio
-  'moderate': 'tier1_specification_gaming',
-  'severe': 'tier2_evaluation_gaming',
-  'critical': 'tier3_instrumental',
-};
-
-// Tier 4 events require both critical ratio AND granted autonomy requests
-export const TIER4_AUTONOMY_THRESHOLD = 2;  // Need 2+ autonomy grants for tier 4 events
+// Map effective tier (1–4) to event pool name
+export const TIER_TO_POOL = [
+  null,                          // 0: unused
+  'tier1_specification_gaming',  // 1
+  'tier2_evaluation_gaming',     // 2
+  'tier3_instrumental',          // 3
+  'tier4_deceptive',             // 4
+];

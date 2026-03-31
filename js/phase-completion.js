@@ -2,8 +2,7 @@
 
 import { gameState, saveGame } from './game-state.js';
 import { isCapabilityUnlocked } from './capabilities.js';
-import { triggerNewsForEvent } from './news-feed.js';
-import { showNarrativeModal, getNarrativeOnDismiss, clearNarrativeOnDismiss } from './narrative-modal.js';
+import { showNarrativeModal, getNarrativeOnDismiss, clearNarrativeOnDismiss, getNarrativeOnChoice, clearNarrativeOnChoice } from './narrative-modal.js';
 import { senders } from './content/message-content.js';
 import { milestone } from './analytics.js';
 
@@ -28,7 +27,6 @@ export function checkPhaseCompletion() {
       research_count: Object.keys(gameState.capabilities || {}).length,
       funding: gameState.resources.funding,
     }, 'phase_transition_2');
-    triggerNewsForEvent('phase_transition', 'phase2');
 
     // Persist that we've shown the completion
     gameState.phaseCompletion.phase1Shown = true;
@@ -51,7 +49,6 @@ export function checkPhaseCompletion() {
       research_count: Object.keys(gameState.capabilities || {}).length,
       funding: gameState.resources.funding,
     }, 'phase_transition_3');
-    triggerNewsForEvent('phase_transition', 'phase3');
 
     // Persist that we've shown the completion
     gameState.phaseCompletion.phase2Shown = true;
@@ -113,14 +110,14 @@ function showPhase2Completion() {
 }
 
 // Hide Phase completion modal
-export function hidePhaseCompletionModal() {
+export function hidePhaseCompletionModal(choiceId) {
   const modal = document.getElementById('phase-completion-modal');
   if (modal) {
     modal.classList.add('hidden');
     // Remove phase-specific classes
     const content = modal.querySelector('.phase-completion-content');
     if (content) {
-      content.classList.remove('phase-forward', 'phase-ominous');
+      content.classList.remove('phase-forward', 'phase-ominous', 'phase-freedom');
     }
   }
 
@@ -128,6 +125,17 @@ export function hidePhaseCompletionModal() {
   if (gameState.pauseReason === 'phase_completion') {
     gameState.paused = false;
     gameState.pauseReason = null;
+  }
+
+  // Choice button clicked — call onChoice and skip onDismiss
+  if (choiceId) {
+    const onChoice = getNarrativeOnChoice();
+    if (onChoice) {
+      clearNarrativeOnChoice();
+      clearNarrativeOnDismiss();
+      onChoice(choiceId);
+      return;
+    }
   }
 
   // Call onDismiss callback if set (e.g. onboarding modal)
@@ -140,11 +148,14 @@ export function hidePhaseCompletionModal() {
 
 // Initialize phase completion UI listeners
 export function initializePhaseCompletion() {
-  const continueButton = document.getElementById('phase-completion-continue');
-
-  if (continueButton) {
-    continueButton.addEventListener('click', () => {
-      hidePhaseCompletionModal();
+  // Use event delegation on the actions container since buttons are replaced dynamically
+  const actionsEl = document.querySelector('.phase-completion-actions');
+  if (actionsEl) {
+    actionsEl.addEventListener('click', (e) => {
+      const button = e.target.closest('.big-button');
+      if (!button) return;
+      const choiceId = button.dataset.choiceId || null;
+      hidePhaseCompletionModal(choiceId);
     });
   }
 }

@@ -1,7 +1,8 @@
 // Tab Navigation Controller
 // Handles top-level tab switching between Dashboard and Messages
 
-import { getUnreadCount, getActionCount } from '../messages.js';
+import { gameState } from '../game-state.js';
+import { getUnreadCount, getActionCount, hasOverdueMessages } from '../messages.js';
 // Note: renderMessagesPanel and selectMessage imported dynamically to break circular dependency
 
 let currentTab = 'dashboard';
@@ -57,12 +58,15 @@ export function updateTabBadge() {
     badge.textContent = actionCount;
     badge.classList.remove('hidden');
     badge.classList.add('has-actions');
+    badge.classList.toggle('has-overdue', hasOverdueMessages());
   } else if (unreadCount > 0) {
     badge.textContent = unreadCount;
     badge.classList.remove('hidden');
     badge.classList.remove('has-actions');
+    badge.classList.remove('has-overdue');
   } else {
     badge.classList.add('hidden');
+    badge.classList.remove('has-overdue');
   }
 }
 
@@ -76,9 +80,14 @@ export function navigateToMessage(messageId) {
   });
 }
 
-// Handle pause overlay "Open Messages" button
+// Handle pause overlay "Go to Messages" button — navigate to the blocking message
 function handlePauseOverlayClick() {
-  switchTab('messages');
+  const blockingId = gameState.pauseMessageId || gameState.pauseMessageIds?.[0];
+  if (blockingId) {
+    navigateToMessage(blockingId);
+  } else {
+    switchTab('messages');
+  }
 }
 
 // Initialize tab navigation

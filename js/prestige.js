@@ -1,7 +1,7 @@
 // Prestige System - Handle arc resets and meta-progression
 
 import { gameState, createDefaultGameState, saveGame } from './game-state.js';
-import { FUNDING } from '../data/balance.js';
+import { FUNDING, PRESTIGE } from '../data/balance.js';
 import { resetQueueIdCounter } from './focus-queue.js';
 import { resetAnalytics } from './analytics.js';
 
@@ -17,217 +17,232 @@ export function getPrestigeMultiplier(key) {
 }
 
 // Calculate prestige upgrade gains based on current progress
+// Same three bonuses for both arcs, with soft cap diminishing returns
 export function calculatePrestigeGain() {
   const progress = gameState.agiProgress || 0;
+  const progressScale = progress / 100;
 
-  // Diminishing returns formula: gain = base * sqrt(progress / 100)
-  const baseGain = 0.2;
-  // baseGain 0.2 → up to 20% per bonus at 100% progress
-  const multiplier = Math.sqrt(progress / 100);
+  const bonuses = {
+    startingFunding: PRESTIGE.GAIN_STARTING_FUNDING,
+    researchMultiplier: PRESTIGE.GAIN_RESEARCH_MULTIPLIER,
+    revenueMultiplier: PRESTIGE.GAIN_REVENUE_MULTIPLIER,
+  };
 
-  if (gameState.arc === 1) {
-    return {
-      researchMultiplier: baseGain * multiplier,
-      startingFunding: baseGain * multiplier,
-      revenueMultiplier: baseGain * multiplier * 0.5,
-    };
-  } else {
-    return {
-      safetyResearchSpeed: baseGain * multiplier,
-      incidentDetection: baseGain * multiplier,
-      interpretabilityBonus: baseGain * multiplier * 0.5,
-    };
+  const caps = {
+    startingFunding: PRESTIGE.CAP_STARTING_FUNDING,
+    researchMultiplier: PRESTIGE.CAP_RESEARCH_MULTIPLIER,
+    revenueMultiplier: PRESTIGE.CAP_REVENUE_MULTIPLIER,
+  };
+
+  const result = {};
+  for (const [key, rawGain] of Object.entries(bonuses)) {
+    const scaled = rawGain * progressScale;
+    const current = gameState.arc1Upgrades?.[key] ?? 1;
+    const cap = caps[key];
+
+    if (current >= cap) {
+      // Past soft cap: diminishing returns via sqrt
+      result[key] = scaled * Math.sqrt(cap / current);
+    } else {
+      result[key] = scaled;
+    }
   }
+
+  return result;
 }
 
-// Apply prestige gains to current upgrades
+// Apply prestige gains to current upgrades (always arc1Upgrades — used for both arcs)
 export function applyPrestigeGains(gains) {
-  if (gameState.arc === 1) {
-    gameState.arc1Upgrades.researchMultiplier *= 1 + (gains.researchMultiplier || 0);
-    gameState.arc1Upgrades.startingFunding *= 1 + (gains.startingFunding || 0);
-    gameState.arc1Upgrades.revenueMultiplier *= 1 + (gains.revenueMultiplier || 0);
-  } else {
-    gameState.arc2Upgrades.safetyResearchSpeed *= 1 + (gains.safetyResearchSpeed || 0);
-    gameState.arc2Upgrades.incidentDetection *= 1 + (gains.incidentDetection || 0);
-    gameState.arc2Upgrades.interpretabilityBonus += gains.interpretabilityBonus || 0;
-  }
+  gameState.arc1Upgrades.researchMultiplier += gains.researchMultiplier || 0;
+  gameState.arc1Upgrades.startingFunding += gains.startingFunding || 0;
+  gameState.arc1Upgrades.revenueMultiplier += gains.revenueMultiplier || 0;
 }
+
+// --- Core reset helper ---
+// All reset functions share the same pattern: snapshot → wipe → restore → cleanup.
+// Centralizing prevents the class of bugs where a new preserve rule is added to one
+// function but missed in the others (historically 7+ bugs from this pattern).
+
+/**
+ * @param {Object} opts
+ * @param {string[]} opts.preserve - top-level gameState keys to snapshot and restore
+ * @param {Object}   opts.set     - key/value overrides applied after restore
+ * @param {Function} [opts.afterReset] - called after restore, before save (arc-specific init)
+ */
+function resetGameState({ preserve = [], set = {}, afterReset } = {}) {
+  // 1. Snapshot preserved top-level values (shallow copy)
+  const snapshot = {};
+  for (const key of preserve) {
+    const val = gameState[key];
+    if (Array.isArray(val)) snapshot[key] = [...val];
+    else if (val && typeof val === 'object') snapshot[key] = { ...val };
+    else snapshot[key] = val;
+  }
+
+  // 2. Snapshot UI sub-keys (nested under gameState.ui, need special handling)
+  const uiSnapshot = {
+    seenCards: gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [],
+    discoveredFlavor: gameState.ui?.discoveredFlavor ? [...gameState.ui.discoveredFlavor] : [],
+  };
+
+  // 3. Tutorial needs transient state cleared after restore
+  const tutorial = gameState.tutorial ? { ...gameState.tutorial } : null;
+
+  // 4. Wipe — delete keys not in defaults (kills transient runtime flags like
+  //    _backgroundMode, _fastForwarding), then overlay fresh defaults.
+  //    This is deny-by-default: new dynamic fields are wiped automatically,
+  //    preventing the class of bug where a forgotten cleanup leaks state (#981).
+  const fresh = createDefaultGameState();
+  for (const key of Object.keys(gameState)) {
+    if (!(key in fresh)) delete gameState[key];
+  }
+  Object.assign(gameState, fresh);
+
+  // 5. Restore snapshots
+  for (const key of preserve) {
+    if (key === 'tutorial') continue; // handled below
+    if (snapshot[key] !== undefined) gameState[key] = snapshot[key];
+  }
+
+  // Always restore UI familiarity (every reset type preserves these)
+  gameState.ui.seenCards = uiSnapshot.seenCards;
+  gameState.ui.discoveredFlavor = uiSnapshot.discoveredFlavor;
+
+  // Restore tutorial with transient state cleared
+  if (tutorial) {
+    gameState.tutorial = tutorial;
+    gameState.tutorial.active = false;
+    gameState.tutorial.shownStep = 0;
+  }
+
+  // 6. Apply explicit overrides
+  for (const [k, v] of Object.entries(set)) {
+    gameState[k] = v;
+  }
+
+  // 7. Post-reset hook (arc-specific initialization)
+  if (afterReset) afterReset();
+
+  // 8. Shared cleanup
+  resetQueueIdCounter();
+  resetAnalytics();
+  gameState.lastTick = Date.now();
+  saveGame();
+}
+
+/** Accumulate lifetime stats into lifetimeAllTime before a reset wipes them. */
+function accumulateLifetimeStats() {
+  const all = { ...gameState.lifetimeAllTime };
+  all.prestigeResets = (all.prestigeResets || 0) + 1;
+  const lt = gameState.lifetime || {};
+  all.peakFundingRate = Math.max(all.peakFundingRate || 0, lt.peakFundingRate || 0);
+  all.peakResearchRate = Math.max(all.peakResearchRate || 0, lt.peakResearchRate || 0);
+  all.dataCollapses = (all.dataCollapses || 0) + (lt.dataCollapses || 0);
+  return all;
+}
+
+function initArc2Allocations() {
+  gameState.tracks.capabilities.researcherAllocation = 1.0;
+  gameState.tracks.applications.researcherAllocation = 0.0;
+  gameState.tracks.alignment.researcherAllocation = 0.0;
+}
+
+// --- Public reset functions ---
 
 // Reset game for prestige (within same arc)
 export function resetForPrestige() {
   const currentArc = gameState.arc;
-  const arcUnlocked = gameState.arcUnlocked;
-  const prestigeCount = gameState.prestigeCount + 1;
+  const lifetimeAllTime = accumulateLifetimeStats();
 
-  // Preserve upgrades
-  const arc1Upgrades = { ...gameState.arc1Upgrades };
-  const arc2Upgrades = { ...gameState.arc2Upgrades };
-
-  // Preserve onboarding flag
-  const onboardingComplete = gameState.onboardingComplete;
-  const gameMode = gameState.gameMode;
-
-  // Preserve UI state that persists across prestige
-  const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
-  const everUnlockedSections = gameState.ui?.everUnlockedSections ? [...gameState.ui.everUnlockedSections] : [];
-
-  // Preserve UI arrays that persist across prestige
-  const discoveredFlavor = gameState.ui?.discoveredFlavor ? [...gameState.ui.discoveredFlavor] : [];
-
-  // Preserve tutorial progress (player shouldn't re-see tutorials after prestige)
-  const tutorial = gameState.tutorial ? { ...gameState.tutorial } : null;
-
-  // Accumulate all-time lifetime stats before reset
-  const lifetimeAllTime = { ...gameState.lifetimeAllTime };
-  lifetimeAllTime.prestigeResets = (lifetimeAllTime.prestigeResets || 0) + 1;
-  const lt = gameState.lifetime || {};
-  lifetimeAllTime.peakFundingRate = Math.max(lifetimeAllTime.peakFundingRate || 0, lt.peakFundingRate || 0);
-  lifetimeAllTime.peakResearchRate = Math.max(lifetimeAllTime.peakResearchRate || 0, lt.peakResearchRate || 0);
-  lifetimeAllTime.dataCollapses = (lifetimeAllTime.dataCollapses || 0) + (lt.dataCollapses || 0);
-
-  // Get fresh state
-  const fresh = createDefaultGameState();
-
-  // Restore preserved values
-  Object.assign(gameState, fresh);
-  gameState.arc = currentArc;
-  gameState.arcUnlocked = arcUnlocked;
-  gameState.prestigeCount = prestigeCount;
-  gameState.arc1Upgrades = arc1Upgrades;
-  gameState.arc2Upgrades = arc2Upgrades;
-  gameState.lifetimeAllTime = lifetimeAllTime;
-  gameState.onboardingComplete = onboardingComplete;
-  gameState.gameMode = gameMode;
-  gameState.ui.seenCards = seenCards;
-  gameState.ui.everUnlockedSections = everUnlockedSections;
-  gameState.ui.discoveredFlavor = discoveredFlavor;
-
-  // Restore tutorial progress, clear transient card state
-  if (tutorial) {
-    gameState.tutorial = tutorial;
-    gameState.tutorial.active = false;
-    gameState.tutorial.shownStep = 0;
+  // Record current ending before reset wipes endingTriggered
+  const endingsSeen = [...(gameState.endingsSeen || [])];
+  if (gameState.endingTriggered) {
+    const endingKey = gameState.endingVariant
+      ? `${gameState.endingTriggered}_${gameState.endingVariant}`
+      : gameState.endingTriggered;
+    if (!endingsSeen.includes(endingKey)) endingsSeen.push(endingKey);
   }
 
-  // Explicitly clear dynamic state that createDefaultGameState doesn't include
-  // (Object.assign only copies properties from fresh — it doesn't delete extras)
-  gameState.endingTriggered = null;
-  gameState.endingVariant = null;
-  gameState.endingTime = null;
-  gameState.bankrupted = false;
-
-  // Apply starting bonuses from upgrades
-  if (currentArc === 1) {
-    gameState.resources.funding = FUNDING.SEED_AMOUNT * getPrestigeMultiplier('startingFunding');
-  }
-
-  resetQueueIdCounter();
-  resetAnalytics();
-  gameState.lastTick = Date.now();
-  saveGame();
+  resetGameState({
+    preserve: ['arc1Upgrades', 'onboardingComplete', 'gameMode'],
+    set: {
+      arc: currentArc,
+      arcUnlocked: gameState.arcUnlocked,
+      prestigeCount: gameState.prestigeCount + 1,
+      lifetimeAllTime,
+      endingsSeen,
+    },
+    afterReset: () => {
+      gameState.resources.funding = FUNDING.SEED_AMOUNT * getPrestigeMultiplier('startingFunding');
+      if (currentArc === 2) {
+        initArc2Allocations();
+        gameState.onboardingComplete = true;
+      }
+    },
+  });
 }
 
-// Reset after extinction ending — preserves knowledge, wipes all power
-// Keeps: onboarding, UI familiarity (seenCards, everUnlockedSections, discoveredFlavor),
+// Reset after extinction ending — grants prestige bonuses, then resets
+// Keeps: prestige upgrades (with new gains), onboarding, UI familiarity,
 //        endings seen, lifetimeAllTime stats
-// Wipes: prestige upgrades, resources, progress, everything mechanical
+// Wipes: resources, progress, everything else mechanical
 export function resetForExtinction(endingId, variant) {
-  // Preserve cosmetic/informational state
-  const onboardingComplete = gameState.onboardingComplete;
-  const gameMode = gameState.gameMode;
-  const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
-  const everUnlockedSections = gameState.ui?.everUnlockedSections ? [...gameState.ui.everUnlockedSections] : [];
-  const discoveredFlavor = gameState.ui?.discoveredFlavor ? [...gameState.ui.discoveredFlavor] : [];
-  const tutorial = gameState.tutorial ? { ...gameState.tutorial } : null;
-  const lifetimeAllTime = { ...gameState.lifetimeAllTime };
+  // Calculate prestige gains BEFORE reset (needs current agiProgress)
+  const gains = calculatePrestigeGain();
+
+  // Prepare upgraded prestige values
+  const arc1Upgrades = { ...gameState.arc1Upgrades };
+  arc1Upgrades.researchMultiplier += gains.researchMultiplier || 0;
+  arc1Upgrades.startingFunding += gains.startingFunding || 0;
+  arc1Upgrades.revenueMultiplier += gains.revenueMultiplier || 0;
+
+  // Record this ending before reset wipes state
   const endingsSeen = [...(gameState.endingsSeen || [])];
-
-  // Record this ending
   const endingKey = variant ? `${endingId}_${variant}` : endingId;
-  if (!endingsSeen.includes(endingKey)) {
-    endingsSeen.push(endingKey);
-  }
+  if (!endingsSeen.includes(endingKey)) endingsSeen.push(endingKey);
 
-  // Full reset
-  const fresh = createDefaultGameState();
-  Object.assign(gameState, fresh);
+  resetGameState({
+    preserve: ['onboardingComplete', 'gameMode', 'lifetimeAllTime'],
+    set: {
+      prestigeCount: gameState.prestigeCount + 1,
+      arc1Upgrades,
+      endingsSeen,
+    },
+    afterReset: () => {
+      gameState.resources.funding = FUNDING.SEED_AMOUNT * getPrestigeMultiplier('startingFunding');
+    },
+  });
+}
 
-  // Restore preserved state
-  gameState.onboardingComplete = onboardingComplete;
-  gameState.gameMode = gameMode;
-  gameState.ui.seenCards = seenCards;
-  gameState.ui.everUnlockedSections = everUnlockedSections;
-  gameState.ui.discoveredFlavor = discoveredFlavor;
-  gameState.lifetimeAllTime = lifetimeAllTime;
-  gameState.endingsSeen = endingsSeen;
-
-  // Restore tutorial progress, clear transient card state
-  if (tutorial) {
-    gameState.tutorial = tutorial;
-    gameState.tutorial.active = false;
-    gameState.tutorial.shownStep = 0;
-  }
-
-  // Clear dynamic state that Object.assign doesn't remove
-  gameState.endingTriggered = null;
-  gameState.endingVariant = null;
-  gameState.endingTime = null;
-  gameState.bankrupted = false;
-
-  resetQueueIdCounter();
-  resetAnalytics();
-  gameState.lastTick = Date.now();
-  saveGame();
+// Reset for arc/mode switch — wipes mechanical + prestige state, preserves meta-progress
+// Used by: settings arc selector, extinction→Arc 2 transition
+export function resetForArcSwitch(targetArc, targetMode) {
+  resetGameState({
+    preserve: ['onboardingComplete', 'lifetimeAllTime'],
+    set: {
+      arc: targetArc,
+      arcUnlocked: gameState.arcUnlocked,
+      gameMode: targetMode,
+      endingsSeen: [...(gameState.endingsSeen || [])],
+      prestigeCount: 0,
+    },
+    afterReset: () => {
+      gameState.resources.funding = FUNDING.SEED_AMOUNT; // No prestige multiplier
+      if (targetArc === 2) {
+        initArc2Allocations();
+        gameState.onboardingComplete = true;
+      }
+    },
+  });
 }
 
 // Transition from Arc 1 to Arc 2 (one-way door)
+// Note: initializeNewsFeed() is NOT called here because the page reloads
+// after Arc 2 transition, and main.js will call it during startup.
 export function transitionToArc2() {
-  const gameMode = gameState.gameMode;
-  const seenCards = gameState.ui?.seenCards ? [...gameState.ui.seenCards] : [];
-  const everUnlockedSections = gameState.ui?.everUnlockedSections ? [...gameState.ui.everUnlockedSections] : [];
-  const discoveredFlavor = gameState.ui?.discoveredFlavor ? [...gameState.ui.discoveredFlavor] : [];
-  const tutorial = gameState.tutorial ? { ...gameState.tutorial } : null;
-  const fresh = createDefaultGameState();
-
-  // Reset everything except arcUnlocked
-  Object.assign(gameState, fresh);
-  gameState.gameMode = gameMode;
-  gameState.ui.seenCards = seenCards;
-  gameState.ui.everUnlockedSections = everUnlockedSections;
-  gameState.ui.discoveredFlavor = discoveredFlavor;
-
-  // Restore tutorial progress, clear transient card state
-  if (tutorial) {
-    gameState.tutorial = tutorial;
-    gameState.tutorial.active = false;
-    gameState.tutorial.shownStep = 0;
-  }
-
-  resetQueueIdCounter();
-  resetAnalytics();
-  gameState.arc = 2;
-  gameState.arcUnlocked = 2;
-
-  // Explicitly clear ending state (createDefaultGameState doesn't include these,
-  // so old values survive Object.assign)
-  gameState.endingTriggered = null;
-  gameState.endingVariant = null;
-  gameState.endingTime = null;
-  gameState.prestigeCount = 0;
-
-  // Set Arc 2 default allocations (alignment now visible)
-  gameState.tracks.capabilities.researcherAllocation = 0.4;
-  gameState.tracks.applications.researcherAllocation = 0.3;
-  gameState.tracks.alignment.researcherAllocation = 0.3;
-
-  // Arc 2 starts fresh - no Arc 1 upgrades carry over
-  // Note: initializeNewsFeed() is NOT called here because the page reloads
-  // after Arc 2 transition, and main.js will call it during startup.
-  // Calling it here would cause duplicate "lab begins operations" news.
-  gameState.onboardingComplete = true; // If they got to Arc 2, they've seen onboarding
-
-  gameState.lastTick = Date.now();
-  saveGame();
+  // Ensure arcUnlocked is upgraded before arc reset snapshots it
+  gameState.arcUnlocked = Math.max(gameState.arcUnlocked, 2);
+  resetForArcSwitch(2, gameState.gameMode);
 }
 
 // Export for testing
@@ -237,5 +252,6 @@ if (typeof window !== 'undefined') {
   window.applyPrestigeGains = applyPrestigeGains;
   window.resetForPrestige = resetForPrestige;
   window.resetForExtinction = resetForExtinction;
+  window.resetForArcSwitch = resetForArcSwitch;
   window.transitionToArc2 = transitionToArc2;
 }

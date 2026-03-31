@@ -2,8 +2,7 @@
 // Permanent, mutually exclusive decisions that shape player playstyle.
 
 import { gameState } from './game-state.js';
-import { STRATEGIC_CHOICES, ALIGNMENT } from '../data/balance.js';
-import { applyHiddenAlignmentEffect } from './capabilities.js';
+import { STRATEGIC_CHOICES } from '../data/balance.js';
 import { strategicChoiceDefinitions } from '../data/strategic-choices.js';
 import { addNewsItem } from './news-feed.js';
 import { addActionMessage, hasMessageBeenTriggered, markMessageTriggered } from './messages.js';
@@ -93,15 +92,29 @@ export function checkChoiceUnlocks() {
       // Send action message for this strategic choice
       const messageTemplate = strategicChoiceMessages[choice.id];
       if (messageTemplate) {
+        // Enrich choices with tooltipRows from the definition's effects array
+        const enrichedChoices = messageTemplate.choices.map(c => {
+          const optionDef = choice.options.find(o => o.id === c.id);
+          if (!optionDef?.effects) return c;
+          const rows = optionDef.effects
+            .filter(e => (!e.minPhase || gameState.phase >= e.minPhase) && (!e.minArc || gameState.arc >= e.minArc))
+            .map(e => ({ label: e.label, type: e.type || 'neutral' }));
+          if (optionDef.alignmentNote) {
+            rows.push({ label: `Note: ${optionDef.alignmentNote}`, type: 'dim' });
+          }
+          return { ...c, tooltipRows: rows };
+        });
         addActionMessage(
           messageTemplate.sender,
           messageTemplate.subject,
           messageTemplate.body,
           messageTemplate.signature,
-          messageTemplate.choices,
+          enrichedChoices,
           messageTemplate.priority || 'normal',
           messageTemplate.tags || ['strategic'],
-          messageKey
+          messageKey,
+          null,
+          90,
         );
         markMessageTriggered(messageKey);
       } else {
@@ -152,17 +165,6 @@ export function makeStrategicChoice(choiceId, optionId) {
     setTimeout(() => {
       addNewsItem(newsEntry.text, newsEntry.type);
     }, delay);
-  }
-
-  // Apply hidden alignment effect from strategic choice
-  const alignmentEffects = {
-    government_partnership: ALIGNMENT.GOVERNMENT_ALIGNMENT_EFFECT,
-    independent_lab: ALIGNMENT.INDEPENDENT_ALIGNMENT_EFFECT,
-    rapid_deployment: ALIGNMENT.RAPID_ALIGNMENT_EFFECT,
-    careful_validation: ALIGNMENT.CAREFUL_ALIGNMENT_EFFECT,
-  };
-  if (alignmentEffects[optionId]) {
-    applyHiddenAlignmentEffect(optionId, alignmentEffects[optionId]);
   }
 
   return true;
@@ -222,9 +224,9 @@ export function getAcquiredDemandGrowthMultiplier() {
   return 1.0;
 }
 
-export function getMarketEdgeDecayMultiplier() {
-  if (getChosenOption('rapid_vs_careful') === 'rapid_deployment') {
-    return STRATEGIC_CHOICES.RAPID_EDGE_DECAY_REDUCTION;
+export function getAlignmentProgramEffectivenessMultiplier() {
+  if (getChosenOption('rapid_vs_careful') === 'careful_validation') {
+    return STRATEGIC_CHOICES.CAREFUL_PROGRAM_EFFECTIVENESS;
   }
   return 1.0;
 }
@@ -246,6 +248,27 @@ export function getIncidentRateMultiplier() {
 export function getMarketEdgeBoostMultiplier() {
   if (getChosenOption('open_vs_proprietary') === 'proprietary_models') {
     return STRATEGIC_CHOICES.PROPRIETARY_MARKET_EDGE_BONUS;
+  }
+  return 1.0;
+}
+
+export function getElasticityBonus() {
+  if (getChosenOption('open_vs_proprietary') === 'proprietary_models') {
+    return STRATEGIC_CHOICES.PROPRIETARY_ELASTICITY_BONUS;
+  }
+  return 0;
+}
+
+export function getAcquisitionRateMultiplier() {
+  if (getChosenOption('open_vs_proprietary') === 'proprietary_models') {
+    return STRATEGIC_CHOICES.PROPRIETARY_ACQUISITION_BONUS;
+  }
+  return 1.0;
+}
+
+export function getChurnRateMultiplier() {
+  if (getChosenOption('open_vs_proprietary') === 'proprietary_models') {
+    return STRATEGIC_CHOICES.PROPRIETARY_CHURN_REDUCTION;
   }
   return 1.0;
 }

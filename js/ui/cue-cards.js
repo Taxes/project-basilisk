@@ -473,7 +473,7 @@ function showSkipToast(message = 'Tutorial skipped. Resume from Settings (gear i
   el.textContent = message;
   document.body.appendChild(el);
   // Trigger reflow then add visible class for transition
-  el.offsetHeight; // eslint-disable-line no-unused-expressions
+  void el.offsetHeight;
   el.classList.add('visible');
   setTimeout(() => {
     el.classList.remove('visible');

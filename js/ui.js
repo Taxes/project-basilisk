@@ -4,9 +4,11 @@ import { gameState, resetGame, saveGame } from './game-state.js';
 // tracks — used transitively by domain modules
 // getPurchasableById — moved to js/ui/controls.js
 import { enqueueFundraise, clearQueue, moveInQueue, cancelFromQueue, resetQueueIdCounter } from './focus-queue.js';
-import { resetTriggeredMessages } from './messages.js';
+import { resetTriggeredMessages, canUnpause, getMessageById } from './messages.js';
+import { hasTutorialFired } from './tutorial-messages.js';
 // getEndingById, getEndingStats, triggerEnding, getEndingNarrative — moved to js/ui/modals.js
-// calculatePrestigeGain, applyPrestigeGains, resetForPrestige — moved to js/ui/modals.js
+import { resetForPrestige } from './prestige.js';
+// calculatePrestigeGain, applyPrestigeGains — used in js/ui/modals.js
 import { BALANCE } from '../data/balance.js';
 // (old data-strategy imports removed — data quality system reworked)
 // (old strategy panel imports removed — strategic choices now use message system)
@@ -17,15 +19,17 @@ import { formatNumber, getRateUnit } from './utils/format.js';
 import { requestFullUpdate, consumeFullUpdate } from './ui/signals.js';
 import { runScheduledUpdates, forceFullUpdate, resetAllCaches, SLOW } from './ui/scheduler.js';
 import { invalidateCache } from './utils/dom-cache.js';
-import { isDebugMode, debug as debugCommands } from './debug-commands.js';
+import { isDebugMode, applyDebugSettings, debug as debugCommands } from './debug-commands.js';
 // Domain UI modules — each self-registers with the scheduler at module scope.
 // Named imports pull in init functions; the import itself triggers registerUpdate().
 import { initTokenPricing, initAutopricer, initLedgerTooltips, initPricingTooltips, initLedgerSummary } from './ui/economics.js';
 import { initCEOFocusPanel } from './ui/ceo-focus.js';
 import { initStatsTooltips } from './ui/stats-tooltip.js';
 import { initResearchTooltips } from './ui/research-tooltips.js';
-import './ui/research.js';  // no named exports needed; side-effect registration only
+import { anyProgramVisible } from './ui/research.js';
 import { initInfraTabs } from './ui/infrastructure.js';
+import { initColumnLayout } from './ui/column-layout.js';
+import { initAITab } from './ui/ai-tab.js';
 import {
   initAllocationSliders,
   initComputeAllocationSlider,
@@ -42,8 +46,11 @@ import {
   showDebugModal,
   hideDebugModal,
   initDebugModal,
+  showArcModeModal,
+  hideArcModeModal,
 } from './ui/modals.js';
 
+import { isFundraiseGatePassed } from './capabilities.js';
 import { renderMessagesPanel } from './ui/messages-panel.js';
 import { updateTabBadge } from './ui/tab-navigation.js';
 import { isCardVisible } from './ui/cue-cards.js';
@@ -68,11 +75,6 @@ export function unlockUISection(sectionId) {
     section.classList.remove('hidden-until-unlocked');
     section.classList.add('unlocked');
   }
-  // Track for prestige persistence
-  const ever = gameState.ui.everUnlockedSections;
-  if (ever && !ever.includes(sectionId)) {
-    ever.push(sectionId);
-  }
 }
 
 // Check for UI unlocks based on game state
@@ -91,7 +93,7 @@ export function checkUIUnlocks() {
     const slider = document.getElementById('compute-allocation-slider');
     const intIn = document.getElementById('compute-internal-input');
     const extIn = document.getElementById('compute-external-input');
-    if (slider) slider.value = pct;
+    if (slider) { slider.value = pct; slider.style.setProperty('--val', `${pct}%`); }
     if (intIn) intIn.value = pct;
     if (extIn) extIn.value = 100 - pct;
     updateComputeAllocationDisplay();
@@ -131,22 +133,34 @@ export function checkUIUnlocks() {
     const autopricer = document.getElementById('autopricer-controls');
     if (autopricer) autopricer.classList.remove('hidden');
     uiUnlocks.autopricer = true;
-    // Track for prestige persistence
-    const ever = gameState.ui.everUnlockedSections;
-    if (ever && !ever.includes('autopricer-unlocked')) {
-      ever.push('autopricer-unlocked');
-    }
   }
 
-  // Unlock Admin sub-tab after Seed is raised
+  // Unlock Admin sub-tab after Seed is raised (or 5× seed revenue on private path)
   const adminSubTab = document.getElementById('admin-sub-tab');
-  if (adminSubTab && gameState.fundraiseRounds?.seed?.raised) {
+  if (adminSubTab && isFundraiseGatePassed('seed')) {
     adminSubTab.classList.remove('hidden');
-    // Track for prestige persistence
-    const ever = gameState.ui.everUnlockedSections;
-    if (ever && !ever.includes('admin-sub-tab')) {
-      ever.push('admin-sub-tab');
-    }
+  }
+
+  // Reveal AI sub-tab after RLHF unlocked (or chen_intro for legacy saves)
+  const safetyDashboardReady = gameState.arc >= 2 && (
+    gameState.tracks?.alignment?.unlockedCapabilities?.includes('rlhf') ||
+    hasTutorialFired('chen_intro')
+  );
+  const aiSubTab = document.getElementById('ai-sub-tab');
+  if (aiSubTab && safetyDashboardReady) {
+    aiSubTab.classList.remove('hidden');
+  }
+
+  // Alignment programs panel — visible once Chen has arrived AND at least one program is available
+  if (safetyDashboardReady && !uiUnlocks.alignmentPrograms && hasTutorialFired('chen_intro') && anyProgramVisible()) {
+    unlockUISection('alignment-programs-section');
+    uiUnlocks.alignmentPrograms = true;
+  }
+
+  // Autonomy decisions panel — visible after first AI request fires
+  if (Object.keys(gameState.aiRequestsFired || {}).length > 0 && !uiUnlocks.autonomyDecisions) {
+    unlockUISection('autonomy-decisions-section');
+    uiUnlocks.autonomyDecisions = true;
   }
 
   // Set arc data attribute on body for CSS targeting
@@ -166,7 +180,7 @@ export function resetUI() {
 
   // Reset sliders and controls to defaults
   const computeSplit = document.getElementById('compute-allocation-slider');
-  if (computeSplit) computeSplit.value = 100;
+  if (computeSplit) { computeSplit.value = 100; computeSplit.style.setProperty('--val', '100%'); }
   const intIn = document.getElementById('compute-internal-input');
   const extIn = document.getElementById('compute-external-input');
   if (intIn) intIn.value = 100;
@@ -193,50 +207,25 @@ export function resetUI() {
   // Reset uiUnlocks flags
   Object.keys(uiUnlocks).forEach(k => uiUnlocks[k] = false);
 
-  // Sections the player has previously unlocked (survives prestige, not hard reset)
-  const everUnlocked = gameState.ui?.everUnlockedSections || [];
-
-  // Re-hide sections that unlock during play (unless previously unlocked in a prior run)
+  // Re-hide all sections that unlock during play
   document.querySelectorAll('.unlocked').forEach(el => {
     el.classList.remove('unlocked');
-    if (!everUnlocked.includes(el.id)) {
-      el.classList.add('hidden-until-unlocked');
-    }
+    el.classList.add('hidden-until-unlocked');
   });
 
-  // Re-hide pricing panel section (uses hidden-until-unlocked, gated on first app)
-  const pricingPanel = document.getElementById('pricing-panel');
-  if (pricingPanel) {
-    pricingPanel.classList.remove('unlocked');
-    if (!everUnlocked.includes('pricing-panel')) {
-      pricingPanel.classList.add('hidden-until-unlocked');
-    }
-  }
-
-  // Reset pricing panel progressive disclosure (uses 'hidden' class, not 'hidden-until-unlocked')
-  // IDs tracked in everUnlocked via checkUIUnlocks → unlockUISection for the panel;
-  // sub-elements use 'hidden' class and are keyed to uiUnlocks flags, so we check
-  // whether the parent panel was ever unlocked to keep them visible.
-  const pricingEverUnlocked = everUnlocked.includes('pricing-panel');
-  const autopricerIds = ['autopricer-controls', 'market-edge-row'];
+  // Re-hide pricing panel sub-elements (use 'hidden' class, not 'hidden-until-unlocked')
   for (const id of ['token-pricing-controls', 'autopricer-controls', 'supply-divider', 'unit-econ-header', 'price-per-m-row', 'cost-per-m-row', 'margin-per-m-row', 'market-demand-row', 'market-price-row', 'market-edge-row', 'elasticity-row']) {
     const el = document.getElementById(id);
-    if (!el) continue;
-    // Autopricer sub-elements need their own gate (process_optimization)
-    if (autopricerIds.includes(id)) {
-      if (!everUnlocked.includes('autopricer-unlocked')) {
-        el.classList.add('hidden');
-      }
-    } else if (!pricingEverUnlocked) {
-      el.classList.add('hidden');
-    }
+    if (el) el.classList.add('hidden');
   }
 
   // Re-hide admin sub-tab (unlocked when seed round is raised)
   const adminSubTab = document.getElementById('admin-sub-tab');
-  if (adminSubTab && !everUnlocked.includes('admin-sub-tab')) {
-    adminSubTab.classList.add('hidden');
-  }
+  if (adminSubTab) adminSubTab.classList.add('hidden');
+
+  // Re-hide AI sub-tab (unlocked in Arc 2)
+  const aiSubTab = document.getElementById('ai-sub-tab');
+  if (aiSubTab) aiSubTab.classList.add('hidden');
 
   // Hide open modals
   document.querySelectorAll('.modal').forEach(el => el.classList.add('hidden'));
@@ -280,8 +269,6 @@ export function updateUI() {
   if (fullUpdate || tickCount % SLOW === 0) {
     checkUIUnlocks();
   }
-
-  updateNotifications();
 }
 
 // AGI progress labels — tone shifts from corporate to ominous
@@ -329,9 +316,8 @@ function updateAGIProgress() {
 
   const competitorEl = document.getElementById('competitor-progress');
   if (competitorEl) {
-    // Hide competitor until Series A is raised
-    const seriesARaised = gameState.fundraiseRounds?.series_a?.raised === true;
-    if (!seriesARaised) {
+    // Hide competitor until Series A is raised (or 5× series_a revenue on private path)
+    if (!isFundraiseGatePassed('series_a')) {
       competitorEl.style.display = 'none';
     } else {
       competitorEl.style.display = '';
@@ -392,6 +378,19 @@ export function togglePause() {
   if (gameState.paused && gameState.endingTriggered) return;
 
   if (gameState.paused) {
+    // Block unpause when a decision is required
+    if (!canUnpause()) {
+      const blockingId = gameState.pauseMessageId || gameState.pauseMessageIds?.[0];
+      const blockingMsg = blockingId ? getMessageById(blockingId) : null;
+      showDecisionToast(
+        blockingMsg ? blockingMsg.subject : 'You have messages requiring your attention.',
+        () => import('./ui/tab-navigation.js').then(({ navigateToMessage, switchTab }) => {
+          if (blockingMsg) navigateToMessage(blockingMsg.id);
+          else switchTab('messages');
+        })
+      );
+      return;
+    }
     gameState.paused = false;
     gameState.pauseStartTime = null;
   } else {
@@ -472,24 +471,30 @@ export { formatNumber };
 
 // updatePurchaseButtons, createPurchaseCard — moved to js/ui/infrastructure.js
 
-// Show notification with optional type
-// Types: 'success' (default), 'info', 'warning'
-// Options: { onClick, duration, onDismiss }
-export function notify(title, message, type = 'success', { onClick, duration, onDismiss } = {}) {
-  if (gameState._fastForwarding) return;
+/**
+ * Create a notification element with standard structure and dismiss behavior.
+ * @param {object} opts
+ * @param {string} opts.title - Bold title line
+ * @param {string} opts.message - Body text
+ * @param {string} opts.type - Notification type (success, info, warning, milestone)
+ * @param {string} [opts.id] - Optional DOM id (for dedup/programmatic access)
+ * @param {Function} [opts.onClick] - Click handler (notification body, not close button)
+ * @param {Function} [opts.onDismiss] - Fires exactly once when dismissed
+ * @returns {{ el: HTMLElement, dismiss: Function } | null}
+ */
+function createNotification({ title, message, type, id, onClick, onDismiss }) {
   const container = document.getElementById('notification-container');
-  if (!container) return;
+  if (!container) return null;
 
   const notification = document.createElement('div');
+  if (id) notification.id = id;
   notification.className = `notification notification-${type}`;
   if (onClick) notification.classList.add('clickable');
 
-  // Create notification content
   const content = document.createElement('div');
   content.className = 'notification-content';
   content.innerHTML = `<strong>${title}</strong><br><span class="notification-message">${message}</span>`;
 
-  // Create close button
   const closeBtn = document.createElement('button');
   closeBtn.className = 'notification-close';
   closeBtn.innerHTML = '&times;';
@@ -501,47 +506,88 @@ export function notify(title, message, type = 'success', { onClick, duration, on
   // Add to container with fade-in
   notification.classList.add('notification-enter');
   container.appendChild(notification);
-
-  // Remove enter class after animation
-  setTimeout(() => {
-    notification.classList.remove('notification-enter');
-  }, 300);
+  setTimeout(() => notification.classList.remove('notification-enter'), 300);
 
   // Idempotent dismiss — onDismiss fires exactly once
   let dismissed = false;
-  const dismissNotification = () => {
+  const dismiss = () => {
     if (dismissed) return;
     dismissed = true;
-    clearTimeout(autoDismissTimer);
     if (onDismiss) onDismiss();
     notification.classList.add('notification-exit');
-    setTimeout(() => {
-      notification.remove();
-    }, 300);
+    setTimeout(() => notification.remove(), 300);
   };
 
-  // Close button handler (dismiss only, no onClick action)
   closeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    dismissNotification();
+    dismiss();
   });
 
-  // Click anywhere on notification to act + dismiss
   if (onClick) {
     notification.addEventListener('click', () => {
       onClick();
-      dismissNotification();
+      dismiss();
     });
   }
 
-  // Auto-dismiss after duration
-  const autoDismissTimer = setTimeout(dismissNotification, duration || BALANCE.NOTIFICATION_DURATION);
+  return { el: notification, dismiss };
 }
 
-// Update notifications (for queue management if needed)
-export function updateNotifications() {
-  // Currently notifications are shown immediately
-  // This function is reserved for future queue management
+// Show notification with optional type
+// Types: 'success' (default), 'info', 'warning'
+// Options: { onClick, duration, onDismiss }
+export function notify(title, message, type = 'success', { onClick, duration, onDismiss } = {}) {
+  if (gameState._fastForwarding) return;
+  let autoDismissTimer;
+  const result = createNotification({
+    title, message, type, onClick,
+    onDismiss: () => { clearTimeout(autoDismissTimer); if (onDismiss) onDismiss(); },
+  });
+  if (!result) return;
+  autoDismissTimer = setTimeout(result.dismiss, duration || BALANCE.NOTIFICATION_DURATION);
+}
+
+// === Persistent decision-required toast ===
+// Keyed by a fixed DOM id so it can be found and flashed by togglePause.
+
+const DECISION_TOAST_ID = 'decision-required-toast';
+
+/**
+ * Show the persistent decision-required toast, or flash it if already visible.
+ * @param {string} subject - The blocking message subject line
+ * @param {Function} onClickFn - Called (and toast dismissed) when the user clicks it
+ */
+export function showDecisionToast(subject, onClickFn) {
+  if (document.getElementById(DECISION_TOAST_ID)) {
+    flashDecisionToast();
+    return;
+  }
+
+  createNotification({
+    title: '\u26A0 Decision Required',
+    message: subject,
+    type: 'warning',
+    id: DECISION_TOAST_ID,
+    onClick: onClickFn,
+  });
+  // No auto-dismiss — persists until dismissed
+}
+
+/** Flash the existing decision toast (e.g. when the player tries to unpause). */
+export function flashDecisionToast() {
+  const el = document.getElementById(DECISION_TOAST_ID);
+  if (!el) return;
+  el.classList.remove('notification-flash');
+  void el.offsetWidth; // force reflow to restart animation
+  el.classList.add('notification-flash');
+}
+
+/** Programmatically dismiss the decision toast (e.g. after decision is made). */
+export function dismissDecisionToast() {
+  const el = document.getElementById(DECISION_TOAST_ID);
+  if (!el) return;
+  el.classList.add('notification-exit');
+  setTimeout(() => el.remove(), 300);
 }
 
 // showEventModal, hideEventModal — removed (legacy event system deleted, see #833)
@@ -606,6 +652,34 @@ export function initializeUI() {
     });
   }
 
+  // Arc/mode switch button
+  const arcModeSwitchBtn = document.getElementById('arc-mode-switch-button');
+  if (arcModeSwitchBtn) {
+    arcModeSwitchBtn.addEventListener('click', () => {
+      showArcModeModal();
+    });
+  }
+
+  // Soft reset button (restart run, keep prestige upgrades)
+  const softResetBtn = document.getElementById('soft-reset-button');
+  if (softResetBtn) {
+    softResetBtn.addEventListener('click', () => {
+      if (confirm('Restart this run? You keep prestige upgrades and lifetime stats, but all current progress resets.')) {
+        resetForPrestige();
+        resetQueueIdCounter();
+        resetTriggeredMessages();
+        initializeNewsFeed();
+        resetUI();
+        requestFullUpdate();
+        updateUI();
+        renderMessagesPanel();
+        updateTabBadge();
+        if (_onHardReset) _onHardReset();
+        hideSettingsModal();
+      }
+    });
+  }
+
   // Hard reset button (in settings modal)
   const hardResetBtn = document.getElementById('hard-reset-button');
   if (hardResetBtn) {
@@ -616,6 +690,14 @@ export function initializeUI() {
       if (confirm(msg)) {
         resetGame();
         if (isDebugMode()) debugCommands.resetDebug();
+        // applyDebugSettings returns true if ?arc2 triggered a transition.
+        // transitionToArc2() saves state but expects a page reload for full
+        // re-init (news feed, messages, etc.), so reload instead of in-page reset.
+        const arc2Fired = applyDebugSettings();
+        if (arc2Fired) {
+          window.location.reload();
+          return;
+        }
         resetQueueIdCounter();
         resetTriggeredMessages();
         resetUI();
@@ -677,9 +759,16 @@ export function initializeUI() {
 
   // Spacebar to toggle pause (only when not typing in an input)
   document.addEventListener('keydown', (e) => {
-    if (e.code === 'Space' && !e.target.matches('input, textarea, select, label')) {
+    if (e.code === 'Space' && !e.target.matches('input[type="text"], input[type="number"], input[type="search"], input[type="email"], input[type="password"], input[type="url"], textarea')) {
       e.preventDefault();
       togglePause();
+    }
+  });
+
+  // Sync --val CSS variable for range input fill (WebKit needs this)
+  document.addEventListener('input', (e) => {
+    if (e.target.matches('input[type="range"]')) {
+      e.target.style.setProperty('--val', `${e.target.value}%`);
     }
   });
 
@@ -692,6 +781,7 @@ export function initializeUI() {
 
   // Backdrop click to dismiss settings
   wireBackdropDismiss('settings-modal', hideSettingsModal);
+  wireBackdropDismiss('arc-mode-modal', hideArcModeModal);
 
   // Initialize allocation sliders
   initAllocationSliders();
@@ -727,6 +817,12 @@ export function initializeUI() {
 
   // Initialize infrastructure tabs
   initInfraTabs();
+
+  // Initialize responsive column layout (Operations/Research toggle at narrow viewports)
+  initColumnLayout();
+
+  // Initialize AI tab (autonomy decisions)
+  initAITab();
 
   // Clear queue button
   document.getElementById('clear-queue-btn')?.addEventListener('click', () => {

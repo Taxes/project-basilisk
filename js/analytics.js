@@ -40,6 +40,7 @@ export function milestone(name, data = {}, dedupKey, options = {}) {
   posthog.capture(name, {
     event_category: 'funnel',
     game_version: VERSION,
+    game_mode: gameState.gameMode || 'arcade',
     playtime_seconds: Math.round(gameState.timeElapsed),
     total_playtime_seconds: Math.round(gameState.lifetimeAllTime?.totalPlaytime || gameState.timeElapsed),
     prestige_count: gameState.prestigeCount || 0,

@@ -3,7 +3,7 @@
 
 import { gameState, saveGame } from './game-state.js';
 import { notify } from './ui.js';
-import { isCapabilityUnlocked, getAllTrackCapabilities } from './capabilities.js';
+import { isCapabilityUnlocked } from './capabilities.js';
 import { addNewsItem, triggerNewsForEvent } from './news-feed.js';
 import { COMPETITOR } from '../data/balance.js';
 import { isCompetitorPausedByMoratorium } from './moratoriums.js';
@@ -17,17 +17,10 @@ let announcedBreakthroughs = new Set();
 export function initializeCompetitor() {
   if (!gameState.competitor) {
     gameState.competitor = {
-      capabilityLevel: 0,
-      position: "behind",
-      lastUpdateTime: 0,
-      marketStandard: 1,
       progressToAGI: 0,
     };
   }
   // Ensure new fields exist on legacy saves
-  if (gameState.competitor.marketStandard === undefined) {
-    gameState.competitor.marketStandard = 1;
-  }
   if (gameState.competitor.progressToAGI === undefined) {
     gameState.competitor.progressToAGI = 0;
   }
@@ -44,38 +37,32 @@ export function updateCompetitor(deltaTime) {
     initializeCompetitor();
   }
 
-  // Start competitor timer once the player unlocks scaling_laws (first real breakthrough)
-  if (!isCapabilityUnlocked('scaling_laws')) return;
+  // Start competitor once the player unlocks scaling_laws, or after 25 min as fallback
+  // (prevents avoiding the race entirely by never fundraising)
+  const timerActivated = (gameState.timeElapsed || 0) >= COMPETITOR.ACTIVATION_TIMER;
+  if (!isCapabilityUnlocked('scaling_laws') && !timerActivated) return;
 
   // Seed head start on first activation (competitor was already working before player noticed)
   if (gameState.competitor.progressToAGI === 0) {
     gameState.competitor.progressToAGI = COMPETITOR.HEAD_START;
   }
 
-  // Competitor gains capability over time (slower than player typically)
-  const baseGainRate = COMPETITOR.CAPABILITY_GAIN_RATE;
-  let gainMultiplier = 1.0;
-
-  // Open-source decisions help competitors
-  const openSourceDecisions = gameState.choices?.openSourceDecisions || 0;
-  if (openSourceDecisions > 0) {
-    gainMultiplier += openSourceDecisions * COMPETITOR.OPEN_SOURCE_BOOST;
+  // Progress to AGI — frozen during moratorium if competitor accepted the pause
+  // Track elapsed time since activation for accelerating curve
+  if (gameState.competitor.elapsedTime === undefined) {
+    gameState.competitor.elapsedTime = 0;
   }
 
-  // Competitor boost from events
-  if (gameState.competitorBoost) {
-    gainMultiplier += gameState.competitorBoost;
+  // Accelerating curve for both arcs: rate increases linearly over duration
+  const t = gameState.competitor.elapsedTime;
+  let agiRate;
+  if (gameState.arc === 2) {
+    const accel = 1 + COMPETITOR.ARC_2_ACCEL * Math.min(t / COMPETITOR.ARC_2_DURATION, 1);
+    agiRate = COMPETITOR.ARC_2_BASE_RATE * accel;
+  } else {
+    const accel = 1 + COMPETITOR.ARC_1_ACCEL * Math.min(t / COMPETITOR.ARC_1_DURATION, 1);
+    agiRate = COMPETITOR.ARC_1_BASE_RATE * accel;
   }
-
-  // Update competitor level
-  gameState.competitor.capabilityLevel += baseGainRate * gainMultiplier * deltaTime;
-
-  // Market standard grows based on competitor progress (Red Queen effect)
-  gameState.competitor.marketStandard += COMPETITOR.MARKET_GROWTH_RATE * deltaTime;
-
-  // Progress to AGI — use arc-specific base rate
-  // Frozen during moratorium if competitor accepted the pause
-  let agiRate = gameState.arc === 2 ? COMPETITOR.ARC_2_BASE_RATE : COMPETITOR.ARC_1_BASE_RATE;
 
   // Halve rival rate during farewell sequence when they're close to AGI
   const fw = gameState.farewells;
@@ -83,43 +70,46 @@ export function updateCompetitor(deltaTime) {
     agiRate *= 0.5;
   }
 
+  // Lobbying event can slow competitor (e.g. competitorSlowdown: 0.25 → 75% reduction)
+  agiRate *= (gameState.competitorProgressMult || 1.0);
+
   if (!isCompetitorPausedByMoratorium() && !isFarewellStalling()) {
     gameState.competitor.progressToAGI = Math.min(100,
       gameState.competitor.progressToAGI + (agiRate * deltaTime)
     );
+    gameState.competitor.elapsedTime += deltaTime;
   }
 
   // Warn player when competitor AGI is imminent
   if (gameState.competitor.progressToAGI >= 95 && !gameState.competitor.imminentWarned) {
     gameState.competitor.imminentWarned = true;
-    notify('Competitor AGI Imminent', 'Intelligence reports suggest a rival lab is on the verge of achieving AGI.', 'danger');
-    addNewsItem('BREAKING: Sources say rival lab weeks from AGI breakthrough', 'competitor');
+    notify('Competitor AGI Imminent', 'Intelligence reports suggest OpenBrain is months from achieving AGI.', 'danger');
+    addNewsItem('BREAKING: Sources say OpenBrain months from AGI breakthrough', 'competitor');
   }
 
-  // Calculate player's capability level
-  const playerLevel = calculatePlayerCapabilityLevel();
-
-  // Track previous position for change detection
+  // Track position relative to player based on AGI progress
+  const playerProgress = gameState.agiProgress || 0;
+  const competitorProgress = gameState.competitor.progressToAGI;
   const previousPosition = gameState.competitor.position;
+  const progressDelta = playerProgress - competitorProgress;
 
-  // Update position
-  const levelDiff = playerLevel - gameState.competitor.capabilityLevel;
-  if (levelDiff > 2) {
-    gameState.competitor.position = "behind";
-  } else if (levelDiff < -2) {
-    gameState.competitor.position = "ahead";
+  let newPosition;
+  if (progressDelta > 5) {
+    newPosition = "behind";
+  } else if (progressDelta < -5) {
+    newPosition = "ahead";
   } else {
-    gameState.competitor.position = "even";
+    newPosition = "even";
   }
 
-  // Trigger news on position change
-  if (previousPosition !== gameState.competitor.position) {
+  if (previousPosition !== newPosition) {
+    gameState.competitor.position = newPosition;
     const positionKey = {
       behind: 'competitor_behind',
       ahead: 'competitor_ahead',
       even: 'competitor_close',
     };
-    const newsEntry = newsContent.competitor[positionKey[gameState.competitor.position]];
+    const newsEntry = newsContent.competitor[positionKey[newPosition]];
     if (newsEntry) {
       addNewsItem(newsEntry.text, newsEntry.type);
     }
@@ -132,32 +122,19 @@ export function updateCompetitor(deltaTime) {
   checkCompetitorIncidents();
 }
 
-// Calculate player's capability level based on unlocked track capabilities
-function calculatePlayerCapabilityLevel() {
-  let level = 0;
-  const allCaps = getAllTrackCapabilities();
-
-  for (const cap of allCaps) {
-    if (isCapabilityUnlocked(cap.id)) {
-      level += (cap.tier || 1);
-    }
-  }
-
-  return level;
-}
-
 // Check if competitor should announce a breakthrough
+// Keyed on AGI progress thresholds (evenly spaced across the 20-100% range)
 function checkCompetitorBreakthroughs() {
-  for (let breakthrough of competitorBreakthroughs) {
-    if (gameState.competitor.capabilityLevel >= breakthrough.level &&
-        !announcedBreakthroughs.has(breakthrough.level)) {
+  const progress = gameState.competitor.progressToAGI;
+  for (const breakthrough of competitorBreakthroughs) {
+    if (progress >= breakthrough.progress &&
+        !announcedBreakthroughs.has(breakthrough.progress)) {
 
-      // Announce the breakthrough
-      notify(breakthrough.name, breakthrough.message, 'warning');
+      // Announce the breakthrough (news feed only — no toast for informational items)
       addNewsItem(breakthrough.name, 'competitor');
 
       // Mark as announced
-      announcedBreakthroughs.add(breakthrough.level);
+      announcedBreakthroughs.add(breakthrough.progress);
       gameState.competitor.announcedBreakthroughs = Array.from(announcedBreakthroughs);
 
       saveGame();
@@ -165,37 +142,15 @@ function checkCompetitorBreakthroughs() {
   }
 }
 
-// Check for competitor safety incident news (Phase 4 escalation)
-// Triggered by max(player, competitor) AGI progress at 50/60/70/80/90%
+// Check for competitor safety incident news
+// Triggered by competitor AGI progress, interleaved with breakthroughs
 function checkCompetitorIncidents() {
-  const playerProgress = gameState.agiProgress || 0;
   const competitorProgress = gameState.competitor?.progressToAGI || 0;
-  const maxProgress = Math.max(playerProgress, competitorProgress);
 
-  const thresholds = [50, 60, 70, 80, 90];
+  const thresholds = [30, 50, 65, 80, 90, 95];
   for (const threshold of thresholds) {
-    if (maxProgress >= threshold) {
+    if (competitorProgress >= threshold) {
       triggerNewsForEvent('competitor_incident', threshold);
     }
   }
-}
-
-// Get competitor status for UI
-export function getCompetitorStatus() {
-  if (!gameState.competitor) {
-    return { position: "unknown", level: 0 };
-  }
-
-  return {
-    position: gameState.competitor.position,
-    level: gameState.competitor.capabilityLevel.toFixed(1),
-  };
-}
-
-// Boost competitor progress (called from events)
-export function boostCompetitor(amount) {
-  if (!gameState.competitor) {
-    initializeCompetitor();
-  }
-  gameState.competitor.capabilityLevel += amount;
 }

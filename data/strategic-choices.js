@@ -91,11 +91,10 @@ export const strategicChoiceDefinitions = [
       {
         id: 'rapid_deployment',
         name: 'Rapid Deployment',
-        description: 'Ship fast, capture market. More demand, faster growth, stronger edge.',
+        description: 'Ship fast, capture market. More demand, faster growth.',
         effects: [
           { label: '+20% demand', type: 'positive' },
           { label: '+20% customer growth rate', type: 'positive' },
-          { label: '-20% market edge decay rate', type: 'positive' },
         ],
         bestWhen: 'Market edge declining, need revenue boost',
       },
@@ -104,7 +103,8 @@ export const strategicChoiceDefinitions = [
         name: 'Careful Validation',
         description: 'Validate before shipping. Fewer incidents, clearer conscience.',
         effects: [
-          { label: '-30% incident rate', type: 'positive', minArc: 2 },
+          { label: '-10% incident rate', type: 'positive', minArc: 2 },
+          { label: '+10% alignment program effectiveness', type: 'positive', minArc: 2 },
           { label: 'Sleep a bit better at night', type: 'positive' },
         ],
         bestWhen: 'Strong market position, playing for safety',

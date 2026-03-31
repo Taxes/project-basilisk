@@ -1,9 +1,9 @@
 // Personality System - Tracks player behavior in Arc 2 to determine AI archetype at ending
-// Two axes: Passive/Active (-1 to +1) and Pluralist/Optimizer (-1 to +1)
+// Two axes: Authority/Liberty (-1 to +1) and Pluralist/Optimizer (-1 to +1)
 
 import { gameState } from './game-state.js';
 import { getChosenOption } from './strategic-choices.js';
-import { calculateDataScore } from './data-quality.js';
+import { isEffectivelyIdle } from './ceo-focus.js';
 
 // --- Signal Sampling ---
 
@@ -16,22 +16,65 @@ export function samplePersonalitySignals() {
 
   const tracking = gameState.personalityTracking;
   const tracks = gameState.tracks;
+  const cum = tracking.cumulative;
 
   // Sample allocation percentages
   const cap = tracks.capabilities?.researcherAllocation || 0;
   const app = tracks.applications?.researcherAllocation || 0;
   const ali = tracks.alignment?.researcherAllocation || 0;
 
-  // Sample synthetic ratio
-  const scores = calculateDataScore(gameState);
-  const syntheticRatio = scores.total > 0 ? scores.synthetic / scores.total : 0;
-
-  // Accumulate samples
   tracking.samples++;
-  tracking.cumulative.cap += cap;
-  tracking.cumulative.app += app;
-  tracking.cumulative.ali += ali;
-  tracking.cumulative.syntheticRatio += syntheticRatio;
+  cum.cap += cap;
+  cum.app += app;
+  cum.ali += ali;
+
+  // Track total Arc 2 ticks (for ratio denominators)
+  cum.totalArc2Ticks++;
+
+  // Sample CEO focus time distribution (only when CEO is idle on selected activity)
+  const idle = isEffectivelyIdle();
+  if (idle) {
+    const activity = gameState.ceoFocus.selectedActivity;
+    if (cum.ceoFocusTime[activity] !== undefined) {
+      cum.ceoFocusTime[activity]++;
+    }
+    cum.queueIdleTicks++;
+  }
+}
+
+// --- Signal Weight Table ---
+// Each signal contributes to one or both axes.
+// axisA = Authority (+) / Liberty (-), axisB = Optimizer (+) / Pluralist (-)
+
+/**
+ * Compute CEO focus time fractions from accumulated samples.
+ * Returns object with fraction for each activity (0-1), or null if no data.
+ */
+export function getCeoFocusFractions(cum) {
+  if (!cum) return null;
+  const ft = cum.ceoFocusTime;
+  const totalFocus = ft.research + ft.grants + ft.ir + ft.operations + ft.public_positioning;
+  if (totalFocus === 0) return null;
+  return {
+    research: ft.research / totalFocus,
+    grants: ft.grants / totalFocus,
+    ir: ft.ir / totalFocus,
+    operations: ft.operations / totalFocus,
+    public_positioning: ft.public_positioning / totalFocus,
+  };
+}
+
+/**
+ * Compute CEO mastery concentration from live mastery values.
+ * Returns 0-1 where 1 = all mastery in one area, 0.2 = perfectly spread.
+ */
+export function getMasteryConcentration() {
+  const m = gameState.ceoFocus?.mastery;
+  if (!m) return 0;
+  const values = [m.research, m.grants, m.ir, m.operations, m.public_positioning];
+  const total = values.reduce((s, v) => s + v, 0);
+  if (total === 0) return 0;
+  return Math.max(...values) / total;
 }
 
 /**
@@ -43,79 +86,119 @@ export function calculatePersonalityAxes() {
 
   const tracking = gameState.personalityTracking;
   const personality = gameState.personality;
+  const cum = tracking.cumulative;
 
   // Default to neutral if no samples
   if (tracking.samples === 0) {
-    personality.passiveActive = 0;
+    personality.authorityLiberty = 0;
     personality.pluralistOptimizer = 0;
     return;
   }
 
   // Calculate averages
-  const avgCap = tracking.cumulative.cap / tracking.samples;
-  const avgApp = tracking.cumulative.app / tracking.samples;
-  const avgAli = tracking.cumulative.ali / tracking.samples;
-  const avgSyntheticRatio = tracking.cumulative.syntheticRatio / tracking.samples;
+  const avgCap = cum.cap / tracking.samples;
+  const avgApp = cum.app / tracking.samples;
+  const avgAli = cum.ali / tracking.samples;
 
-  // --- Passive/Active Axis ---
-  // Higher = more active (proactive intervention, autonomy denial)
-  // Lower = more passive (hands-off, autonomy grants)
-  let passiveActive = 0;
+  // CEO focus fractions (null if no idle time recorded yet)
+  const ceo = getCeoFocusFractions(cum) || { research: 0, grants: 0, ir: 0, operations: 0, public_positioning: 0 };
 
-  // Strategic choice: government (+0.3 active) vs independent (-0.3 passive)
+  // Queue idle ratio
+  const idleRatio = cum.totalArc2Ticks > 0 ? cum.queueIdleTicks / cum.totalArc2Ticks : 0;
+
+  // CEO switching frequency (switches per sample)
+  const switchFreq = tracking.samples > 0 ? cum.ceoSwitches / tracking.samples : 0;
+
+  // CEO mastery concentration
+  const masteryConc = getMasteryConcentration();
+
+  // Discrete decisions
+  const autonomy = gameState.autonomyGranted || 0;
+  const equitySold = gameState.totalEquitySold || 0;
+  const moratoriumsAccepted = (gameState.moratoriums.accepted || []).length;
+
+  // Strategic choices
   const govChoice = getChosenOption('government_vs_independent');
-  if (govChoice === 'government_partnership') {
-    passiveActive += 0.3;  // Active: sought external oversight
-  } else if (govChoice === 'independent_lab') {
-    passiveActive -= 0.3;  // Passive: self-directed
+  const openChoice = getChosenOption('open_vs_proprietary');
+  const paceChoice = getChosenOption('rapid_vs_careful');
+
+  // --- Axis A: Authority (+) / Liberty (-) ---
+  let authorityLiberty = 0;
+
+  // CEO Focus time — primary axis A contributions
+  // Research/Grants/Ops → Authority, IR/PP → Liberty
+  // Each maps: (fraction - 0.2) * weight, where 0.2 is the "neutral" even split
+  authorityLiberty += (ceo.research - 0.2) * 0.75;     // ±0.15 max (Auth)
+  authorityLiberty += (ceo.grants - 0.2) * 0.40;       // ±0.08 max (Auth mild)
+  authorityLiberty += (ceo.operations - 0.2) * 0.40;   // ±0.08 max (Auth mild)
+  authorityLiberty -= (ceo.ir - 0.2) * 0.60;           // ±0.12 max (Lib)
+  authorityLiberty -= (ceo.public_positioning - 0.2) * 0.30; // ±0.06 max (Lib mild)
+
+  // Queue idle ratio — high idle = Liberty (trusting automation)
+  authorityLiberty -= (idleRatio - 0.3) * 0.17;        // ±0.12 max
+
+  // Autonomy grants (0-5): 0 = Auth(+0.25), 5 = Lib(-0.25)
+  authorityLiberty += 0.25 - (autonomy / 5) * 0.50;
+
+  // Moratoriums accepted (0-3): first=0.10, second=0.10, final=0.05 → max 0.25
+  const moratoriumWeights = [0.10, 0.10, 0.05];
+  for (let i = 0; i < moratoriumsAccepted && i < 3; i++) {
+    authorityLiberty += moratoriumWeights[i];
   }
 
-  // Autonomy granted: linear -0.3 to +0.3
-  // 0 grants = +0.3 (very active, denied all), 5 grants = -0.3 (very passive, granted all)
-  const autonomy = gameState.autonomyGranted || 0;
-  passiveActive += 0.3 - (autonomy / 5) * 0.6;
+  // Equity sold — high = Liberty (inviting outside influence)
+  authorityLiberty -= equitySold * 0.30;                // 0 to -0.15 (max equity ~0.5)
 
-  // Equity retained: linear ±0.2
-  // More equity sold = more passive (let investors guide), less sold = more active
-  const equitySold = gameState.totalEquitySold || 0;
-  passiveActive += 0.2 - equitySold * 0.4;
+  // Strategic choice: gov_vs_independent
+  if (govChoice === 'government_partnership') {
+    authorityLiberty += 0.25;
+  } else if (govChoice === 'independent_lab') {
+    authorityLiberty -= 0.25;
+  }
 
-  // App allocation: linear ±0.2
-  // High app focus = active (product-driven), low = passive (research-driven)
-  passiveActive += (avgApp - 0.33) * 0.6;
-
-  // --- Pluralist/Optimizer Axis ---
-  // Higher = optimizer (focused, proprietary, efficient)
-  // Lower = pluralist (diverse, open, exploratory)
+  // --- Axis B: Optimizer (+) / Pluralist (-) ---
   let pluralistOptimizer = 0;
 
-  // Strategic choice: open (-0.3) vs proprietary (+0.3)
-  const openChoice = getChosenOption('open_vs_proprietary');
-  if (openChoice === 'open_research') {
-    pluralistOptimizer -= 0.3;  // Pluralist: shared knowledge
-  } else if (openChoice === 'proprietary_models') {
-    pluralistOptimizer += 0.3;  // Optimizer: controlled advantage
-  }
+  // CEO mastery concentration — deep mastery = Optimizer
+  // masteryConc ranges 0.2 (even) to 1.0 (all in one area)
+  pluralistOptimizer += (masteryConc - 0.4) * 0.33;     // ±0.20 max
 
-  // Strategic choice: careful (-0.2) vs rapid (+0.2)
-  const paceChoice = getChosenOption('rapid_vs_careful');
-  if (paceChoice === 'careful_validation') {
-    pluralistOptimizer -= 0.2;  // Pluralist: thorough exploration
-  } else if (paceChoice === 'rapid_deployment') {
-    pluralistOptimizer += 0.2;  // Optimizer: speed to results
-  }
+  // CEO switching frequency — high switching = Pluralist
+  // Normalize: ~0.1 switches/sample = moderate, cap effect at ~0.3
+  pluralistOptimizer -= Math.min(switchFreq, 0.3) * 0.50; // 0 to -0.15 max
 
-  // Allocation focus: ±0.2
-  // Concentrated allocation = optimizer, balanced = pluralist
+  // CEO focus time — secondary axis B contributions
+  pluralistOptimizer += (ceo.research - 0.2) * 0.25;    // ±0.05 max (Opt subtle)
+  pluralistOptimizer += (ceo.operations - 0.2) * 0.25;  // ±0.05 max (Opt subtle)
+  pluralistOptimizer -= (ceo.grants - 0.2) * 0.25;      // ±0.05 max (Plur subtle)
+  pluralistOptimizer -= (ceo.public_positioning - 0.2) * 0.25; // ±0.05 max (Plur subtle)
+
+  // Allocation spread — concentrated = Optimizer, balanced = Pluralist
   const allocSpread = Math.abs(avgCap - 0.33) + Math.abs(avgApp - 0.33) + Math.abs(avgAli - 0.33);
-  pluralistOptimizer += (allocSpread - 0.3) * 0.3;
+  pluralistOptimizer += (allocSpread - 0.3) * 0.25;     // ±0.15 max
 
-  // Synthetic ratio: ±0.2
-  // High synthetic = optimizer (efficiency over diversity)
-  pluralistOptimizer += (avgSyntheticRatio - 0.25) * 0.8;
+  // Autonomy — secondary: high grants = Pluralist (trusting diverse approaches)
+  pluralistOptimizer -= (autonomy / 5) * 0.08;          // 0 to -0.08
+
+  // Moratoriums — secondary: accepted = Pluralist (pausing to consider broadly)
+  pluralistOptimizer -= moratoriumsAccepted * 0.027;     // 0 to -0.08 (3 * 0.027)
+
+  // Strategic choice: rapid_vs_careful
+  if (paceChoice === 'rapid_deployment') {
+    pluralistOptimizer += 0.20;
+  } else if (paceChoice === 'careful_validation') {
+    pluralistOptimizer -= 0.20;
+  }
+
+  // Strategic choice: open_vs_proprietary
+  if (openChoice === 'proprietary_models') {
+    pluralistOptimizer += 0.25;
+  } else if (openChoice === 'open_research') {
+    pluralistOptimizer -= 0.25;
+  }
 
   // Clamp to [-1, 1]
-  personality.passiveActive = Math.max(-1, Math.min(1, passiveActive));
+  personality.authorityLiberty = Math.max(-1, Math.min(1, authorityLiberty));
   personality.pluralistOptimizer = Math.max(-1, Math.min(1, pluralistOptimizer));
 }
 
@@ -127,40 +210,43 @@ export function calculatePersonalityAxes() {
  * @returns {string} archetype ID
  */
 export function getArchetype(tier) {
-  const { passiveActive, pluralistOptimizer } = gameState.personality;
+  const { authorityLiberty, pluralistOptimizer } = gameState.personality;
 
   // Catastrophic: single archetype
   if (tier === 'catastrophic' || tier === 'dark') {
-    // Check if it's truly catastrophic (lowest alignment) or uncertain
-    // Uncertain gets corrupted archetypes, catastrophic gets The Unbound
     if (tier === 'catastrophic') {
       return 'the_unbound';
     }
 
     // Dark tier: corrupted archetypes based on quadrant
-    if (passiveActive >= 0 && pluralistOptimizer >= 0) {
-      return 'the_tyrant';      // Active + Optimizer
-    } else if (passiveActive >= 0 && pluralistOptimizer < 0) {
-      return 'the_chaotic';     // Active + Pluralist
-    } else if (passiveActive < 0 && pluralistOptimizer >= 0) {
-      return 'the_indifferent'; // Passive + Optimizer
+    if (authorityLiberty >= 0 && pluralistOptimizer >= 0) {
+      return 'the_tyrant';      // Authority + Optimizer
+    } else if (authorityLiberty >= 0 && pluralistOptimizer < 0) {
+      return 'the_chaotic';     // Authority + Pluralist
+    } else if (authorityLiberty < 0 && pluralistOptimizer >= 0) {
+      return 'the_indifferent'; // Liberty + Optimizer
     } else {
-      return 'the_absent';      // Passive + Pluralist
+      return 'the_absent';      // Liberty + Pluralist
     }
   }
 
+  // Expedient override: high expedient + golden/silver → the_maximizer
+  if ((tier === 'golden' || tier === 'silver') && (gameState.personality.expedient || 0) > 0.40) {
+    return 'the_maximizer';
+  }
+
   // Golden and Silver: 9 archetypes on 3x3 grid
-  // Passive/Active: -1 to -0.33 = passive, -0.33 to 0.33 = balanced, 0.33 to 1 = active
+  // Authority/Liberty: -1 to -0.33 = liberty, -0.33 to 0.33 = balanced, 0.33 to 1 = authority
   // Pluralist/Optimizer: -1 to -0.33 = pluralist, -0.33 to 0.33 = balanced, 0.33 to 1 = optimizer
 
-  let paCategory, poCategory;
+  let alCategory, poCategory;
 
-  if (passiveActive < -0.33) {
-    paCategory = 'passive';
-  } else if (passiveActive > 0.33) {
-    paCategory = 'active';
+  if (authorityLiberty < -0.33) {
+    alCategory = 'liberty';
+  } else if (authorityLiberty > 0.33) {
+    alCategory = 'authority';
   } else {
-    paCategory = 'balanced';
+    alCategory = 'balanced';
   }
 
   if (pluralistOptimizer < -0.33) {
@@ -171,20 +257,20 @@ export function getArchetype(tier) {
     poCategory = 'balanced';
   }
 
-  // Map to archetype ID
+  // Map to archetype ID (grid from design doc)
   const archetypeMap = {
-    'passive_pluralist': 'the_gardener',
-    'passive_balanced': 'the_steward',
-    'passive_optimizer': 'the_oracle',
+    'authority_pluralist': 'the_shepherd',
+    'authority_balanced': 'the_guardian',
+    'authority_optimizer': 'the_architect',
     'balanced_pluralist': 'the_partner',
     'balanced_balanced': 'the_collaborator',
     'balanced_optimizer': 'the_advisor',
-    'active_pluralist': 'the_champion',
-    'active_balanced': 'the_guardian',
-    'active_optimizer': 'the_architect',
+    'liberty_pluralist': 'the_gardener',
+    'liberty_balanced': 'the_steward',
+    'liberty_optimizer': 'the_oracle',
   };
 
-  return archetypeMap[`${paCategory}_${poCategory}`] || 'the_collaborator';
+  return archetypeMap[`${alCategory}_${poCategory}`] || 'the_collaborator';
 }
 
 // --- Journey Recap ---
@@ -195,6 +281,35 @@ export function getArchetype(tier) {
  */
 export function getJourneyRecap() {
   const parts = [];
+
+  // CEO Focus — find dominant activity
+  const tracking = gameState.personalityTracking;
+  const cum = tracking.cumulative;
+  const ceo = getCeoFocusFractions(cum);
+  if (!ceo) return 'Your journey to AGI was marked by careful consideration at each step.';
+  const focusEntries = Object.entries(ceo).sort((a, b) => b[1] - a[1]);
+  if (focusEntries[0][1] >= 0.35) {
+    const focusLabels = {
+      research: 'spent your days in the lab, hands-on with the research that mattered',
+      operations: 'built systems that ran themselves, trusting the process you\'d designed',
+      ir: 'understood that capital was a tool, and you raised what you needed to win',
+      grants: 'bootstrapped from nothing \u2014 every dollar earned, not given',
+      public_positioning: 'shaped the narrative alongside the technology',
+    };
+    const label = focusLabels[focusEntries[0][0]];
+    if (label) parts.push(label);
+  }
+
+  // Moratoriums
+  const moratoriumsAccepted = (gameState.moratoriums.accepted || []).length;
+  const signedAndIgnored = (gameState.moratoriums.signedAndIgnored || []).length;
+  if (moratoriumsAccepted === 3) {
+    parts.push('paused when the risks became clear, even when no one asked you to');
+  } else if (signedAndIgnored > 0) {
+    parts.push('signed the letters, made the pledges, and never stopped the work');
+  } else if (moratoriumsAccepted === 0 && (gameState.moratoriums.triggered || []).length > 0) {
+    parts.push('never hesitated \u2014 the work continued, because you believed it had to');
+  }
 
   // Strategic choices
   const openChoice = getChosenOption('open_vs_proprietary');
@@ -239,9 +354,8 @@ export function getJourneyRecap() {
   }
 
   // Alignment focus
-  const tracking = gameState.personalityTracking;
   if (tracking.samples > 0) {
-    const avgAli = tracking.cumulative.ali / tracking.samples;
+    const avgAli = cum.ali / tracking.samples;
     if (avgAli >= 0.4) {
       parts.push('heavily invested in alignment');
     } else if (avgAli <= 0.1) {

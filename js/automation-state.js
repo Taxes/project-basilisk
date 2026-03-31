@@ -40,11 +40,24 @@ export const AUTOMATABLE_DATA = [
   { id: 'synthetic_generator', unlockPurchase: 'operations_dept' },
 ];
 
+// All furloughable item IDs (derived from automation lists + admin)
+const FURLOUGHABLE_IDS = new Set([
+  ...AUTOMATABLE_PERSONNEL.map(p => p.id),
+  ...AUTOMATABLE_COMPUTE.map(c => c.id),
+  ...AUTOMATABLE_DATA.map(d => d.id),
+  ...FURLOUGHABLE_ADMIN,
+]);
+
+// Get the effective count for an item — active count for furloughable items,
+// total count otherwise. Single source of truth for "how many are working".
+export function getEffectiveCount(id) {
+  return FURLOUGHABLE_IDS.has(id) ? getActiveCount(id) : getCount(id);
+}
+
 // Policy types
 export const POLICY_TYPES = {
   FIXED: 'fixed',           // Maintain N units
   PERCENT_REVENUE: 'percent_revenue',  // Spend X% of revenue
-  PERCENT_ITEM: 'percent_item',        // Maintain at X% of another item
 };
 
 // Get culture shift automation state (#850)
@@ -59,32 +72,11 @@ export function isCultureShiftUnlocked() {
 
 // Check if automation is unlocked for an item
 export function isAutomationUnlocked(itemId) {
-  const personnelItem = AUTOMATABLE_PERSONNEL.find(p => p.id === itemId);
-  if (personnelItem) {
-    return getCount(personnelItem.unlockPurchase) > 0;
-  }
-  const computeItem = AUTOMATABLE_COMPUTE.find(c => c.id === itemId);
-  if (computeItem) {
-    return getCount(computeItem.unlockPurchase) > 0;
-  }
-  const dataItem = AUTOMATABLE_DATA.find(d => d.id === itemId);
-  if (dataItem) {
-    return getCount(dataItem.unlockPurchase) > 0;
-  }
-  // Admin items (unlocked by institutional_growth)
-  if (itemId === 'hr_team' || itemId === 'procurement_team_unit') {
-    return getCount('institutional_growth') > 0;
-  }
-  return false;
+  return canHRHire(itemId) || canProcurementBuy(itemId);
 }
 
 // Check if percent_revenue policy is unlocked (process_optimization research)
 export function isPercentRevenueUnlocked() {
-  return gameState.tracks.applications.unlockedCapabilities.includes('process_optimization');
-}
-
-// Check if percent_item policy is unlocked (process_optimization research)
-export function isPercentItemUnlocked() {
   return gameState.tracks.applications.unlockedCapabilities.includes('process_optimization');
 }
 

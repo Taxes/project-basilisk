@@ -3,6 +3,9 @@
 
 import { gameState } from './game-state.js';
 
+// Default timer for action messages that don't specify one (seconds)
+const DEFAULT_ACTION_TIMER_SECS = 60;
+
 // Message ID counter (restored from saved messages on load)
 let messageIdCounter = 0;
 
@@ -56,20 +59,21 @@ export function setOnNewMessageCallback(callback) {
 }
 
 // Prune old messages when over limit
-// Preserves unactioned action messages
+// Eviction priority: news → incidents → info → actioned actions. Never evict unactioned actions.
 const MAX_MESSAGES = 150;
 
 function pruneOldMessages() {
   while (gameState.messages.length > MAX_MESSAGES) {
-    // Find first message that's either:
-    // - Not an action type, OR
-    // - An action that's already been acted upon
-    const pruneIndex = gameState.messages.findIndex(m =>
-      m.type !== 'action' || m.actionTaken
-    );
+    // Try evicting in priority order: news first, then incidents, then info, then actioned actions
+    const find = fn => gameState.messages.findIndex(fn);
+    const pruneIndex = [
+      find(m => m.type === 'news'),
+      find(m => m.type === 'info' && m.tags?.includes('consequence')),
+      find(m => m.type === 'info'),
+      find(m => m.type === 'action' && m.actionTaken),
+    ].find(i => i !== -1) ?? -1;
 
     if (pruneIndex === -1) {
-      // All messages are unactioned actions - can't prune
       break;
     }
     gameState.messages.splice(pruneIndex, 1);
@@ -101,11 +105,14 @@ export function addMessage({
   tags = [],
   triggeredBy = null,
   contentParams = null,
+  timerDuration = null,
 }) {
-  // Calculate deadline for normal actions
+  // Calculate deadline for timed action messages.
+  // null → apply default; -1 → explicit opt-out (no timer).
+  const effectiveTimer = timerDuration ?? DEFAULT_ACTION_TIMER_SECS;
   let deadline = null;
-  if (type === 'action' && priority === 'normal') {
-    deadline = gameState.timeElapsed + 30000; // 30 seconds grace period
+  if (type === 'action' && priority === 'normal' && effectiveTimer > 0) {
+    deadline = Math.floor(gameState.timeElapsed) + effectiveTimer;
   }
 
   const message = {
@@ -121,10 +128,15 @@ export function addMessage({
     choices,
     priority,
     deadline,
+    timerDuration: effectiveTimer,
     tags,
     triggeredBy,
     contentParams,
   };
+
+  if (triggeredBy) {
+    triggeredMessageKeys.add(triggeredBy);
+  }
 
   gameState.messages.push(message);
   pruneOldMessages();
@@ -147,7 +159,7 @@ export function addMessage({
 /**
  * Add a news message (headline in feed, optional body for detail view)
  */
-export function addNewsMessage(subject, tags = [], triggeredBy = null, body = null) {
+export function addNewsMessage(subject, tags = [], triggeredBy = null, body = null, contentParams = null) {
   const msg = {
     type: 'news',
     subject,
@@ -155,6 +167,7 @@ export function addNewsMessage(subject, tags = [], triggeredBy = null, body = nu
     triggeredBy,
   };
   if (body) msg.body = body;
+  if (contentParams) msg.contentParams = contentParams;
   return addMessage(msg);
 }
 
@@ -177,7 +190,7 @@ export function addInfoMessage(sender, subject, body, signature = null, tags = [
 /**
  * Add an action message (requires player choice)
  */
-export function addActionMessage(sender, subject, body, signature, choices, priority = 'normal', tags = [], triggeredBy = null, contentParams = null) {
+export function addActionMessage(sender, subject, body, signature, choices, priority = 'normal', tags = [], triggeredBy = null, contentParams = null, timerDuration = null) {
   return addMessage({
     type: 'action',
     sender,
@@ -189,6 +202,7 @@ export function addActionMessage(sender, subject, body, signature, choices, prio
     tags,
     triggeredBy,
     contentParams,
+    timerDuration,
   });
 }
 
@@ -224,29 +238,29 @@ export function getUnreadCount() {
   }).length;
 }
 
+// Check whether any action message has an expired deadline (forces badge pulse)
+export function hasOverdueMessages() {
+  if (!gameState.messages) return false;
+  const now = gameState.timeElapsed;
+  return gameState.messages.some(m =>
+    m.type === 'action' && !m.actionTaken && m.deadline && now >= m.deadline
+  );
+}
+
 // Get count of pending actions (unactioned action messages)
 export function getActionCount() {
   return gameState.messages?.filter(m => m.type === 'action' && !m.actionTaken).length || 0;
 }
 
-// Get messages grouped by type for UI rendering
-export function getMessagesByType() {
-  const messages = gameState.messages || [];
-  return {
-    action: messages.filter(m => m.type === 'action'),
-    info: messages.filter(m => m.type === 'info'),
-    news: messages.filter(m => m.type === 'news'),
-  };
-}
-
-// Get messages grouped into 4 sections for inbox UI
+// Get messages grouped into 5 sections for inbox UI
 // New: unactioned actions + unread info (never news)
 // Reference: read tutorial-tagged info
-// Archive: actioned decisions + read non-tutorial info
+// Archive: actioned decisions + read non-tutorial, non-incident info
+// Incidents: read consequence-tagged info
 // News: all news messages (always here, never in New)
 export function getMessagesBySections() {
   const messages = gameState.messages || [];
-  const sections = { new: [], reference: [], archive: [], news: [] };
+  const sections = { new: [], reference: [], archive: [], incidents: [], news: [] };
 
   for (const msg of messages) {
     if (msg.type === 'news') {
@@ -259,6 +273,8 @@ export function getMessagesBySections() {
       sections.new.push(msg);
     } else if (msg.type === 'info' && msg.tags?.includes('tutorial')) {
       sections.reference.push(msg);
+    } else if (msg.type === 'info' && msg.tags?.includes('consequence')) {
+      sections.incidents.push(msg);
     } else if (msg.type === 'info') {
       sections.archive.push(msg);
     }
@@ -280,6 +296,9 @@ export function getMessagesBySections() {
   // Archive: newest first
   sections.archive.sort((a, b) => (b.timestamp - a.timestamp) || (idNum(b) - idNum(a)));
 
+  // Incidents: newest first
+  sections.incidents.sort((a, b) => (b.timestamp - a.timestamp) || (idNum(b) - idNum(a)));
+
   // News: newest first
   sections.news.sort((a, b) => (b.timestamp - a.timestamp) || (idNum(b) - idNum(a)));
 
@@ -296,6 +315,7 @@ export function getRecentMessages(count = 5) {
 // Called once per second from game loop
 export function checkMessageDeadlines() {
   if (!gameState.messages) return;
+  if (gameState.settings?.disableActionTimers) return;
 
   const now = gameState.timeElapsed;
   const overdue = gameState.messages.filter(m =>
@@ -382,7 +402,6 @@ if (typeof window !== 'undefined') {
   window.getMessageById = getMessageById;
   window.getUnreadCount = getUnreadCount;
   window.getActionCount = getActionCount;
-  window.getMessagesByType = getMessagesByType;
   window.getMessagesBySections = getMessagesBySections;
   window.getRecentMessages = getRecentMessages;
   window.markMessageRead = markMessageRead;

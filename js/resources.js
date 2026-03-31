@@ -2,18 +2,24 @@
 
 import { gameState } from './game-state.js';
 import { BALANCE, AGI_RP_TARGET, AGI_LOG_K, FAREWELLS } from '../data/balance.js';
-import { tracks, checkAllMilestones } from './capabilities.js';
+import { tracks, checkAllMilestones, trackHasAvailableTech } from './capabilities.js';
 import { getPurchasableById, PERSONNEL_IDS, COMPUTE_IDS, ADMIN_IDS, DATA_IDS } from './content/purchasables.js';
 import { capabilitiesTrack } from './content/capabilities-track.js';
 import { applicationsTrack } from './content/applications-track.js';
+import { alignmentTrack } from './content/alignment-track.js';
 import { checkProgressMilestones } from './news-feed.js';
 import { milestone } from './analytics.js';
 import { getOutputMultiplier } from './content/upgrades.js';
-import { getResearchRateMultiplier, getComputeCapacityMultiplier, getTokenRevenueMultiplier, getGovernmentFundingBonus, getMarketEdgeDecayMultiplier, getMarketEdgeBoostMultiplier, getDemandMultiplier, getAcquiredDemandGrowthMultiplier } from './strategic-choices.js';
+import { getResearchRateMultiplier, getComputeCapacityMultiplier, getTokenRevenueMultiplier, getGovernmentFundingBonus, getMarketEdgeBoostMultiplier, getDemandMultiplier, getAcquiredDemandGrowthMultiplier, getElasticityBonus, getAcquisitionRateMultiplier, getChurnRateMultiplier } from './strategic-choices.js';
 import { getDataEffectivenessMultiplier, isCapResearchPaused, isDataCleanupActive, computeDataDisplay } from './data-quality.js';
 import { isMoratoriumActive } from './moratoriums.js';
+import { getDenialMarketEdgeMult } from './ai-requests.js';
+import { getActiveTemporaryMultiplier } from './temporary-effects.js';
+import { getTemporaryDemandMult } from './flavor-events.js';
 import { isFarewellStalling } from './farewells.js';
-import { getActiveCount } from './automation-state.js';
+import { addNewsMessage, hasMessageBeenTriggered } from './messages.js';
+import { getAlignmentDragFactor, calculateAutonomyBenefits } from './safety-metrics.js';
+import { getActiveCount, getEffectiveCount } from './automation-state.js';
 import { getCount } from './purchasable-state.js';
 import { getCreditStatus, computeGrantIncome } from './economics.js';
 import { computeEffects as computeCEOFocusEffects } from './ceo-focus.js';
@@ -34,6 +40,7 @@ const AUTOPRICER_MODE_TARGETS = { extraction: 1.0, balanced: 1.2, growth: 1.5 };
 const AUTOPRICER_MAX_STEP = 0.05;           // move at most 5% toward ideal per tick
 const AUTOPRICER_DEAD_ZONE = 0.02;          // skip when within 2% of ideal
 const AUTOPRICER_COOLDOWN = 3;              // seconds between updates
+let _autopricerTimer = 0;                   // module-level — not serialized into saves
 
 // Price inertia: actual price drifts toward target price at a capped rate
 const PRICE_INERTIA_MAX_RATE = BALANCE.PRICE_INERTIA_MAX_RATE;
@@ -82,10 +89,6 @@ export function calculateElasticityAtPrice(price) {
     + (BALANCE.OVERPRICE_CURVATURE * overpriceRatio * overpriceRatio)
     + (BALANCE.UNDERPRICE_CURVATURE * underpriceRatio * underpriceRatio);
 
-  // Culture modifier: apps allocation reduces elasticity (better product-market fit)
-  const appAllocation = state.tracks?.applications?.researcherAllocation || 0.33;
-  elasticity += 0.1 - (appAllocation * 0.3);  // -0.2 to +0.1
-
   // Competition modifier: lead reduces elasticity (pricing power)
   const playerProgress = state.agiProgress || 0;
   const competitorProgress = state.competitor?.progressToAGI || 0;
@@ -95,9 +98,7 @@ export function calculateElasticityAtPrice(price) {
   elasticity += competitionMod;
 
   // Proprietary strategic choice modifier
-  if (state.strategicChoices?.openVsProprietary === 'proprietary') {
-    elasticity -= 0.1;
-  }
+  elasticity += getElasticityBonus();
 
   // Floor to prevent infinite pricing
   return Math.max(BALANCE.ELASTICITY_FLOOR, elasticity);
@@ -170,11 +171,6 @@ export function calculateTokenRevenue() {
 
   let revenue = baseRevenue * getTokenRevenueMultiplier();
 
-  // Autonomy grant multiplier (Arc 2 — permanent effect from AI requests)
-  if (gameState.arc >= 2 && gameState.revenueMultFromAutonomy) {
-    revenue *= gameState.revenueMultFromAutonomy;
-  }
-
   // Event multipliers (temporary effects from consequence events)
   if (gameState.eventMultipliers?.revenue) {
     revenue *= gameState.eventMultipliers.revenue;
@@ -194,8 +190,11 @@ export function calculateTokenRevenue() {
 //     - BASE_DEMAND (500M) × competitor progress growth
 //     - × per-milestone demandMultiplier                     (caps: CoT 1.2, massive/emergent/reasoning 1.3; varied per cap)
 //     - × per-milestone demandMultiplier                     (mainline apps only; varied 1.3–3.5 per app)
+//     - × per-milestone demandMultiplier                     (alignment T1-T4: 1.25× each, ~2.4× cumulative)
 //     - × marketEdge (decaying, boosted by mainline app marketEdgeMultiplier; PP slows decay up to 30%)
 //     - × getMarketEdgeBoostMultiplier()                     (strategic choice: proprietary)
+//     - × denialEdgeMult                                    (Arc 2: penalty for not granting autonomy requests)
+//     - × modelNerfed                                       (Arc 2: temporary demand penalty from autonomy revocation)
 //     - × catchupMultiplier                                  (rubber-banding: bonus when behind competitor)
 //     - × network effects bonus                              (late game, from T8 app)
 //     - × getDemandMultiplier()                               (strategic choice: rapid deployment +20%)
@@ -235,9 +234,34 @@ export function calculateDemand() {
     }
   }
 
+  // Per-milestone demand multipliers from alignment (T1-T4 commercial benefits)
+  const unlockedAli = state.tracks?.alignment?.unlockedCapabilities || [];
+  for (const aliId of unlockedAli) {
+    const aliDef = alignmentTrack.capabilities.find(c => c.id === aliId);
+    if (aliDef?.demandMultiplier) {
+      marketSize *= aliDef.demandMultiplier;
+    }
+  }
+
   // Market edge: floor applied only here, not on stored value
   const effectiveEdge = Math.max(BALANCE.MARKET_EDGE_FLOOR, state.resources.marketEdge);
   marketSize *= effectiveEdge * getMarketEdgeBoostMultiplier();
+
+  // Denial market edge malus (Arc 2 — autonomy requests not granted)
+  const denialEdgeMult = getDenialMarketEdgeMult();
+  marketSize *= denialEdgeMult;
+
+  // Temporary: model nerfed demand multiplier from revocation
+  const nerfedMult = getActiveTemporaryMultiplier('modelNerfed');
+  marketSize *= nerfedMult;
+
+  // Moratorium demand effects
+  const moratoriumGoodwill = getActiveTemporaryMultiplier('moratoriumGoodwill');
+  marketSize *= moratoriumGoodwill;
+  const moratoriumExposed = getActiveTemporaryMultiplier('moratoriumExposed');
+  marketSize *= moratoriumExposed;
+  const moratoriumBacklash = getActiveTemporaryMultiplier('moratoriumBacklash');
+  marketSize *= moratoriumBacklash;
 
   // Catch-up bonus: demand boost when behind competitor
   const playerProgress = state.agiProgress || 0;
@@ -267,6 +291,24 @@ export function calculateDemand() {
   // Strategic choice: Rapid Deployment demand bonus
   marketSize *= getDemandMultiplier();
 
+  // Alignment tax: permanent demand malus if player held position on safety backlash
+  const alignmentTaxMalus = gameState.alignmentTaxDemandMalus || 0;
+  if (alignmentTaxMalus !== 0) marketSize *= (1 + alignmentTaxMalus);
+
+  // Alignment drag: low effective alignment reduces demand (Arc 2 only)
+  const alignmentDrag = getAlignmentDragFactor();
+  marketSize *= alignmentDrag.demand;
+
+  // Autonomy benefit: high alignment + high power → demand bonus
+  const autonomyBenefitsDemand = calculateAutonomyBenefits();
+  marketSize *= autonomyBenefitsDemand.demandMult;
+
+  // Ethical event chain: permanent demand effects + temporary boosts
+  marketSize *= (gameState.flavorEventEffects?.demandMult ?? 1.0);
+  marketSize *= getTemporaryDemandMult();
+
+  // Consequence events: honesty subfactor demand penalty (fading)
+  marketSize *= getActiveTemporaryMultiplier('consequenceDemand');
 
   // Price elasticity: demand = marketSize * (refPrice / price)^elasticity
   const referencePrice = calculateReferencePrice();
@@ -275,7 +317,11 @@ export function calculateDemand() {
   // Floor market size at 100M — well below 1B base, safety net only
   marketSize = Math.max(marketSize, 1e8);
 
-  const demandAtPrice = marketSize * Math.pow(referencePrice / currentPrice, elasticity);
+  let demandAtPrice = marketSize * Math.pow(referencePrice / currentPrice, elasticity);
+
+  // Culture axis: demand modifier (commercial culture boosts demand, research culture reduces it)
+  const cultureDemandMult = 1 + (state.computed?.culture?.demand || 0);
+  demandAtPrice *= cultureDemandMult;
 
   // Store for UI display
   state.resources.referencePrice = referencePrice;
@@ -294,9 +340,11 @@ export function updateAcquiredDemand(deltaTime) {
 
   // Grace cap: acquired demand can exceed supply by GRACE_FACTOR
   const unlockedApps = state.tracks?.applications?.unlockedCapabilities || [];
-  const graceFactor = unlockedApps.includes('ai_market_expansion')
-    ? BALANCE.LATE_GAME_GRACE_FACTOR
-    : BALANCE.ACQUIRED_DEMAND_GRACE_FACTOR;
+  const graceFactor = unlockedApps.includes('autonomous_economy')
+    ? BALANCE.ENDGAME_GRACE_FACTOR
+    : unlockedApps.includes('ai_market_expansion')
+      ? BALANCE.LATE_GAME_GRACE_FACTOR
+      : BALANCE.ACQUIRED_DEMAND_GRACE_FACTOR;
   const maxAcquiredDemand = supply * graceFactor;
   const potentialDemand = Math.min(demandAtPrice, maxAcquiredDemand);
 
@@ -318,10 +366,8 @@ export function updateAcquiredDemand(deltaTime) {
     // Strategic choice: Rapid Deployment customer growth bonus
     growthRate *= getAcquiredDemandGrowthMultiplier();
 
-    // Proprietary strategic choice: +25% acquisition
-    if (state.strategicChoices?.openVsProprietary === 'proprietary') {
-      growthRate *= 1.25;
-    }
+    // Proprietary strategic choice: customer acquisition bonus
+    growthRate *= getAcquisitionRateMultiplier();
 
     acquiredDemand += growthRate * deltaTime;
     acquiredDemand = Math.min(acquiredDemand, potentialDemand);  // Don't overshoot
@@ -330,10 +376,8 @@ export function updateAcquiredDemand(deltaTime) {
     const excess = acquiredDemand - potentialDemand;
     let churnRate = excess * BALANCE.ACQUIRED_DEMAND_CHURN_RATE;
 
-    // Proprietary strategic choice: -25% churn
-    if (state.strategicChoices?.openVsProprietary === 'proprietary') {
-      churnRate *= 0.75;
-    }
+    // Proprietary strategic choice: churn reduction
+    churnRate *= getChurnRateMultiplier();
 
     acquiredDemand -= churnRate * deltaTime;
     acquiredDemand = Math.max(acquiredDemand, potentialDemand);  // Don't undershoot
@@ -346,6 +390,7 @@ export function updateAcquiredDemand(deltaTime) {
 }
 
 // Late-game demand growth: T8 app (ai_market_expansion) provides compounding demand
+// T9 app (autonomous_economy) adds bonus growth rate
 export function updateLateGameDemandMultiplier(deltaTime) {
   const state = gameState;
   const unlockedApps = state.tracks?.applications?.unlockedCapabilities || [];
@@ -354,7 +399,11 @@ export function updateLateGameDemandMultiplier(deltaTime) {
   if (!state.resources.lateGameDemandMultiplier) {
     state.resources.lateGameDemandMultiplier = 1.0;
   }
-  state.resources.lateGameDemandMultiplier *= Math.pow(1 + BALANCE.LATE_GAME_DEMAND_GROWTH_RATE, deltaTime);
+  let growthRate = BALANCE.LATE_GAME_DEMAND_GROWTH_RATE;
+  if (unlockedApps.includes('autonomous_economy')) {
+    growthRate += BALANCE.ENDGAME_DEMAND_GROWTH_BONUS;
+  }
+  state.resources.lateGameDemandMultiplier *= Math.pow(1 + growthRate, deltaTime);
 }
 
 // Autopricer: clearing-price computation with rate-limited convergence
@@ -369,9 +418,9 @@ export function updateAutopricer(deltaTime) {
   if (!apps.includes('process_optimization')) { if (_dbg) console.log('[AP] not unlocked'); return; }
 
   // Rate-limit: only update every AUTOPRICER_COOLDOWN seconds
-  state.resources._autopricerTimer = (state.resources._autopricerTimer || 0) + deltaTime;
-  if (state.resources._autopricerTimer < AUTOPRICER_COOLDOWN) return;
-  state.resources._autopricerTimer = 0;
+  _autopricerTimer = (_autopricerTimer || 0) + deltaTime;
+  if (_autopricerTimer < AUTOPRICER_COOLDOWN) return;
+  _autopricerTimer = 0;
 
   const supply = state.resources.tokensPerSecond;
   if (supply <= 0) { if (_dbg) console.log('[AP] supply=0'); return; }
@@ -387,11 +436,12 @@ export function updateAutopricer(deltaTime) {
   const mode = state.resources.autopricerMode || 'balanced';
   const demandTarget = supply * (AUTOPRICER_MODE_TARGETS[mode] || AUTOPRICER_MODE_TARGETS.balanced);
 
+  const cultureDemandMult = 1 + (state.computed?.culture?.demand || 0);
   let lo = 0.01, hi = 1000;
   for (let i = 0; i < 20; i++) {
     const mid = Math.sqrt(lo * hi);
     const e = calculateElasticityAtPrice(mid);
-    const d = mktSize * Math.pow(refPrice / mid, e);
+    const d = mktSize * Math.pow(refPrice / mid, e) * cultureDemandMult;
     if (d > demandTarget) lo = mid; else hi = mid;
   }
   const idealPrice = Math.sqrt(lo * hi);
@@ -454,83 +504,153 @@ if (typeof window !== 'undefined') {
   window.updatePriceInertia = updatePriceInertia;
 }
 
-// Calculate culture bonuses based on allocation ratios
-export function getCultureBonuses() {
+// Culture Axis System: three pairwise tension axes
+// See docs/plans/2026-03-03-culture-axis-redesign.md
+//
+// Each axis compares two tracks as a ratio capped at 4:1.
+// Position ranges from -1 (trackB-lean) to +1 (trackA-lean).
+// Effects: track research bonus, all-research modifier, demand modifier, AP generation modifier.
+
+/** Compute axis position from two track allocations. Returns 0 if both are 0. */
+function axisPosition(a, b) {
+  if (a <= 0 && b <= 0) return 0; // both zero = undefined ratio
+  const r = a / (a + b);
+  return Math.max(-1, Math.min(1, (r - 0.50) / 0.30));
+}
+
+/** Interpolate a specialized effect: positive position uses maxVal, negative uses minVal. */
+function axisEffect(position, maxVal, minVal) {
+  if (position >= 0) return position * maxVal;
+  return -position * minVal; // minVal is already negative
+}
+
+export function computeCultureAxes() {
   const trks = gameState.tracks;
-  const baseline = BALANCE.CULTURE_BONUS_BASELINE;
+  const c = trks.capabilities.researcherAllocation;
+  const a = trks.applications.researcherAllocation;
+  const l = trks.alignment.researcherAllocation;
+  const B = BALANCE;
 
-  const capPct = trks.capabilities.researcherAllocation;
-  const appPct = trks.applications.researcherAllocation;
-  const aliPct = trks.alignment.researcherAllocation;
+  // Arc 1: suppress axes at single-zero (early-game protection).
+  // Arc 2: zero allocation = max lean, not suppression.
+  // Axes 2 & 3 require fine_tuning — before the alignment slider is revealed,
+  // l=0 is forced (not a player choice), so treat as suppressed.
+  const arc1 = gameState.arc < 2;
+  const alignmentRevealed = gameState.tracks.capabilities.unlockedCapabilities.includes('fine_tuning');
+  const pos1 = (arc1 && (c <= 0 || a <= 0)) ? 0 : axisPosition(c, a);
+  const pos2 = (arc1 || !alignmentRevealed) ? 0 : axisPosition(c, l);
+  const pos3 = (arc1 || !alignmentRevealed) ? 0 : axisPosition(a, l);
 
-  const capBonus = Math.max(0, (capPct - baseline) / (1 - baseline)) * BALANCE.CULTURE_CAP_MAX_BONUS;
-  const appEdgeSlow = Math.max(0, (appPct - baseline) / (1 - baseline)) * BALANCE.CULTURE_APP_MAX_EDGE_SLOW;
-  const aliMult = 1 + Math.max(0, (aliPct - baseline) / (1 - baseline)) * (BALANCE.CULTURE_ALI_MAX_ALIGNMENT_MULT - 1);
+  // --- Track research bonuses ---
+  const maxTR = B.CULTURE_AXIS_TRACK_RESEARCH_MAX;
+  const coop = B.CULTURE_AXIS_COOPERATION_BONUS;
 
-  const maxAlloc = Math.max(capPct, appPct, aliPct);
-  const balancedStrength = Math.max(0, 1 - (maxAlloc - BALANCE.CULTURE_BALANCED_THRESHOLD) / (1 - BALANCE.CULTURE_BALANCED_THRESHOLD));
-  const balancedResearch = (maxAlloc <= BALANCE.CULTURE_BALANCED_THRESHOLD) ? BALANCE.CULTURE_BALANCED_RESEARCH_BONUS : BALANCE.CULTURE_BALANCED_RESEARCH_BONUS * balancedStrength;
-  const balancedRevenue = (maxAlloc <= BALANCE.CULTURE_BALANCED_THRESHOLD) ? BALANCE.CULTURE_BALANCED_REVENUE_BONUS : BALANCE.CULTURE_BALANCED_REVENUE_BONUS * balancedStrength;
+  const trackResearch = { capabilities: 0, applications: 0, alignment: 0 };
 
-  return { capBonus, appEdgeSlow, aliMult, balancedResearch, balancedRevenue };
+  // Axis 1: cap ↔ app
+  if (pos1 > 0) {
+    trackResearch.capabilities += pos1 * maxTR;
+    trackResearch.applications += (1 - pos1) * coop;
+    trackResearch.capabilities += (1 - pos1) * coop;
+  } else if (pos1 < 0) {
+    trackResearch.applications += (-pos1) * maxTR;
+    trackResearch.capabilities += (1 - (-pos1)) * coop;
+    trackResearch.applications += (1 - (-pos1)) * coop;
+  } else if (c > 0 && a > 0) {
+    trackResearch.capabilities += coop;
+    trackResearch.applications += coop;
+  }
+
+  // Axis 2: cap ↔ ali
+  if (pos2 > 0) {
+    trackResearch.capabilities += pos2 * maxTR;
+    trackResearch.alignment += (1 - pos2) * coop;
+    trackResearch.capabilities += (1 - pos2) * coop;
+  } else if (pos2 < 0) {
+    trackResearch.alignment += (-pos2) * maxTR;
+    trackResearch.capabilities += (1 - (-pos2)) * coop;
+    trackResearch.alignment += (1 - (-pos2)) * coop;
+  } else if (c > 0 && l > 0) {
+    trackResearch.capabilities += coop;
+    trackResearch.alignment += coop;
+  }
+
+  // Axis 3: app ↔ ali
+  if (pos3 > 0) {
+    trackResearch.applications += pos3 * maxTR;
+    trackResearch.alignment += (1 - pos3) * coop;
+    trackResearch.applications += (1 - pos3) * coop;
+  } else if (pos3 < 0) {
+    trackResearch.alignment += (-pos3) * maxTR;
+    trackResearch.applications += (1 - (-pos3)) * coop;
+    trackResearch.alignment += (1 - (-pos3)) * coop;
+  } else if (a > 0 && l > 0) {
+    trackResearch.applications += coop;
+    trackResearch.alignment += coop;
+  }
+
+  // --- Specialized effects (aggregate across axes) ---
+  const allResearch =
+    axisEffect(pos1, B.CULTURE_RC_ALL_RESEARCH_MAX, B.CULTURE_RC_ALL_RESEARCH_MIN) +
+    axisEffect(pos2, B.CULTURE_SS_ALL_RESEARCH_MAX, B.CULTURE_SS_ALL_RESEARCH_MIN);
+
+  // Demand: app-lean on axis 1 = positive demand, so flip pos1
+  const demand =
+    axisEffect(-pos1, B.CULTURE_RC_DEMAND_MAX, B.CULTURE_RC_DEMAND_MIN) +
+    axisEffect(pos3, B.CULTURE_PR_DEMAND_MAX, B.CULTURE_PR_DEMAND_MIN);
+
+  // AP: ali-lean on axes 2 & 3 = positive AP, so flip both
+  const apGeneration =
+    axisEffect(-pos2, B.CULTURE_SS_AP_MAX, B.CULTURE_SS_AP_MIN) +
+    axisEffect(-pos3, B.CULTURE_PR_AP_MAX, B.CULTURE_PR_AP_MIN);
+
+  // --- Balance score (UI display only) ---
+  let balanceScore = 0;
+  if (c > 0 && a > 0 && l > 0) {
+    const pb_ca = Math.min(c, a) / Math.max(c, a);
+    const pb_cl = Math.min(c, l) / Math.max(c, l);
+    const pb_al = Math.min(a, l) / Math.max(a, l);
+    balanceScore = 3 / (1 / pb_ca + 1 / pb_cl + 1 / pb_al);
+  }
+
+  const result = {
+    axes: [
+      { id: 'researchCommercial', position: pos1 },
+      { id: 'speedSafety', position: pos2 },
+      { id: 'profitResponsibility', position: pos3 },
+    ],
+    trackResearch,
+    allResearch,
+    demand,
+    apGeneration,
+    balanceScore,
+  };
+
+  if (!gameState.computed) gameState.computed = {};
+  gameState.computed.culture = result;
+
+  return result;
 }
 
 // AI self-improvement: T7+ capabilities contribute percentage of total research
 // Returns the RP contribution from AI feedback for this tick
 // Data quality multiplies the feedback rate — corrupted data degrades self-improvement
-export function calculateFeedbackResearch(deltaTime) {
-  // Frozen during moratorium
-  if (isMoratoriumActive()) return 0;
-
-  const totalRP = gameState.tracks.capabilities.researchPoints;
-  const rate = getCurrentFeedbackRate();
-  if (rate <= 0) return 0;
-
-  const dataEffectiveness = getDataEffectivenessMultiplier();
-  return totalRP * rate * dataEffectiveness * deltaTime;
-}
-
-// Alignment endgame: T7+ alignment milestones add percentage of capability RP to alignment RP
-// Higher tiers REPLACE (not stack with) lower tier values
-// Returns the RP contribution from alignment feedback for this tick
-export function calculateAlignmentFeedbackResearch(deltaTime) {
-  // Only applies in Arc 2
-  if (gameState.arc < 2) return 0;
-
-  const capRP = gameState.tracks?.capabilities?.researchPoints || 0;
-  const unlockedAli = gameState.tracks?.alignment?.unlockedCapabilities || [];
-
-  // Check from highest tier down (replacement, not stacking)
-  let feedbackRate = 0;
-  if (unlockedAli.includes('alignment_lock')) {
-    feedbackRate = BALANCE.ALIGNMENT_FEEDBACK_RATES.alignment_lock;
-  } else if (unlockedAli.includes('interpretability_breakthrough')) {
-    feedbackRate = BALANCE.ALIGNMENT_FEEDBACK_RATES.interpretability_breakthrough;
-  } else if (unlockedAli.includes('goal_stability')) {
-    feedbackRate = BALANCE.ALIGNMENT_FEEDBACK_RATES.goal_stability;
-  }
-
-  if (feedbackRate === 0) return 0;
-
-  return capRP * feedbackRate * deltaTime;
-}
-
-// Get the current alignment feedback rate for display purposes
+// Get the current alignment feedback rate (highest-tier unlocked)
+// Reads from content file effects — same pattern as getCurrentFeedbackRate()
 export function getCurrentAlignmentFeedbackRate() {
   if (gameState.arc < 2) return 0;
 
   const unlockedAli = gameState.tracks?.alignment?.unlockedCapabilities || [];
+  const track = alignmentTrack.capabilities;
 
-  if (unlockedAli.includes('alignment_lock')) {
-    return BALANCE.ALIGNMENT_FEEDBACK_RATES.alignment_lock;
+  let highestRate = 0;
+  for (const capId of unlockedAli) {
+    const cap = track.find(c => c.id === capId);
+    if (cap?.effects?.alignmentFeedbackRate && cap.effects.alignmentFeedbackRate > highestRate) {
+      highestRate = cap.effects.alignmentFeedbackRate;
+    }
   }
-  if (unlockedAli.includes('interpretability_breakthrough')) {
-    return BALANCE.ALIGNMENT_FEEDBACK_RATES.interpretability_breakthrough;
-  }
-  if (unlockedAli.includes('goal_stability')) {
-    return BALANCE.ALIGNMENT_FEEDBACK_RATES.goal_stability;
-  }
-  return 0;
+  return highestRate;
 }
 
 // Get feedback rate from highest-tier unlocked capability (for display and calculation)
@@ -547,6 +667,18 @@ export function getCurrentFeedbackRate() {
     }
   }
   return highestRate;
+}
+
+// Autonomy soft cap multiplier: power-law decay when capRP exceeds threshold for current grant level
+// Returns 1.0 when below threshold or in Arc 1
+export function getCapSoftCapMult() {
+  if (gameState.arc < 2) return 1.0;
+  const grants = gameState.autonomyGranted || 0;
+  const thresholds = BALANCE.AUTONOMY_SOFT_CAP_THRESHOLDS;
+  const capSoftCapThreshold = thresholds[Math.min(grants, thresholds.length - 1)];
+  const capRP = gameState.tracks?.capabilities?.researchPoints || 0;
+  const ratio = Math.min(1.0, capSoftCapThreshold / Math.max(capRP, 1));
+  return ratio ** BALANCE.AUTONOMY_SOFT_CAP_EXPONENT;
 }
 
 // Higher-tier automation upgrades multiply HR/procurement team base salary by 1.2× each
@@ -574,15 +706,44 @@ function getScaledRunningCost(baseCost, count, scalingFactor = 0) {
   return baseCost * count * (1 + scalingFactor * count);
 }
 
-// Items that can be furloughed - running costs use active count, not owned count
-const AUTOMATABLE_IDS = ['grad_student', 'junior_researcher', 'team_lead', 'elite_researcher',
-                         'gpu_consumer', 'gpu_datacenter', 'cloud_compute', 'build_datacenter',
-                         'hr_team', 'procurement_team_unit', 'legal_team', 'coo',
-                         'chief_of_staff', 'executive_team'];
-
 // ---------------------------------------------------------------------------
 // Computed cost state (populated once per tick, read by UI)
 // ---------------------------------------------------------------------------
+
+// Find max N where getRunningCostForCount(itemId, N) <= budget.
+// Pairs with getRunningCostForCount — same cost model, zero duplication.
+export function maxAffordableCount(itemId, budget) {
+  if (budget <= 0) return 0;
+  let lo = 0, hi = 1;
+  while (getRunningCostForCount(itemId, hi) <= budget) hi *= 2;
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >> 1;
+    if (getRunningCostForCount(itemId, mid) <= budget) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
+// Compute raw running cost (before ops discount) for an item at a given count.
+// Single source of truth — used by both cost state computation and automation throttle.
+export function getRunningCostForCount(itemId, count) {
+  if (count <= 0) return 0;
+  const purchasable = getPurchasableById(itemId);
+  if (!purchasable) return 0;
+  const rawBaseCost = purchasable.salary || purchasable.runningCost || 0;
+  if (rawBaseCost <= 0) return 0;
+
+  let costMult = getTeamCostMultiplier(itemId);
+  if (itemId === 'synthetic_generator') costMult = getGeneratorCostMultiplier();
+  const baseCost = rawBaseCost * costMult;
+
+  if (purchasable.runningCostFormula === 'superlinear') {
+    const alpha = BALANCE.DATA_RENEWABLE_COST_ALPHA;
+    return baseCost * Math.pow(count, 1 + alpha);
+  }
+  const factor = getEffectiveScaling(itemId);
+  return baseCost * count * (1 + factor * count);
+}
 
 // Generator upgrade cost multiplier (like getTeamCostMultiplier for HR/procurement)
 function getGeneratorCostMultiplier() {
@@ -598,7 +759,7 @@ export function computeCostState() {
   const personnelBreakdown = {};
   let personnelTotal = 0;
   for (const id of PERSONNEL_IDS) {
-    const count = AUTOMATABLE_IDS.includes(id) ? getActiveCount(id) : (getCount(id));
+    const count = getEffectiveCount(id);
     const purchasable = getPurchasableById(id);
     if (count > 0 && purchasable?.salary) {
       const factor = getEffectiveScaling(id);
@@ -613,7 +774,7 @@ export function computeCostState() {
   const computeBreakdown = {};
   let computeTotal = 0;
   for (const id of COMPUTE_IDS) {
-    const count = AUTOMATABLE_IDS.includes(id) ? getActiveCount(id) : (getCount(id));
+    const count = getEffectiveCount(id);
     const purchasable = getPurchasableById(id);
     if (count > 0 && purchasable?.runningCost) {
       const factor = getEffectiveScaling(id);
@@ -646,7 +807,7 @@ export function computeCostState() {
       delete computeBreakdown[id];
     } else if (purchasable.category === 'admin') {
       // category:'admin' items not in PERSONNEL_IDS/COMPUTE_IDS — compute fresh
-      const count = AUTOMATABLE_IDS.includes(id) ? getActiveCount(id) : (getCount(id));
+      const count = getEffectiveCount(id);
       const rawCostBase = purchasable.salary || purchasable.runningCost || 0;
       const costBase = rawCostBase * getTeamCostMultiplier(id);
       if (count > 0 && costBase > 0) {
@@ -686,8 +847,14 @@ export function computeCostState() {
     }
   }
 
+  // Personnel cost multiplier (flavor event effect — e.g. whistleblower good)
+  const personnelCostMult = gameState.flavorEventEffects?.personnelCostMult ?? 1.0;
+  if (personnelCostMult !== 1.0) {
+    personnelTotal *= personnelCostMult;
+  }
+
   // Ops bonus discount (from CEO Focus Operations activity)
-  const opsBonus = gameState.computed?.ceoFocus?.opsBonus ?? gameState.opsBonus ?? 0;
+  const opsBonus = gameState.computed?.ceoFocus?.opsBonus ?? 0;
   const opsDiscount = 1 - opsBonus;
 
   // Totals before and after discount
@@ -729,7 +896,7 @@ export function computePurchaseState() {
   // --- Personnel: marginal RP and running cost ---
   const baselineRP = amplifiedPersonnelRP().total;
   for (const id of PERSONNEL_IDS) {
-    const count = AUTOMATABLE_IDS.includes(id) ? getActiveCount(id) : getCount(id);
+    const count = getEffectiveCount(id);
     const purchasable = getPurchasableById(id);
     if (!purchasable) continue;
 
@@ -754,7 +921,7 @@ export function computePurchaseState() {
 
   // --- Compute: marginal TFLOPS and running cost ---
   for (const id of COMPUTE_IDS) {
-    const count = AUTOMATABLE_IDS.includes(id) ? getActiveCount(id) : getCount(id);
+    const count = getEffectiveCount(id);
     const purchasable = getPurchasableById(id);
     if (!purchasable) continue;
 
@@ -781,7 +948,7 @@ export function computePurchaseState() {
     const purchasable = getPurchasableById(id);
     if (!purchasable) continue;
 
-    const count = AUTOMATABLE_IDS.includes(id) ? getActiveCount(id) : getCount(id);
+    const count = getEffectiveCount(id);
     const baseCost = purchasable.salary || purchasable.runningCost || 0;
     const factor = getEffectiveScaling(id);
     const marginalRunningCost = baseCost > 0
@@ -820,103 +987,20 @@ export function computeComputeState() {
 }
 
 // Calculate funding costs per second from researchers and compute
-// Uses computed state if available
 function calculateFundingCosts(deltaTime) {
-  // Use computed state if available
-  if (gameState.computed?.costs) {
-    return gameState.computed.costs.totalRunningCost * deltaTime;
+  if (!gameState.computed?.costs) {
+    console.error('calculateFundingCosts called before computeCostState');
+    return 0;
   }
-
-  // Fallback: compute on demand
-  let salaryCost = 0;
-  for (const id of PERSONNEL_IDS) {
-    const count = AUTOMATABLE_IDS.includes(id) ? getActiveCount(id) : (getCount(id));
-    const purchasable = getPurchasableById(id);
-    if (count > 0 && purchasable?.salary) {
-      const factor = getEffectiveScaling(id);
-      salaryCost += getScaledRunningCost(purchasable.salary, count, factor);
-    }
-  }
-
-  let computeCost = 0;
-  for (const id of COMPUTE_IDS) {
-    const count = AUTOMATABLE_IDS.includes(id) ? getActiveCount(id) : (getCount(id));
-    const purchasable = getPurchasableById(id);
-    if (count > 0 && purchasable?.runningCost) {
-      const factor = getEffectiveScaling(id);
-      computeCost += getScaledRunningCost(purchasable.runningCost, count, factor);
-    }
-  }
-
-  // Data costs (purchasable-based)
-  let dataCost = 0;
-  for (const id of DATA_IDS) {
-    const dCount = getActiveCount(id);
-    const purchasable = getPurchasableById(id);
-    if (dCount > 0 && purchasable?.runningCost) {
-      let costMult = 1;
-      if (id === 'synthetic_generator') costMult = getGeneratorCostMultiplier();
-      const base = purchasable.runningCost * costMult;
-      if (purchasable.runningCostFormula === 'superlinear') {
-        const alpha = BALANCE.DATA_RENEWABLE_COST_ALPHA;
-        dataCost += base * Math.pow(dCount, 1 + alpha);
-      } else {
-        const factor = getEffectiveScaling(id);
-        dataCost += getScaledRunningCost(base, dCount, factor);
-      }
-    }
-  }
-  const opsDiscount = 1 - (gameState.computed?.ceoFocus?.opsBonus ?? gameState.opsBonus ?? 0);
-  return (salaryCost + computeCost + dataCost) * opsDiscount * deltaTime;
+  return gameState.computed.costs.totalRunningCost * deltaTime;
 }
 
-// Recompute forecasts and computed state without advancing time.
-// Called during pause so allocation/pricing/cost displays stay fresh.
-export function updateForecasts() {
-  // Recompute allocation split using current compute capacity.
-  // Use stored compute value — don't recalculate from purchases during pause.
-  const rawTotal = gameState.resources.compute || 0;
-  const tflopsMultiplier = gameState.computed?.ceoFocus?.tflopsMultiplier ?? 1;
-  const total = rawTotal * tflopsMultiplier;
-  const allocation = gameState.resources.computeAllocation ?? 0.5;
-  gameState.computed.compute = {
-    total,
-    internal: total * allocation,
-    external: total * (1 - allocation),
-    allocation,
-  };
-
-  // Research rates (display only — does not add RP)
-  const internalCompute = gameState.computed.compute.internal;
-  computeResearchState(internalCompute);
-
-  // Per-track breakdowns (display only — populates computed.research.tracks)
-  computeTrackBreakdowns(internalCompute);
-
-  // Stats bar rate = sum of per-track effective rates (matches cumulative RP growth)
-  gameState.resources.researchRate = Object.values(gameState.tracks)
-    .reduce((sum, t) => sum + (t.researchRate || 0), 0);
-
-  // Data display state (scores, effectiveness, quality — no simulation mutation)
-  computeDataDisplay();
-
-  // CEO Focus effects (idle state, grant rate, bonuses — display only during pause)
-  computeCEOFocusEffects();
-
-  // Grant income (no payment processing — display only)
-  computeGrantIncome();
-
-  // Token throughput and demand (no acquired-demand growth/churn)
-  gameState.resources.tokensPerSecond = calculateTokensPerSecond();
-  gameState.resources.demand = calculateDemand();
-
-  // Cost breakdown
-  computeCostState();
-
-  // Revenue / financial stats (mirrors updateResources computation block)
-  const externalCompute = gameState.resources.compute * (1 - gameState.resources.computeAllocation);
+// Compute revenue and financial stats from already-populated computed state.
+// Prerequisites: computeComputeState, computeCostState, token/demand values must be set.
+function computeFinancialState() {
+  const externalCompute = gameState.computed.compute.external;
   const tps = gameState.resources.tokensPerSecond;
-  const externalCostFraction = 1 - gameState.resources.computeAllocation;
+  const externalCostFraction = 1 - (gameState.computed.compute.allocation ?? gameState.resources.computeAllocation);
   gameState.computed.computeStats = {
     externalTflops: externalCompute,
     tokenEfficiency: externalCompute > 0 ? tps / externalCompute : 0,
@@ -929,10 +1013,9 @@ export function updateForecasts() {
   };
 
   const tokenRevenue = calculateTokenRevenue();
-  const cultureForRevenue = getCultureBonuses();
-  const ppBonusRevStat = gameState.computed?.ceoFocus?.bonusRevenueMultiplier ?? 0;
+  const ppBonusRev = gameState.computed?.ceoFocus?.bonusRevenueMultiplier ?? 0;
   const prestigeRevenue = getPrestigeMultiplier('revenueMultiplier');
-  const adjustedTokenRevenue = tokenRevenue * (1 + cultureForRevenue.balancedRevenue + ppBonusRevStat) * prestigeRevenue;
+  const adjustedTokenRevenue = tokenRevenue * (1 + ppBonusRev) * prestigeRevenue;
 
   const equityShare = gameState.totalEquitySold || 0;
   const operatingCosts = gameState.computed.costs.totalRunningCost;
@@ -971,6 +1054,9 @@ export function updateForecasts() {
     const _refPrice = gameState.resources.referencePrice;
     const _mktSize = gameState.resources.marketSize;
     demandAtTarget = _mktSize * Math.pow(_refPrice / _targetPrice, elastAtTarget);
+    // Apply culture demand modifier (same as calculateDemand line 312-313)
+    const cultureDemandMult = 1 + (gameState.computed?.culture?.demand || 0);
+    demandAtTarget *= cultureDemandMult;
   }
 
   gameState.computed.revenue = {
@@ -989,10 +1075,50 @@ export function updateForecasts() {
     annual: adjustedTokenRevenue * 365,
     costPerMTokens: gameState.computed.computeStats?.avgCostPerMTokens || 0,
     marginPerM: gameState.resources.tokenPrice - (gameState.computed.computeStats?.avgCostPerMTokens || 0),
-    cultureBonus: cultureForRevenue.balancedRevenue,
-    ppBonus: ppBonusRevStat,
+    ppBonus: ppBonusRev,
     prestigeMultiplier: prestigeRevenue,
   };
+
+  return adjustedTokenRevenue;
+}
+
+// Recompute forecasts and computed state without advancing time.
+// Called during pause so allocation/pricing/cost displays stay fresh.
+export function updateForecasts() {
+  // Recompute allocation split using current compute capacity.
+  // Uses computeComputeState() — same path as updateResources — to avoid
+  // double-applying the CEO Focus tflopsMultiplier on the stored value.
+  computeComputeState();
+
+  // Research rates (display only — does not add RP)
+  const internalCompute = gameState.computed.compute.internal;
+  computeResearchState(internalCompute);
+
+  // Per-track breakdowns (display only — populates computed.research.tracks)
+  computeTrackBreakdowns(internalCompute);
+
+  // Stats bar rate = sum of per-track effective rates (matches cumulative RP growth)
+  gameState.resources.researchRate = Object.values(gameState.tracks)
+    .reduce((sum, t) => sum + (t.researchRate || 0), 0);
+
+  // Data display state (scores, effectiveness, quality — no simulation mutation)
+  computeDataDisplay();
+
+  // CEO Focus effects (idle state, grant rate, bonuses — display only during pause)
+  computeCEOFocusEffects();
+
+  // Grant income (no payment processing — display only)
+  computeGrantIncome();
+
+  // Token throughput and demand (no acquired-demand growth/churn)
+  gameState.resources.tokensPerSecond = calculateTokensPerSecond();
+  gameState.resources.demand = calculateDemand();
+
+  // Cost breakdown
+  computeCostState();
+
+  // Revenue / financial stats (single source of truth)
+  computeFinancialState();
 
   // Purchase advisor
   computePurchaseState();
@@ -1012,17 +1138,7 @@ export function updateResources(deltaTime) {
 
   // Compute research state using internal compute from computed state
   const internalCompute = gameState.computed.compute.internal;
-  const researchRate = computeResearchState(internalCompute);
-
-  // AI self-improvement: T7+ capabilities contribute percentage of total research
-  // This adds directly to capabilities track RP, creating natural compound growth
-  const feedbackRP = calculateFeedbackResearch(deltaTime);
-  if (feedbackRP > 0) {
-    gameState.tracks.capabilities.researchPoints += feedbackRP;
-  }
-
-  // feedbackContribution needed later for stats bar rate
-  const feedbackContribution = gameState.computed.research.feedbackContribution;
+  computeResearchState(internalCompute);
 
   // Compound late-game demand growth (before calculating demand)
   updateLateGameDemandMultiplier(deltaTime);
@@ -1044,114 +1160,22 @@ export function updateResources(deltaTime) {
   const tokensSold = Math.min(gameState.resources.tokensPerSecond, gameState.resources.acquiredDemand || 0);
   gameState.cumulativeTokensSold = (gameState.cumulativeTokensSold || 0) + tokensSold * deltaTime;
 
-  const tokenRevenue = calculateTokenRevenue();
-
   // Market edge decay (only after first app unlock)
-  // Strategic choice can slow decay (multiplier < 1 means slower decay)
   // Culture bonus: applications-heavy allocation slows edge decay
   // CEO Focus: Public Positioning reduces edge decay (up to 30%)
   if (gameState.resources.marketEdgeDecaying) {
-    const cultureBonuses = getCultureBonuses();
     const ppEdgeReduction = gameState.computed?.ceoFocus?.edgeDecayReduction ?? 0;
     gameState.resources.marketEdge *= Math.pow(
       BALANCE.MARKET_EDGE_DECAY_PER_SECOND,
-      deltaTime * getMarketEdgeDecayMultiplier() * (1 - cultureBonuses.appEdgeSlow) * (1 - ppEdgeReduction)
+      deltaTime * (1 - ppEdgeReduction)
     );
   }
-
-  // Apply culture balanced revenue bonus + PP bonus revenue to token revenue
-  const cultureForRevenue = getCultureBonuses();
-  const ppBonusRevenue = gameState.computed?.ceoFocus?.bonusRevenueMultiplier ?? 0;
-  const prestigeRevenue = getPrestigeMultiplier('revenueMultiplier');
-  const adjustedTokenRevenue = tokenRevenue * (1 + cultureForRevenue.balancedRevenue + ppBonusRevenue) * prestigeRevenue;
 
   // Compute cost state FIRST (needed for operating profit calculation)
   computeCostState();
 
-  // Compute stats for UI (single source of truth)
-  const externalCompute = gameState.computed.compute.external;
-  const tps = gameState.resources.tokensPerSecond;
-  const externalCostFraction = 1 - (gameState.computed.compute.allocation ?? gameState.resources.computeAllocation);
-  gameState.computed.computeStats = {
-    externalTflops: externalCompute,
-    tokenEfficiency: externalCompute > 0 ? tps / externalCompute : 0,
-    tokensGenerated: tps,
-    tokenDemand: gameState.resources.acquiredDemand || 0,
-    demandAtPrice: gameState.resources.demand || 0,
-    avgCostPerMTokens: tps > 0
-      ? ((gameState.computed?.costs?.compute?.total || 0) * externalCostFraction) / (tps / 1e6)
-      : 0,
-  };
-
-  // Calculate investor share from operating profit (#279)
-  const equityShare = gameState.totalEquitySold || 0;
-  const operatingCosts = gameState.computed.costs.totalRunningCost;
-  const operatingProfit = adjustedTokenRevenue - operatingCosts;
-  const investorShare = Math.max(0, operatingProfit) * equityShare;
-  const playerRevenue = adjustedTokenRevenue - investorShare;
-
-  // Interest cost (from line of credit)
-  const creditStatus = getCreditStatus();
-  const interestCost = creditStatus.interestPerSecond || 0;
-
-  // Net income
-  const netIncome = operatingProfit - investorShare - interestCost;
-
-  // Other income (disbursements + grants + CEO discretionary grants)
-  let disbursementRate = 0;
-  if (gameState.disbursements) {
-    for (const d of gameState.disbursements) disbursementRate += d.rate;
-  }
-  const grantIncome = gameState.computed?.grants?.income || 0;
-  const ceoGrantRate = gameState.computed?.ceoFocus?.grantRate || 0;
-  const otherIncome = disbursementRate + grantIncome + ceoGrantRate;
-
-  // CapEx
-  const capexHiring = gameState.computed?.capex?.hiring || 0;
-  const capexInfra = gameState.computed?.capex?.infrastructure || 0;
-  const capexTotal = capexHiring + capexInfra;
-
-  // Free cash flow
-  const freeCashFlow = netIncome + otherIncome - capexTotal;
-
-  // Opex breakdown (post-discount, for UI display)
-  const opsDiscount = gameState.computed.costs.opsDiscount;
-  const personnelCost = (gameState.computed.costs.personnel.total + gameState.computed.costs.admin.total) * opsDiscount;
-  const computeCost = gameState.computed.costs.compute.total * opsDiscount;
-  const dataCost = gameState.computed.costs.data.total * opsDiscount;
-
-  // Demand preview at target price (for UI) — uses target price's elasticity, not current
-  const _targetPrice = gameState.resources.targetPrice ?? gameState.resources.tokenPrice;
-  const _actualPrice = gameState.resources.tokenPrice;
-  let demandAtTarget = null;
-  if (Math.abs(_targetPrice / _actualPrice - 1) > 0.005) {
-    const elastAtTarget = calculateElasticityAtPrice(_targetPrice);
-    const _refPrice = gameState.resources.referencePrice;
-    const _mktSize = gameState.resources.marketSize;
-    demandAtTarget = _mktSize * Math.pow(_refPrice / _targetPrice, elastAtTarget);
-  }
-
-  // Store revenue in computed state (single source of truth)
-  gameState.computed.revenue = {
-    demandAtTarget,
-    gross: adjustedTokenRevenue,
-    net: playerRevenue,
-    investorShare,
-    operatingProfit,
-    opex: { personnel: personnelCost, compute: computeCost, data: dataCost, total: personnelCost + computeCost + dataCost },
-    interestCost,
-    netIncome,
-    otherIncome: { disbursements: disbursementRate, grants: grantIncome, ceoGrants: ceoGrantRate, total: otherIncome },
-    capex: { hiring: capexHiring, infra: capexInfra, total: capexTotal },
-    freeCashFlow,
-    runway: freeCashFlow < 0 ? gameState.resources.funding / -freeCashFlow : Infinity,
-    annual: adjustedTokenRevenue * 365,
-    costPerMTokens: gameState.computed.computeStats?.avgCostPerMTokens || 0,
-    marginPerM: gameState.resources.tokenPrice - (gameState.computed.computeStats?.avgCostPerMTokens || 0),
-    cultureBonus: cultureForRevenue.balancedRevenue,
-    ppBonus: ppBonusRevenue,
-    prestigeMultiplier: prestigeRevenue,
-  };
+  // Revenue / financial stats + purchase advisor (single source of truth)
+  const adjustedTokenRevenue = computeFinancialState();
 
   // Funnel telemetry: first time revenue > 0
   if (adjustedTokenRevenue > 0) {
@@ -1240,8 +1264,7 @@ export function getAmplificationBonusText(purchasableId) {
   const config = ampConfig[purchasableId];
   if (!config) return null;
 
-  const count = AUTOMATABLE_IDS.includes(purchasableId)
-    ? getActiveCount(purchasableId) : getCount(purchasableId);
+  const count = getEffectiveCount(purchasableId);
   if (count <= 0) return null;
 
   const bonus = config.softCap * count / (count + config.K);
@@ -1265,8 +1288,7 @@ export function getAmplificationTooltipBuilder(purchasableId) {
   if (!config) return null;
 
   return () => {
-    const count = AUTOMATABLE_IDS.includes(purchasableId)
-      ? getActiveCount(purchasableId) : getCount(purchasableId);
+    const count = getEffectiveCount(purchasableId);
     if (count <= 0) return '';
 
     const bonus = config.softCap * count / (count + config.K);
@@ -1302,7 +1324,7 @@ function amplifiedPersonnelRP(countOverrides = {}) {
   for (const id of PERSONNEL_IDS) {
     const count = countOverrides.hasOwnProperty(id)
       ? countOverrides[id]
-      : (AUTOMATABLE_IDS.includes(id) ? getActiveCount(id) : getCount(id));
+      : (getEffectiveCount(id));
     const purchasable = getPurchasableById(id);
     if (purchasable?.effects?.trackRP) {
       const outputMult = getOutputMultiplier(id);
@@ -1374,6 +1396,10 @@ function getCapabilityMultiplier() {
   if (gameState.eventMultipliers?.researchRate) {
     mult *= gameState.eventMultipliers.researchRate;
   }
+  // Ethical event chain: regulation passing reduces research rate
+  if (gameState.flavorEventEffects?.regulationResearchMult) {
+    mult *= gameState.flavorEventEffects.regulationResearchMult;
+  }
   return mult;
 }
 
@@ -1395,6 +1421,21 @@ export function getComputeBoost(internalCompute, totalRP) {
 // ---------------------------------------------------------------------------
 
 // Get the current capability/alignment RP ratio
+/**
+ * Get the highest capability tier unlocked by the player.
+ * Used for consequence gating and drag scaling.
+ */
+export function getHighestCapTier() {
+  const unlocked = gameState.tracks?.capabilities?.unlockedCapabilities || [];
+  let maxTier = 0;
+  for (const cap of capabilitiesTrack.capabilities) {
+    if (unlocked.includes(cap.id) && cap.tier > maxTier) {
+      maxTier = cap.tier;
+    }
+  }
+  return maxTier;
+}
+
 // Used by: alignment decay, consequence events, AI requests
 export function getAlignmentRatio() {
   const capRP = gameState.cumulativeCapabilitiesRP || gameState.tracks?.capabilities?.researchPoints || 0;
@@ -1416,27 +1457,9 @@ export function getAlignmentRatioTier() {
 // Alignment Decay (Anti-Cramming) — Arc 2 only
 // ---------------------------------------------------------------------------
 
-// Get the highest decay resistance from unlocked alignment T7-T9 milestones
-// Higher tiers REPLACE (not stack with) lower tier values
-function getAlignmentDecayResistance() {
-  const unlockedAli = gameState.tracks?.alignment?.unlockedCapabilities || [];
-
-  // Check from highest tier down (replacement, not stacking)
-  if (unlockedAli.includes('alignment_lock')) {
-    return BALANCE.ALIGNMENT_DECAY_RESISTANCE.alignment_lock; // 100%
-  }
-  if (unlockedAli.includes('interpretability_breakthrough')) {
-    return BALANCE.ALIGNMENT_DECAY_RESISTANCE.interpretability_breakthrough; // 65%
-  }
-  if (unlockedAli.includes('goal_stability')) {
-    return BALANCE.ALIGNMENT_DECAY_RESISTANCE.goal_stability; // 30%
-  }
-  return 0; // No resistance
-}
-
 // Calculate alignment research decay factor based on capability/alignment RP ratio
 // Returns 1.0 (no decay) if ratio <= threshold, otherwise decreasing factor
-// Alignment T7-T9 provide graduated decay resistance
+// Gentle backstop against extreme end-game cramming (threshold 5.0, steepness 0.3)
 export function calculateAlignmentDecayFactor() {
   // Only applies in Arc 2
   if (gameState.arc < 2) return 1.0;
@@ -1444,24 +1467,16 @@ export function calculateAlignmentDecayFactor() {
   const capRP = gameState.tracks?.capabilities?.researchPoints || 0;
   const aliRP = gameState.tracks?.alignment?.researchPoints || 0;
 
-  // Avoid division by zero; use Math.max(1, aliRP)
-  const ratio = capRP / Math.max(1, aliRP);
+  // Grace floor: ratio uses max(aliRP, floor) so decay is inert in early Arc 2
+  const ratio = capRP / Math.max(BALANCE.ALIGNMENT_DECAY_GRACE_FLOOR, aliRP);
   const threshold = BALANCE.ALIGNMENT_DECAY_THRESHOLD;
   const k = BALANCE.ALIGNMENT_DECAY_K;
 
   // No decay if ratio is at or below threshold
   if (ratio <= threshold) return 1.0;
 
-  // Base decay formula: 1 / (1 + k * (ratio - threshold))
-  const baseDecay = 1 / (1 + k * (ratio - threshold));
-
-  // Apply decay resistance from alignment T7-T9 milestones
-  // Resistance reduces the penalty: decay approaches 1.0 as resistance approaches 1.0
-  const resistance = getAlignmentDecayResistance();
-  if (resistance >= 1.0) return 1.0; // Immune (alignment_lock)
-
-  // Interpolate: at 0% resistance, use baseDecay; at 100%, return 1.0
-  return baseDecay + resistance * (1.0 - baseDecay);
+  // Decay formula: 1 / (1 + k * (ratio - threshold))
+  return 1 / (1 + k * (ratio - threshold));
 }
 
 // ---------------------------------------------------------------------------
@@ -1481,10 +1496,14 @@ export function computeResearchState(internalCompute) {
   const dataEffectivenessMultiplier = getDataEffectivenessMultiplier();
   const alignmentDecayFactor = calculateAlignmentDecayFactor();
 
-  // AI self-improvement contribution (data effectiveness multiplies feedback rate)
+  // AI self-improvement contribution — raw rate, before ceilings
   const feedbackRate = getCurrentFeedbackRate();
   const totalCapRP = gameState.tracks?.capabilities?.researchPoints || 0;
-  const feedbackContribution = totalCapRP * feedbackRate * dataEffectivenessMultiplier;
+  const feedbackContribution = totalCapRP * feedbackRate;
+
+  // Alignment endgame feedback — raw rate, before ceilings (Arc 2 only)
+  const aliFeedbackRate = getCurrentAlignmentFeedbackRate();
+  const aliFeedbackContribution = totalCapRP * aliFeedbackRate;
 
   // Customer feedback bonus: log₁₀ scaled research boost from acquired demand
   const acquiredDemand = gameState.resources.acquiredDemand || 0;
@@ -1498,7 +1517,8 @@ export function computeResearchState(internalCompute) {
 
   // Base rate before track-specific multipliers
   const prestigeResearch = getPrestigeMultiplier('researchMultiplier');
-  const baseRate = adjustedPersonnelBase * capMultiplier * computeBoost * strategyMultiplier * prestigeResearch;
+  const autonomyBenefits = calculateAutonomyBenefits();
+  const baseRate = adjustedPersonnelBase * capMultiplier * computeBoost * strategyMultiplier * prestigeResearch * autonomyBenefits.researchMult;
 
   gameState.computed.research = {
     personnelBaseRaw: personnelBase,
@@ -1510,12 +1530,12 @@ export function computeResearchState(internalCompute) {
     strategyMultiplier,
     dataEffectivenessMultiplier,
     alignmentDecayFactor,
-    feedbackMultiplier: 1.0, // Legacy: kept for compatibility
     feedbackRate,
     feedbackContribution,
+    aliFeedbackContribution,
     customerFeedbackBonus,
+    autonomyBenefitMult: autonomyBenefits.researchMult,
     total: baseRate,
-    capTotal: baseRate * dataEffectivenessMultiplier,
     tracks: {},
   };
 
@@ -1564,7 +1584,7 @@ export function calculateComputeRate() {
   // Use active count for automatable compute (furloughed equipment doesn't contribute)
   let total = 0;
   for (const id of COMPUTE_IDS) {
-    const count = AUTOMATABLE_IDS.includes(id) ? getActiveCount(id) : (getCount(id));
+    const count = getEffectiveCount(id);
     const purchasable = getPurchasableById(id);
     if (count > 0 && purchasable?.effects?.computeRate) {
       const outputMult = getOutputMultiplier(id);
@@ -1597,11 +1617,6 @@ export function calculateComputeRate() {
   return total * multiplier;
 }
 
-// Manual research click
-export function manualResearchClick() {
-  gameState.resources.research += BALANCE.MANUAL_CLICK_RESEARCH;
-}
-
 // Check if player can afford a cost
 export function canAfford(cost) {
   for (let resource in cost) {
@@ -1628,145 +1643,184 @@ export function spendResources(cost) {
 // Compute per-track research rates and breakdowns (display only — no RP mutation).
 // Populates gameState.computed.research.tracks and sets track.researchRate.
 // Called from both generateTrackResearch() (during ticks) and updateForecasts() (during pause).
-function computeTrackBreakdowns(internalCompute = null) {
+export function computeTrackBreakdowns(internalCompute = null) {
+  // Populate gameState.computed.culture before any track bonuses are consumed.
+  computeCultureAxes();
+
   // Read from computed state (always populated by computeResearchState before this runs).
   // Fallback to computeResearchState if cache is missing (e.g. before first tick in tests).
   const researchRate = gameState.computed?.research?.total
     ?? computeResearchState(internalCompute);
-  const culture = getCultureBonuses();
+  const culture = gameState.computed?.culture;
+  const alignmentDrag = gameState.arc >= 2 ? getAlignmentDragFactor() : null;
+
+  // Store drag for demand tooltip (outside the loop)
+  if (alignmentDrag) {
+    gameState.computed.alignmentDrag = alignmentDrag;
+  }
 
   for (const [trackId, track] of Object.entries(gameState.tracks)) {
+    // L3: Allocation
     let trackRate = researchRate * track.researcherAllocation;
 
-    // Culture bonus: capabilities-heavy allocation boosts cap track RP
+    // L4a: Structural multipliers (team capacity, permanent consequences)
+    trackRate *= (1 + (culture?.trackResearch?.[trackId] || 0));  // culture track focus
+    trackRate *= (1 + (culture?.allResearch || 0));                // culture all-research
+
     if (trackId === 'capabilities') {
-      trackRate *= (1 + culture.capBonus);
-
-      // Data effectiveness multiplier (capabilities only — apps/alignment unaffected)
-      trackRate *= getDataEffectivenessMultiplier();
-
-      // Customer feedback: research bonus from large customer base
-      const customerBonus = gameState.computed?.research?.customerFeedbackBonus || 0;
-      trackRate *= (1 + customerBonus);
-
-      // Autonomy grant multiplier (Arc 2 — permanent effect from AI requests)
-      if (gameState.arc >= 2 && gameState.capResearchMultFromAutonomy) {
-        trackRate *= gameState.capResearchMultFromAutonomy;
-      }
-
-      // Model collapse: zero capabilities research during active pause
-      if (isCapResearchPaused()) {
-        trackRate = 0;
-      }
-
-      // Consequence event pause: zero capabilities research during incident investigation
-      if (gameState.capResearchPauseEnd && gameState.timeElapsed < gameState.capResearchPauseEnd) {
-        trackRate = 0;
-      }
-
-      // Moratorium: zero capabilities research during voluntary pause
-      if (isMoratoriumActive()) {
-        trackRate = 0;
-      }
+      trackRate *= (1 + (gameState.computed?.research?.customerFeedbackBonus || 0));
     }
-
-    // Alignment decay: reduces alignment research when capabilities outpace alignment (Arc 2 only)
     if (trackId === 'alignment' && gameState.arc >= 2) {
       const decayFactor = gameState.computed?.research?.alignmentDecayFactor ?? 1.0;
       trackRate *= decayFactor;
+      // Chen resignation penalty (permanent)
+      if (gameState.moratoriums?.chenResigned) {
+        trackRate *= BALANCE.MORATORIUM.CHEN_RESIGN_PERMANENT_MULT;
+      }
     }
 
-    // Culture bonus: balanced allocation boosts all tracks
-    trackRate *= (1 + culture.balancedResearch);
+    // Snapshot structural rate — used for AP capacity (excludes transient effects, gates, pauses)
+    const preMalusRate = trackRate;
 
-    // Data cleanup pause: zero ALL research during emergency data cleanup
-    if (isDataCleanupActive()) {
-      trackRate = 0;
+    // L4b: Transient effects (time-limited buffs/penalties from events and decisions)
+    if (trackId === 'capabilities' && gameState.arc >= 2) {
+      const capSlowMult = getActiveTemporaryMultiplier('capResearchSlow');
+      if (capSlowMult < 1) trackRate *= capSlowMult;
+    }
+    if ((trackId === 'alignment' || trackId === 'applications') && gameState.arc >= 2) {
+      const moraleMult = getActiveTemporaryMultiplier('moratoriumMorale');
+      if (moraleMult > 1) trackRate *= moraleMult;
+    }
+    if (trackId === 'alignment' && gameState.arc >= 2) {
+      // Chen morale crisis (temporary, from final moratorium sign-and-ignore)
+      const moraleCrisis = getActiveTemporaryMultiplier('moratoriumMoraleCrisis');
+      if (moraleCrisis < 1) trackRate *= moraleCrisis;
+      // Incidents: interpretability → alignment research penalty (fading)
+      trackRate *= getActiveTemporaryMultiplier('consequenceAliResearch');
+    }
+    // Incidents: corrigibility → all research penalty (fading, Arc 2 only)
+    if (gameState.arc >= 2) {
+      trackRate *= getActiveTemporaryMultiplier('consequenceResearch');
     }
 
-    // Store per-track breakdown for tooltip display (single source of truth)
+    // L5: Additive sources (independent of personnel pipeline)
+    if (trackId === 'capabilities') {
+      trackRate += gameState.computed?.research?.feedbackContribution || 0;
+    }
+    if (trackId === 'alignment' && gameState.arc >= 2) {
+      trackRate += gameState.computed?.research?.aliFeedbackContribution || 0;
+    }
+
+    // L6: Ceilings (org-wide constraints, apply to combined rate)
+    const dataEff = gameState.computed?.research?.dataEffectivenessMultiplier ?? 1;
+    if (trackId === 'capabilities') {
+      trackRate *= dataEff;
+    }
+
+    // Empty track malus (skip alignment in Arc 1)
+    let emptyTrackMalus = null;
+    const isAlignmentArc1 = trackId === 'alignment' && gameState.arc < 2;
+    if (!isAlignmentArc1 && !trackHasAvailableTech(trackId, gameState)) {
+      emptyTrackMalus = BALANCE.EMPTY_TRACK_RESEARCH_MALUS;
+      trackRate *= emptyTrackMalus;
+    }
+
+    if (trackId === 'capabilities' && gameState.arc >= 2) {
+      // Autonomy soft cap (same logic as before, with news message)
+      const capSoftCapMult = getCapSoftCapMult();
+      const grants = gameState.autonomyGranted || 0;
+      const thresholds = BALANCE.AUTONOMY_SOFT_CAP_THRESHOLDS;
+      const capSoftCapThreshold = thresholds[Math.min(grants, thresholds.length - 1)];
+      trackRate *= capSoftCapMult;
+      gameState.computed.research = gameState.computed.research || {};
+      gameState.computed.research.autonomySoftCapMult = capSoftCapMult;
+      gameState.computed.research.autonomySoftCapThreshold = capSoftCapThreshold;
+
+      // Fire one-time news when soft cap first bites at this grant level
+      if (capSoftCapMult < 0.95) {
+        const newsKey = `autonomy_soft_cap:${grants}`;
+        if (!hasMessageBeenTriggered(newsKey)) {
+          addNewsMessage(
+            'Capabilities research is hitting diminishing returns. Your team suspects the AI\'s operational constraints are limiting further breakthroughs.',
+            ['autonomy', 'soft_cap'],
+            newsKey
+          );
+        }
+      }
+    }
+
+    // Alignment drag (non-alignment tracks)
+    if (trackId !== 'alignment' && alignmentDrag) {
+      trackRate *= alignmentDrag.research;
+    }
+
+    // L7: Pauses (binary kill switches, zero everything)
+    if (trackId === 'capabilities') {
+      if (isCapResearchPaused() || isMoratoriumActive()) trackRate = 0;
+    }
+    if (isDataCleanupActive()) trackRate = 0;
+
+    // Build breakdown for tooltip
     const breakdown = {
       allocation: track.researcherAllocation,
       effective: trackRate,
-      balancedBonus: culture.balancedResearch,
+      cultureAllResearch: culture?.allResearch || 0,
+      cultureTrackBonus: culture?.trackResearch?.[trackId] || 0,
     };
 
+    if (emptyTrackMalus !== null) breakdown.emptyTrackMalus = emptyTrackMalus;
+
     if (trackId === 'capabilities') {
-      breakdown.cultureCapBonus = culture.capBonus;
-      breakdown.dataEffectiveness = getDataEffectivenessMultiplier();
+      breakdown.dataEffectiveness = dataEff;
       breakdown.customerFeedback = gameState.computed?.research?.customerFeedbackBonus || 0;
-      if (gameState.arc >= 2 && gameState.capResearchMultFromAutonomy) {
-        breakdown.autonomyGrant = gameState.capResearchMultFromAutonomy;
+      const rawFeedback = gameState.computed?.research?.feedbackContribution || 0;
+      breakdown.feedbackContribution = rawFeedback;
+      // Effective SI after all ceilings (for display — line items should sum to total)
+      let effectiveFeedback = rawFeedback * dataEff;
+      if (gameState.arc >= 2) {
+        breakdown.autonomySoftCap = gameState.computed?.research?.autonomySoftCapMult ?? 1.0;
+        breakdown.autonomySoftCapThreshold = gameState.computed?.research?.autonomySoftCapThreshold ?? Infinity;
+        effectiveFeedback *= breakdown.autonomySoftCap;
       }
-      const isPaused = isCapResearchPaused()
-        || (gameState.capResearchPauseEnd && gameState.timeElapsed < gameState.capResearchPauseEnd)
-        || isMoratoriumActive()
-        || isDataCleanupActive();
+      if (alignmentDrag) effectiveFeedback *= alignmentDrag.research;
+      if (emptyTrackMalus !== null) effectiveFeedback *= emptyTrackMalus;
+      breakdown.effectiveFeedbackContribution = effectiveFeedback;
+      const isPaused = isCapResearchPaused() || isMoratoriumActive() || isDataCleanupActive();
       if (isPaused) breakdown.paused = true;
     }
 
-    // Data cleanup pauses all tracks (not just capabilities)
     if (trackId !== 'capabilities' && isDataCleanupActive()) {
       breakdown.paused = true;
     }
 
     if (trackId === 'alignment' && gameState.arc >= 2) {
       breakdown.alignmentDecay = gameState.computed?.research?.alignmentDecayFactor ?? 1.0;
+      breakdown.aliFeedbackContribution = gameState.computed?.research?.aliFeedbackContribution || 0;
+    }
+
+    if (trackId !== 'alignment' && alignmentDrag) {
+      breakdown.alignmentDrag = alignmentDrag.research;
     }
 
     if (gameState.computed?.research) {
       gameState.computed.research.tracks[trackId] = breakdown;
     }
 
-    // Store rate for UI (single source of truth for ETA calculations)
-    // For capabilities, include AI feedback in the display rate
-    if (trackId === 'capabilities') {
-      const feedbackContribution = gameState.computed?.research?.feedbackContribution || 0;
-      if (breakdown && feedbackContribution > 0) {
-        breakdown.feedbackContribution = feedbackContribution;
-        breakdown.effective = trackRate + feedbackContribution;
-      }
-      track.researchRate = trackRate + feedbackContribution;
-    } else {
-      track.researchRate = trackRate;
-    }
+    // Uniform for ALL tracks — no special cases
+    track.researchRate = trackRate;
+    track.preMalusResearchRate = preMalusRate;
   }
 }
 
 // Generate research points for each track based on researcher allocation
 function generateTrackResearch(deltaTime, internalCompute = null) {
-  // Compute display breakdowns first (populates computed.research.tracks and track.researchRate)
   computeTrackBreakdowns(internalCompute);
 
-  for (const [trackId, track] of Object.entries(gameState.tracks)) {
-    // Alignment endgame feedback: T7+ alignment milestones add % of capability RP (Arc 2 only)
-    if (trackId === 'alignment' && gameState.arc >= 2) {
-      const alignmentFeedback = calculateAlignmentFeedbackResearch(deltaTime);
-      if (alignmentFeedback > 0) {
-        track.researchPoints += alignmentFeedback;
-      }
-    }
-
-    // Accumulate RP (the only mutation generateTrackResearch does beyond breakdowns)
-    // track.researchRate already excludes feedback contribution for non-cap tracks
-    const effectiveRate = trackId === 'capabilities'
-      ? track.researchRate - (gameState.computed?.research?.feedbackContribution || 0)
-      : track.researchRate;
-    track.researchPoints += effectiveRate * deltaTime;
+  for (const [, track] of Object.entries(gameState.tracks)) {
+    track.researchPoints += track.researchRate * deltaTime;
   }
 }
 
-// Add to alignment level (capped at 100)
-export function addAlignmentLevel(amount) {
-  gameState.tracks.alignment.alignmentLevel = Math.min(100,
-    gameState.tracks.alignment.alignmentLevel + amount
-  );
-}
-
-// Get current alignment level
-export function getAlignmentLevel() {
-  return gameState.tracks.alignment.alignmentLevel;
-}
 
 // Calculate AGI progress as a shifted log curve of capability RP
 // 100% at AGI_RP_TARGET (2x highest capability threshold), scaled by RP_THRESHOLD_SCALE
@@ -1779,15 +1833,15 @@ export function calculateAGIProgress() {
 
 // Expose functions to window for testing
 if (typeof window !== 'undefined') {
-  window.addAlignmentLevel = addAlignmentLevel;
-  window.getAlignmentLevel = getAlignmentLevel;
   window.calculateResearchRate = calculateResearchRate;
   window.calculateResearchRateBreakdown = calculateResearchRateBreakdown;
   window.calculateAGIProgress = calculateAGIProgress;
   window.calculateFundingCosts = calculateFundingCosts;
+  window.computeFinancialState = computeFinancialState;
+  window.getHighestCapTier = getHighestCapTier;
   window.getAlignmentRatio = getAlignmentRatio;
   window.getAlignmentRatioTier = getAlignmentRatioTier;
-  window.calculateAlignmentFeedbackResearch = calculateAlignmentFeedbackResearch;
+  window.calculateAlignmentDecayFactor = calculateAlignmentDecayFactor;
   window.getCurrentAlignmentFeedbackRate = getCurrentAlignmentFeedbackRate;
   window.getAmplificationBonusText = getAmplificationBonusText;
   window.getComputeBoost = getComputeBoost;

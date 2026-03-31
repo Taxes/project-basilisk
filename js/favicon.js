@@ -101,16 +101,29 @@ document.addEventListener('visibilitychange', () => {
 
 /**
  * Update favicon color based on AGI progress (0-100).
- * Call from game loop — internally throttles to 5% buckets.
+ * Call from game loop — color throttled to 5% buckets,
+ * blink rate uses 1% buckets above 95% for smooth acceleration.
  */
 export function updateFavicon(agiProgress) {
   if (document.hidden) return;
 
-  const bucket = Math.floor(agiProgress / 5);
-  if (bucket === lastBucket) return;
-  lastBucket = bucket;
-
   const progress = Math.max(0, Math.min(100, agiProgress));
+  const colorBucket = Math.floor(progress / 5);
+  const colorChanged = colorBucket !== lastBucket;
+
+  // Update blink rate at 1% granularity above 95%
+  if (progress >= 95 && progress < 100) {
+    const blinkBucket = Math.floor(progress);
+    if (blinkBucket !== Math.floor(lastProgress) || lastProgress < 95) {
+      startBlink(progress);
+    }
+  }
+
+  if (!colorChanged) {
+    lastProgress = progress;
+    return;
+  }
+  lastBucket = colorBucket;
   lastProgress = progress;
 
   if (progress >= 100) {
@@ -125,9 +138,7 @@ export function updateFavicon(agiProgress) {
     setFavicon(buildSvgDataUrl(currentColor));
   }
 
-  if (progress >= 95) {
-    startBlink(progress);
-  } else {
+  if (progress < 95) {
     clearBlink();
   }
 }

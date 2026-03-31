@@ -3,6 +3,40 @@
 
 export const changelog = [
   {
+    version: '1.0.0',
+    date: '2026-03-31',
+    changes: [
+      {
+        section: 'Arc 2: Alignment',
+        items: [
+          'Expand your research team with a new Alignment track with 12 milestones',
+          'Balance four alignment submetrics to keep your AI helpful, honest, and harmless',
+          'Choose how much autonomy to grant your AI, up to complete freedom, if you dare',
+          'React to ethical dilemmas, alignment incidents, and research moratoriums',
+          'Reach 15 bespoke endings depending on your alignment progress and management style',
+          'Track your progress towards endings with 16 achievements',
+        ],
+      },
+      {
+        section: 'Balance',
+        items: [
+          'Mastery no longer decays',
+          'Retuned competitor pacing to be slower early-game and faster late-game',
+          'Rebalanced prestige bonuses to nerf short losses',
+          'Nerfs to mid and late game research',
+        ],
+      },
+      {
+        section: 'Quality of life',
+        items: [
+          'Added speed controls (1-4x)',
+          'Added arc/mode selector which resets your run but preserves meta-progress (achievements, lifetime stats)',
+          'Improved responsiveness for smaller screen resolutions',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.9.1.1',
     date: '2026-03-02',
     changes: [

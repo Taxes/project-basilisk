@@ -17,11 +17,11 @@
 import { gameState } from '../game-state.js';
 import {
   getAllPurchasables,
+  isPurchasableVisible,
+  areRequirementsMet,
   canPurchase,
   getPurchaseCost,
   canQueuePurchase,
-  PERSONNEL_IDS,
-  COMPUTE_IDS,
 } from '../content/purchasables.js';
 import { getEffectivePool, getPoolUsage, getPoolScalingMultiplier, getEffectiveScaling, POOL_IDS } from '../talent-pool.js';
 import { enqueuePurchase, enqueueFurlough } from '../focus-queue.js';
@@ -30,9 +30,9 @@ import {
   getCostReduction,
 } from '../content/upgrades.js';
 
-import { recordFlavorDiscovery } from '../flavor-discovery.js';
+import { attachFlavorTooltip } from '../flavor-discovery.js';
 import { getPersonnelCostMultiplier } from '../strategic-choices.js';
-import { BALANCE } from '../../data/balance.js';
+import { BALANCE, FUNDRAISE_ROUNDS } from '../../data/balance.js';
 import { formatFunding, formatNumber, getRateUnit, formatDuration } from '../utils/format.js';
 import { $ } from '../utils/dom-cache.js';
 import { registerUpdate, FAST, SLOW } from './scheduler.js';
@@ -55,27 +55,60 @@ import {
 import { getCount } from '../purchasable-state.js';
 import { getAmplificationBonusText, getAmplificationTooltipBuilder } from '../resources.js';
 import { initTabNotifications } from './tab-notifications.js';
+import { isCapabilityUnlocked, isFundraiseGatePassed } from '../capabilities.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Check if a purchasable's prerequisite requirement is met,
-// independent of max-purchase or queue state.
-function isRequirementMet(purchasable) {
+/** Build hint text parts for all unmet requirements on a purchasable. */
+function buildRequirementHintParts(purchasable) {
   const req = purchasable.requires;
-  if (!req) return true;
-  if (req.capability) {
-    const track = gameState.tracks[req.track || 'capabilities'];
-    if (!track.unlockedCapabilities.includes(req.capability)) return false;
+  if (!req) return [];
+  const parts = [];
+  if (req.capability && !isCapabilityUnlocked(req.capability)) {
+    parts.push(req.capability.replace(/_/g, ' '));
   }
-  if (req.purchasable) {
-    if (getCount(req.purchasable) === 0) return false;
+  if (req.purchasable && getCount(req.purchasable) === 0) {
+    parts.push(req.purchasable.replace(/_/g, ' '));
   }
-  if (req.fundraise) {
-    if (!gameState.fundraiseRounds?.[req.fundraise]?.raised) return false;
+  if (req.fundraise && !isFundraiseGatePassed(req.fundraise)) {
+    const roundName = FUNDRAISE_ROUNDS[req.fundraise]?.name || req.fundraise;
+    parts.push(`${roundName} round`);
   }
-  return true;
+  return parts;
+}
+
+/** Create a lightweight hint element for a gated (not-yet-unlocked) purchasable.
+ *  Shows just the item name and its requirement — no card, cost, or stats. */
+function createGateHint(purchasable) {
+  const el = document.createElement('div');
+  el.className = 'purchase-gate-hint dim';
+  el.dataset.gateId = purchasable.id;
+  const parts = buildRequirementHintParts(purchasable);
+  el.textContent = `${purchasable.name} [requires: ${parts.join(', ')}]`;
+  return el;
+}
+
+// ---------------------------------------------------------------------------
+// Tier-based progressive disclosure for personnel/compute
+// ---------------------------------------------------------------------------
+// Each tier becomes visible (with requirement hint) when the previous tier is unlocked.
+const PERSONNEL_TIERS = ['grad_student', 'junior_researcher', 'team_lead', 'elite_researcher'];
+const COMPUTE_TIERS = ['gpu_consumer', 'gpu_datacenter', 'cloud_compute', 'build_datacenter'];
+
+/** Is a tiered personnel/compute item visible based on progressive disclosure?
+ *  Returns true/false for tiered items, null for non-tiered items. */
+function getTierVisibility(purchasableId) {
+  for (const tiers of [PERSONNEL_TIERS, COMPUTE_TIERS]) {
+    const idx = tiers.indexOf(purchasableId);
+    if (idx === -1) continue;
+    if (idx === 0) return true; // T1 always visible
+    // Visible if previous tier's requirements are all met
+    const prevPurchasable = getAllPurchasables().find(p => p.id === tiers[idx - 1]);
+    return prevPurchasable ? areRequirementsMet(prevPurchasable.id) : true;
+  }
+  return null; // Not in tier system
 }
 
 // ---------------------------------------------------------------------------
@@ -146,44 +179,25 @@ function rebuildPurchaseList() {
 
   // Hide items whose requirements aren't met yet (progressive disclosure)
   visibleItems = visibleItems.filter(p => {
-    if (p.hidden && p.hidden()) return false;
-    if (p.requires) {
-      if (p.requires.capability) {
-        const trackName = p.requires.track || 'capabilities';
-        const trackState = gameState.tracks?.[trackName];
-        if (!trackState?.unlockedCapabilities?.includes(p.requires.capability)) return false;
-      }
-      if (p.requires.purchasable) {
-        if (getCount(p.requires.purchasable) === 0) return false;
-      }
-      if (p.requires.fundraise) {
-        if (!gameState.fundraiseRounds?.[p.requires.fundraise]?.raised) return false;
-      }
+    const displayCategory = p.uiCategory || p.category;
+
+    // Personnel/compute: tier-based progressive disclosure
+    // Each tier becomes visible when the previous tier is unlocked.
+    if (displayCategory === 'personnel' || displayCategory === 'compute') {
+      const tierVis = getTierVisibility(p.id);
+      if (tierVis !== null) return tierVis;
+      // Falls through for non-tiered items in these categories (shouldn't happen)
     }
-    if (p.visibilityGate) {
-      let gateMet = true;
-      if (p.visibilityGate.minPersonnel) {
-        const totalPersonnel = PERSONNEL_IDS.reduce((sum, id) => sum + getCount(id), 0);
-        if (totalPersonnel < p.visibilityGate.minPersonnel) gateMet = false;
-      }
-      if (p.visibilityGate.minCompute) {
-        const totalCompute = COMPUTE_IDS.reduce((sum, id) => sum + getCount(id), 0);
-        if (totalCompute < p.visibilityGate.minCompute) gateMet = false;
-      }
-      if (p.visibilityGate.fundingOrSeriesB) {
-        const funded = gameState.fundraiseRounds?.series_b?.raised ||
-          gameState.resources.funding > p.visibilityGate.fundingOrSeriesB;
-        if (!funded) gateMet = false;
-      }
-      if (p.visibilityGate.minPersonnelOrCompute) {
-        const min = p.visibilityGate.minPersonnelOrCompute;
-        const totalPersonnel = PERSONNEL_IDS.reduce((sum, id) => sum + getCount(id), 0);
-        const totalCompute = COMPUTE_IDS.reduce((sum, id) => sum + getCount(id), 0);
-        if (totalPersonnel < min && totalCompute < min) gateMet = false;
-      }
-      if (!gateMet) return false;
+
+    // Admin override: Series A admin items visible after Chief of Staff is purchased,
+    // even before the round is raised. Bypass fundraise gate, keep all other checks.
+    if (displayCategory === 'admin' && p.requires?.fundraise === 'series_a'
+        && !isFundraiseGatePassed('series_a')
+        && getCount('chief_of_staff') > 0) {
+      return isPurchasableVisible(p, { skipFundraise: true });
     }
-    return true;
+
+    return isPurchasableVisible(p);
   });
 
   if (activeTab === 'admin') {
@@ -203,8 +217,9 @@ function rebuildPurchaseList() {
 
   const completedIds = completedAdminItems.map(p => p.id);
   const visibleIds = visibleItems.map(p => p.id);
+  const gatedIds = visibleItems.filter(p => !areRequirementsMet(p.id)).map(p => p.id);
   const autoIds = visibleItems.filter(p => isAutomationUnlocked(p.id)).map(p => p.id);
-  const fingerprint = `${activeTab}:${visibleIds.join(',')};done:${completedIds.join(',')};auto:${autoIds.join(',')}`;
+  const fingerprint = `${activeTab}:${visibleIds.join(',')};gated:${gatedIds.join(',')};done:${completedIds.join(',')};auto:${autoIds.join(',')}`;
 
   if (fingerprint === _renderedPurchaseFingerprint) return;
 
@@ -231,7 +246,7 @@ function rebuildPurchaseList() {
       teamHeader.textContent = 'TEAMS';
       frag.appendChild(teamHeader);
       for (const p of teams) {
-        frag.appendChild(createPurchaseCard(p));
+        frag.appendChild(areRequirementsMet(p.id) ? createPurchaseCard(p) : createGateHint(p));
       }
     }
 
@@ -241,7 +256,7 @@ function rebuildPurchaseList() {
       upgradeHeader.textContent = 'UPGRADES';
       frag.appendChild(upgradeHeader);
       for (const p of upgrades) {
-        frag.appendChild(createPurchaseCard(p));
+        frag.appendChild(areRequirementsMet(p.id) ? createPurchaseCard(p) : createGateHint(p));
       }
     }
 
@@ -272,17 +287,11 @@ function rebuildPurchaseList() {
         if (p.description) {
           const descEl = document.createElement('div');
           descEl.className = 'completed-card-desc';
-          if (p.flavorText) descEl.classList.add('has-flavor');
           descEl.textContent = p.description;
           item.appendChild(descEl);
 
-          if (p.flavorText) {
-            const flavorText = p.flavorText;
-            const pId = p.id;
-            attachTooltip(descEl, () => {
-              recordFlavorDiscovery(pId);
-              return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
-            }, { delay: 400 });
+          if (p.flavor) {
+            attachFlavorTooltip(descEl, p.id, p.flavor);
           }
         }
 
@@ -297,12 +306,14 @@ function rebuildPurchaseList() {
     if (upgrades.length === 0 && teams.length === 0 && completedAdminItems.length === 0) {
       const emptyMsg = document.createElement('p');
       emptyMsg.className = 'dim';
-      emptyMsg.textContent = 'Nothing available yet — research to unlock.';
+      emptyMsg.textContent = gameState.fundraiseRounds?.seed?.raised
+        ? 'Nothing available yet — research to unlock.'
+        : 'Raise seed funding to unlock.';
       frag.appendChild(emptyMsg);
     }
   } else {
     for (const p of visibleItems) {
-      frag.appendChild(createPurchaseCard(p));
+      frag.appendChild(areRequirementsMet(p.id) ? createPurchaseCard(p) : createGateHint(p));
     }
 
     if (visibleItems.length === 0) {
@@ -346,7 +357,9 @@ function buildCostTooltipBuilder(purchasable) {
     const costReduction = getCostReduction(pid);
     const strategicCostMult = purchasable.category === 'personnel' ? getPersonnelCostMultiplier() : 1.0;
     const masteryDiscount = gameState.computed?.ceoFocus?.purchaseCostDiscount ?? 1;
-    const finalCost = Math.floor(baseFunding * scaling * costReduction * strategicCostMult * masteryDiscount);
+    // Use getPurchaseCost for the authoritative final cost (includes all factors
+    // like eventChainCostMult) so the tooltip can never diverge from the actual price.
+    const finalCost = getPurchaseCost(purchasable).funding || 0;
 
     let html = '<div class="tooltip-header"><span>Cost Breakdown</span></div>';
     html += `<div class="tooltip-row"><span>Base cost</span><span>${formatFunding(baseFunding)}</span></div>`;
@@ -362,7 +375,7 @@ function buildCostTooltipBuilder(purchasable) {
     if (masteryDiscount < 0.999) {
       html += `<div class="tooltip-row" style="color: #9b59b6"><span>PP mastery</span><span>×${fmtMult(masteryDiscount)}</span></div>`;
     }
-    if (scaling > 1.001 || costReduction < 0.999 || strategicCostMult !== 1.0 || masteryDiscount < 0.999) {
+    if (finalCost !== baseFunding) {
       html += `<div class="tooltip-row"><span>Final cost</span><span>${formatFunding(finalCost)}</span></div>`;
     }
 
@@ -503,7 +516,7 @@ function buildStatsParts(purchasable, count) {
 
   // COO ops bonuses (hardcoded in ceo-focus.js, not in effects object)
   if (purchasable.id === 'coo') {
-    parts.push({ text: '+5% ops cost floor · +5% ops cap · ×1.125 auto speed floor/cap', tooltipBuilder: null });
+    parts.push({ text: '+5% operations focus baseline and maximum', tooltipBuilder: null });
   }
 
   // Efficiency: $/RP for personnel, $/TFLOPS for compute (uses running cost, not purchase cost)
@@ -682,12 +695,6 @@ function updatePurchaseAffordability() {
       const isMaxed = p.maxPurchases && count >= p.maxPurchases;
       btn.textContent = isMaxed ? 'Purchased' : 'Queue';
       btn.disabled = !queueable;
-    }
-
-    // Hide requirement hint once requirement is met (not when maxed/queued)
-    const reqEl = card._reqEl || card.querySelector('.purchase-requires');
-    if (reqEl) {
-      reqEl.classList.toggle('hidden', isRequirementMet(p));
     }
 
     // Update stats line (running costs change with count)
@@ -893,9 +900,6 @@ function createPurchaseCard(purchasable) {
   const desc = document.createElement('div');
   desc.className = 'purchase-description';
   desc.textContent = purchasable.description || '';
-  if (purchasable.flavorText) {
-    desc.classList.add('has-flavor');
-  }
 
   const costInfo = document.createElement('span');
   costInfo.className = 'purchase-cost-info';
@@ -931,29 +935,9 @@ function createPurchaseCard(purchasable) {
     card._ampEl = ampLine;
   }
 
-  // Requirement hint (shown when requirements aren't met)
-  let reqEl = null;
-  if (purchasable.requires) {
-    reqEl = document.createElement('div');
-    reqEl.className = `purchase-requires dim${isRequirementMet(purchasable) ? ' hidden' : ''}`;
-    if (purchasable.requires.capability) {
-      const reqName = purchasable.requires.capability.replace(/_/g, ' ');
-      reqEl.textContent = `[requires: ${reqName}]`;
-    } else if (purchasable.requires.purchasable) {
-      const reqName = purchasable.requires.purchasable.replace(/_/g, ' ');
-      reqEl.textContent = `[requires: ${reqName}]`;
-    }
-    if (reqEl.textContent) card.appendChild(reqEl);
-  }
-
   // === Flavor text (tooltip on description hover) ===
-  if (purchasable.flavorText) {
-    const flavorText = purchasable.flavorText;
-    const pId = purchasable.id;
-    attachTooltip(desc, () => {
-      recordFlavorDiscovery(pId);
-      return `<div class="tooltip-section"><div>${flavorText}</div></div>`;
-    }, { delay: 400 });
+  if (purchasable.flavor) {
+    attachFlavorTooltip(desc, purchasable.id, purchasable.flavor);
   }
 
   // === Row 5: Automation panel (if unlocked) ===
@@ -970,7 +954,6 @@ function createPurchaseCard(purchasable) {
   card._costInfoEl = costInfo;
   card._btn = btn;
   card._statsEl = stats;
-  card._reqEl = reqEl;
   card._furloughBtn = furloughBtn;
   card._isFurloughable = isFurloughable;
   card._purchasableName = purchasable.name;
@@ -989,6 +972,7 @@ const SUBTAB_CONTENT = {
   compute: 'compute-tab-content',
   admin: 'admin-tab-content',
   data: 'data-tab-content',
+  ai: 'ai-tab-content',
 };
 
 /** Initialize sub-tab switching for Operations column. */

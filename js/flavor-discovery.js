@@ -3,22 +3,25 @@
 
 import { gameState } from './game-state.js';
 import { getAllPurchasables } from './content/purchasables.js';
+import { ALIGNMENT_PROGRAMS } from './content/alignment-programs.js';
 import { tracks } from './capabilities.js';
 import { milestone } from './analytics.js';
+import { attachTooltip } from './ui/stats-tooltip.js';
 
 /**
- * Count all discoverable flavor texts: purchasable flavorText + milestone flavorQuote.
+ * Count all discoverable flavor texts: purchasable flavor + milestone flavor.
  * Excludes the __flavor_stat_egg__ easter egg (bonus, not a real flavor item).
  */
 export function getTotalFlavorCount() {
-  const purchasable = getAllPurchasables().filter(p => p.flavorText).length;
+  const purchasable = getAllPurchasables().filter(p => p.flavor).length;
   let research = 0;
   for (const track of Object.values(tracks)) {
     for (const m of track.capabilities) {
-      if (m.flavorQuote) research++;
+      if (m.flavor) research++;
     }
   }
-  return purchasable + research;
+  const alignment = ALIGNMENT_PROGRAMS.filter(p => p.flavor).length;
+  return purchasable + research + alignment;
 }
 
 /**
@@ -37,4 +40,17 @@ export function recordFlavorDiscovery(id) {
       flavor_total: total,
     });
   }
+}
+
+/**
+ * Attach a flavor-text tooltip to an element with the full discovery pattern:
+ * adds `has-flavor` class, records discovery on hover, wraps in tooltip-section,
+ * and uses a 400ms delay.
+ */
+export function attachFlavorTooltip(el, id, text) {
+  el.classList.add('has-flavor');
+  attachTooltip(el, () => {
+    recordFlavorDiscovery(id);
+    return `<div class="tooltip-section"><div>${text}</div></div>`;
+  }, { delay: 400 });
 }

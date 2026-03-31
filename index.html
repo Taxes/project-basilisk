@@ -96,9 +96,12 @@
         <span id="agi-progress-text">Early experiments</span>
         <span id="competitor-progress" class="dim">(rival: distant)</span>
       </div>
-          <span id="stat-alignment" class="stat-item arc-1-hidden">
-            Ali: <span id="stat-alignment-value">???</span>
-          </span>
+      <span id="stat-alignment-separator" class="stats-separator arc-1-hidden">│</span>
+      <div id="stat-alignment-group" class="stats-group arc-1-hidden">
+        <span id="stat-alignment" class="stat-item">
+          Alignment: <span id="stat-alignment-value">???</span>
+        </span>
+      </div>
     </div>
 
     <!-- Main Layout: persistent left column + swappable right content -->
@@ -199,6 +202,12 @@
         <div id="dashboard-panel" class="view-panel active">
           <div id="main-columns">
 
+            <!-- Column toggle tabs (visible only at narrow viewports) -->
+            <div class="column-tabs">
+              <button class="column-tab active" data-column="operations">Operations</button>
+              <button class="column-tab" data-column="research">Research</button>
+            </div>
+
             <!-- Column: Operations (50%) -->
             <div class="column" id="col-operations">
               <div class="column-header">Operations</div>
@@ -210,13 +219,14 @@
                 <button class="sub-tab" data-category="compute">Compute<span id="compute-notify" class="sub-tab-notify hidden"></span></button>
                 <button class="sub-tab hidden" data-category="admin" id="admin-sub-tab">Admin<span id="admin-notify" class="sub-tab-notify hidden"></span></button>
                 <button class="sub-tab hidden" data-category="data" id="data-sub-tab">Data<span id="data-notify" class="sub-tab-notify hidden"></span></button>
+                <button class="sub-tab hidden" data-category="ai" id="ai-sub-tab">AI<span id="ai-notify" class="sub-tab-notify hidden"></span></button>
               </div>
 
               <!-- Finance Sub-tab Content -->
               <div id="finance-tab-content" class="subtab-content">
 
                 <!-- Pricing Panel -->
-                <section id="pricing-panel" class="hidden-until-unlocked">
+                <section id="pricing-panel" class="hidden-until-unlocked" data-lock-hint="Requires: Chatbot Assistant">
                   <h2>PRICING</h2>
                   <div id="pricing-content">
                     <div class="pricing-header">
@@ -307,7 +317,7 @@
                   </div>
                 </section>
 
-                <div class="finance-split-panel">
+                <div class="split-panel">
                 <!-- Full Funding Ledger -->
                 <section id="funding-section" class="compact-funding">
                   <h2>FUNDING LEDGER <span id="ledger-unit" class="ledger-unit dim"></span></h2>
@@ -403,7 +413,7 @@
                   <div id="fundraise-rounds"></div>
                   <div id="equity-display" class="dim"></div>
                 </section>
-                </div><!-- end finance-split-panel -->
+                </div><!-- end split-panel -->
 
               </div><!-- end finance-tab-content -->
 
@@ -411,8 +421,8 @@
               <div id="personnel-tab-content" class="subtab-content hidden">
 
                 <section id="research-breakdown-section">
-                  <div class="subtab-split">
-                    <div class="subtab-split-left">
+                  <div class="split-panel">
+                    <div>
                       <h2>RESEARCH RATE</h2>
                       <div class="funding-ledger">
                         <div class="ledger-group">
@@ -446,11 +456,8 @@
                             <span id="research-ai-rate" class="ledger-value">+0/s</span>
                           </div>
                         </div>
-                        <div class="ledger-group ledger-subtotal-row">
-                          <div class="ledger-header">BASE RESEARCH RATE <span id="research-total-rate" class="ledger-subtotal"></span></div>
-                        </div>
                         <div class="ledger-group" id="track-rates-group">
-                          <div class="track-rate-row" data-track="capabilities">
+                          <div class="track-rate-row" data-track="capabilities" id="track-rate-cap-row">
                             <span class="track-rate-label track-label-cap">Capabilities</span>
                             <span class="track-rate-alloc" id="track-alloc-cap"></span>
                             <span class="track-rate-modifier hidden" id="track-mod-cap"></span>
@@ -469,9 +476,12 @@
                             <span class="track-rate-value" id="track-rate-ali"></span>
                           </div>
                         </div>
+                        <div class="ledger-group ledger-subtotal-row">
+                          <div class="ledger-header">TOTAL RESEARCH RATE <span id="research-total-rate" class="ledger-subtotal"></span></div>
+                        </div>
                       </div>
                     </div>
-                    <div id="research-allocation-section" class="subtab-split-right hidden-until-unlocked">
+                    <div id="research-allocation-section" class="hidden-until-unlocked" data-lock-hint="Requires: Basic Transformer">
                       <h2>ALLOCATION</h2>
                       <div class="allocation-grid">
                         <div class="allocation-row" data-track="capabilities">
@@ -520,9 +530,9 @@
               <div id="compute-tab-content" class="subtab-content hidden">
 
                 <!-- Compute Split -->
-                <section id="compute-allocation-section" class="compact-compute-split hidden-until-unlocked">
-                  <div class="subtab-split">
-                    <div class="subtab-split-left">
+                <section id="compute-allocation-section" class="compact-compute-split hidden-until-unlocked" data-lock-hint="Requires: Chatbot Assistant">
+                  <div class="split-panel">
+                    <div>
                       <h2>COMPUTE SPLIT</h2>
                       <div class="allocation-slider-container">
                         <div class="allocation-labels">
@@ -544,7 +554,7 @@
                         </div>
                       </div>
                     </div>
-                    <div class="subtab-split-right">
+                    <div>
                       <h2>COMPUTE STATS</h2>
                       <div class="compute-stats">
                         <div class="stat-row">
@@ -585,39 +595,85 @@
                 <div id="purchases-list-data"></div>
               </div><!-- end data-tab-content -->
 
+              <!-- AI Sub-tab Content (Arc 2) -->
+              <div id="ai-tab-content" class="subtab-content hidden">
+                <!-- Safety Dashboard -->
+                <section id="safety-dashboard-section">
+                  <h2>SAFETY DASHBOARD</h2>
+                  <div class="split-panel">
+                    <div class="dashboard-col" id="dashboard-evals">
+                      <div class="dashboard-col-header">Evals</div>
+                      <div class="metric-row" data-metric="evalPassRate">
+                        <span class="metric-label">Eval Pass Rate</span>
+                        <span class="metric-value" id="metric-eval-pass">0%</span>
+                      </div>
+                      <div class="metric-row" data-metric="evalAccuracy">
+                        <span class="metric-label">Eval Accuracy</span>
+                        <span class="metric-value" id="metric-eval-accuracy">0%</span>
+                      </div>
+                      <div class="metric-row metric-headline" data-metric="effectiveAlignment">
+                        <span class="metric-label">Effective Alignment</span>
+                        <span class="metric-value" id="alignment-value">???</span>
+                      </div>
+                      <div class="metric-row" data-metric="dangerTier" style="display:none">
+                        <span class="metric-label">AI Risk Level</span>
+                        <span class="metric-value" id="metric-danger-tier">HEALTHY</span>
+                      </div>
+                      <div class="metric-row" data-metric="autonomyLevel" style="display:none">
+                        <span class="metric-label">Autonomy Level</span>
+                        <span class="metric-value" id="metric-autonomy-level">0</span>
+                      </div>
+                      <div class="metric-row" data-metric="ap">
+                        <span class="metric-label">Program Capacity</span>
+                        <span class="metric-value" id="metric-ap">0</span>
+                      </div>
+                    </div>
+                    <div class="dashboard-col" id="dashboard-factors">
+                      <div class="dashboard-col-header">Underlying Factors</div>
+                      <div class="metric-row" data-metric="robustness">
+                        <span class="metric-label">Robustness</span>
+                        <span class="metric-value" id="metric-robustness">0%</span>
+                      </div>
+                      <div class="metric-row" data-metric="interpretability">
+                        <span class="metric-label">Interpretability</span>
+                        <span class="metric-value" id="metric-interpretability">0%</span>
+                      </div>
+                      <div class="metric-row" data-metric="corrigibility">
+                        <span class="metric-label">Corrigibility</span>
+                        <span class="metric-value" id="metric-corrigibility">0%</span>
+                      </div>
+                      <div class="metric-row" data-metric="honesty">
+                        <span class="metric-label">Honesty</span>
+                        <span class="metric-value" id="metric-honesty">0%</span>
+                      </div>
+                      <div id="dashboard-incidents"></div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- Alignment Programs -->
+                <section id="alignment-programs-section" class="hidden-until-unlocked" data-lock-hint="Requires: Alignment team onboarding (Series B)">
+                  <h2>ALIGNMENT PROGRAMS <span id="ap-budget" class="ap-budget"></span></h2>
+                  <div id="alignment-programs-panel"></div>
+                </section>
+
+                <!-- Autonomy -->
+                <section id="autonomy-decisions-section" class="hidden-until-unlocked" data-lock-hint="Requires additional capabilities research">
+                  <h2>AUTONOMY</h2>
+                  <div class="split-panel">
+                    <div id="autonomy-status"></div>
+                    <div id="autonomy-decisions-list"></div>
+                  </div>
+                </section>
+              </div><!-- end ai-tab-content -->
+
             </div><!-- end col-operations -->
 
             <!-- Column: Research (50%) -->
             <div class="column" id="col-research">
               <div class="column-header">Research</div>
 
-              <!-- Safety Metrics (Arc 2 only) -->
-              <section id="safety-metrics-section" class="arc-1-hidden">
-                <h2>SAFETY DASHBOARD</h2>
-                <div id="alignment-display" class="alignment-display">
-                  <span class="metric-label">Alignment</span>
-                  <span class="metric-value" id="alignment-value">???</span>
-                </div>
-                <div id="safety-metrics-list">
-                  <div class="metric-row" data-metric="evalPassRate">
-                    <span class="metric-label">Eval Pass Rate</span>
-                    <span class="metric-value" id="metric-eval-pass">0%</span>
-                  </div>
-                  <div class="metric-row" data-metric="evalConfidence">
-                    <span class="metric-label">Eval Confidence</span>
-                    <span class="metric-value" id="metric-eval-confidence">0%</span>
-                  </div>
-                  <div class="metric-row" data-metric="interpretability">
-                    <span class="metric-label">Interpretability</span>
-                    <span class="metric-value" id="metric-interpretability">0%</span>
-                  </div>
-                </div>
-                <div id="safety-warnings" class="safety-warnings"></div>
-              </section>
-
-              <!-- Milestones (tabbed: Upcoming / Completed) -->
               <section id="research-section">
-                <h2>MILESTONES</h2>
                 <div class="sub-tabs milestone-tabs">
                   <button class="sub-tab active" data-milestone-tab="upcoming">Upcoming</button>
                   <button class="sub-tab" data-milestone-tab="completed">Completed</button>
@@ -660,6 +716,14 @@
                 </div>
                 <div class="messages-section-items" id="archive-list"></div>
               </div>
+              <div class="messages-section collapsed" data-section="incidents">
+                <div class="messages-section-header">
+                  <span class="section-toggle">▼</span>
+                  <span class="section-title">Incidents</span>
+                  <span class="section-count" id="incidents-count">(0)</span>
+                </div>
+                <div class="messages-section-items" id="incidents-list"></div>
+              </div>
               <div class="messages-section collapsed" data-section="news">
                 <div class="messages-section-header">
                   <span class="section-toggle">▼</span>
@@ -684,6 +748,7 @@
                 </div>
                 <div class="message-scroll-area">
                   <div class="message-body" id="detail-body"></div>
+                  <div class="message-effect" id="detail-effect"></div>
                   <div class="message-signature dim" id="detail-signature"></div>
                 </div>
                 <div class="message-choices" id="detail-choices"></div>
@@ -716,29 +781,26 @@
         <div class="settings-tabs">
           <button class="settings-tab active" data-settings-tab="settings">Settings</button>
           <button class="settings-tab" data-settings-tab="stats">Stats</button>
+          <button class="settings-tab" data-settings-tab="achievements">Achievements</button>
           <button class="settings-tab" data-settings-tab="changelog">Changelog</button>
           <button class="settings-tab" data-settings-tab="about">About</button>
         </div>
         <div id="settings-tab-settings" class="settings-tab-content">
-          <div class="settings-grid">
-            <div class="settings-item" id="game-mode-display">
-              <span class="settings-label">Game Mode</span>
-              <div class="settings-control">
-                <span id="game-mode-value" class="settings-hotkey"></span>
-              </div>
-            </div>
-            <div class="settings-item">
-              <span class="settings-label">Time Display</span>
-              <div class="settings-control">
-                <label class="radio-label">
-                  <input type="radio" name="time-display" value="game" checked>
-                  <span>Game Time (days)</span>
-                </label>
-                <label class="radio-label">
-                  <input type="radio" name="time-display" value="real">
-                  <span>Real Time (seconds)</span>
-                </label>
-              </div>
+          <div class="settings-section" id="game-mode-display">
+            <div class="settings-section-header">Game Mode</div>
+            <span id="game-mode-value" class="settings-hotkey"></span>
+          </div>
+          <div class="settings-section">
+            <div class="settings-section-header">Time Display</div>
+            <div class="settings-control">
+              <label class="radio-label">
+                <input type="radio" name="time-display" value="game" checked>
+                <span>Game Time (days)</span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="time-display" value="real">
+                <span>Real Time (seconds)</span>
+              </label>
             </div>
           </div>
           <div class="settings-section">
@@ -784,28 +846,30 @@
             <div id="import-area" class="import-area hidden">
               <textarea id="import-textarea" placeholder="Paste exported save here..." rows="3"></textarea>
               <div class="import-controls">
-                <button id="import-load-button" class="btn-settings">Load</button>
+                <button id="import-load-button" class="btn-danger">Load</button>
                 <label id="import-file-label" class="btn-settings import-file-label">
                   From File
                   <input type="file" id="import-file-input" accept=".txt" hidden>
                 </label>
                 <button id="import-cancel-button" class="btn-settings">Cancel</button>
               </div>
-              <div id="import-confirm" class="import-confirm hidden">
-                <span class="import-warning">This will overwrite your current save. No undo.</span>
-                <button id="import-confirm-button" class="btn-danger">Confirm Overwrite</button>
-                <button id="import-confirm-cancel" class="btn-settings">Cancel</button>
-              </div>
               <div id="import-error" class="import-error hidden"></div>
             </div>
           </div>
           <div class="settings-section settings-danger-zone">
+            <button id="soft-reset-button" class="btn-settings">Restart Run</button>
+            <button id="arc-mode-switch-button" class="btn-settings">Change Mode (reset)</button>
             <button id="hard-reset-button" class="btn-danger">Reset All Progress</button>
           </div>
         </div>
         <div id="settings-tab-stats" class="settings-tab-content hidden">
           <div id="stats-grid" class="stats-grid">
             <!-- Dynamically populated -->
+          </div>
+        </div>
+        <div id="settings-tab-achievements" class="settings-tab-content hidden">
+          <div id="achievements-container">
+            <!-- Dynamically populated by js/ui/achievements-tab.js -->
           </div>
         </div>
         <div id="settings-tab-changelog" class="settings-tab-content hidden">
@@ -915,6 +979,20 @@
               <button id="debug-extinction-reckless" class="btn-small">Extinction (Reckless)</button>
             </div>
           </div>
+          <!-- Endings (Arc 2) -->
+          <div class="debug-group">
+            <div class="debug-group-header">Endings (Arc 2)</div>
+            <div class="debug-row">
+              <button id="debug-arc2-golden" class="btn-small">Golden</button>
+              <button id="debug-arc2-silver" class="btn-small">Silver</button>
+              <button id="debug-arc2-dark" class="btn-small">Dark</button>
+              <button id="debug-arc2-catastrophic" class="btn-small">Catastrophic</button>
+            </div>
+            <div class="debug-row">
+              <button id="debug-arc2-bankruptcy" class="btn-small">Bankruptcy</button>
+              <button id="debug-arc2-competitor" class="btn-small">Competitor Wins</button>
+            </div>
+          </div>
         </div>
         </div>
         <div id="debug-tab-messages" class="settings-tab-content hidden">
@@ -955,6 +1033,49 @@
         <div class="farewell-signature" id="farewell-signature"></div>
         <div class="farewell-actions">
           <button id="farewell-dismiss" class="big-button">Continue</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Arc/Mode Selector Modal -->
+    <div id="arc-mode-modal" class="modal hidden">
+      <div class="modal-content arc-mode-content">
+        <div class="modal-header">Change Arc / Mode</div>
+        <div class="arc-mode-selectors">
+          <div class="arc-mode-group">
+            <div class="arc-mode-group-label">Arc</div>
+            <div class="arc-mode-options" id="arc-selector">
+              <button class="arc-mode-option" data-arc="1">
+                <span class="arc-mode-option-label">Arc 1</span>
+                <span class="arc-mode-option-desc">The Race to AGI</span>
+              </button>
+              <button class="arc-mode-option" data-arc="2">
+                <span class="arc-mode-option-label">Arc 2</span>
+                <span class="arc-mode-option-desc">The Alignment Arc</span>
+                <span class="arc-mode-lock hidden">Locked</span>
+              </button>
+            </div>
+          </div>
+          <div class="arc-mode-group">
+            <div class="arc-mode-group-label">Mode</div>
+            <div class="arc-mode-options" id="mode-selector">
+              <button class="arc-mode-option" data-mode="arcade">
+                <span class="arc-mode-option-label">Guided</span>
+                <span class="arc-mode-option-desc">Beginner-friendly</span>
+              </button>
+              <button class="arc-mode-option" data-mode="narrative">
+                <span class="arc-mode-option-label">Narrative</span>
+                <span class="arc-mode-option-desc">Challenging</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="arc-mode-warning hidden" id="arc-mode-warning">
+          All progress including prestige bonuses will be reset. Your endings, achievements, and lifetime stats will be preserved.
+        </div>
+        <div class="arc-mode-actions">
+          <button id="arc-mode-confirm" class="btn-danger" disabled>Confirm Switch</button>
+          <button id="arc-mode-cancel" class="btn-settings">Cancel</button>
         </div>
       </div>
     </div>

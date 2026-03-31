@@ -4,9 +4,10 @@
 // the tab's dot becomes visible and hovering it shows an actionable tooltip.
 
 import { gameState } from '../game-state.js';
-import { getAllPurchasables, PERSONNEL_IDS, COMPUTE_IDS } from '../content/purchasables.js';
-import { getCount } from '../purchasable-state.js';
+import { getAllPurchasables, isPurchasableVisible } from '../content/purchasables.js';
 import { BALANCE } from '../../data/balance.js';
+import { ALIGNMENT_PROGRAMS } from '../content/alignment-programs.js';
+import { isCapabilityUnlocked } from '../capabilities.js';
 import { $ } from '../utils/dom-cache.js';
 import { registerUpdate, SLOW } from './scheduler.js';
 import { attachTooltip } from './stats-tooltip.js';
@@ -22,6 +23,7 @@ const activeNotifications = {
   compute: [],
   admin: [],
   data: [],
+  ai: [],
 };
 
 /** Consecutive negative-demand-delta check count (for mispricing flicker guard). */
@@ -163,6 +165,28 @@ const CHECKS = [
       return null;
     },
   },
+
+  // -- AI: new alignment program --
+  {
+    tab: 'ai',
+    priority: 10,
+    check() {
+      if (gameState.arc < 2) return null;
+      const section = document.getElementById('alignment-programs-section');
+      if (!section?.classList.contains('unlocked')) return null;
+      const visibleSubs = gameState.computed?.revealedSubmetrics || [];
+      const seenCards = gameState.ui?.seenCards || [];
+      const states = gameState.safetyMetrics?.programStates || {};
+      for (const prog of ALIGNMENT_PROGRAMS) {
+        if (prog.submetric !== 'all' && !visibleSubs.includes(prog.submetric)) continue;
+        if (prog.submetric === 'all' && visibleSubs.length < 4) continue;
+        if (states[prog.id] || isCapabilityUnlocked(prog.unlockedBy)) {
+          if (!seenCards.includes(prog.id)) return 'New program available';
+        }
+      }
+      return null;
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -171,49 +195,8 @@ const CHECKS = [
 
 /** Returns visible purchasable IDs for a given tab category. */
 function getVisibleIdsForTab(category) {
-  const allPurchasables = getAllPurchasables();
-  return allPurchasables
-    .filter(p => {
-      const displayCat = p.uiCategory || p.category;
-      if (displayCat !== category) return false;
-      // Same visibility logic as infrastructure.js rebuildPurchaseList
-      if (p.hidden && p.hidden()) return false;
-      if (p.requires) {
-        if (p.requires.capability) {
-          const trackName = p.requires.track || 'capabilities';
-          const trackState = gameState.tracks?.[trackName];
-          if (!trackState?.unlockedCapabilities?.includes(p.requires.capability)) return false;
-        }
-        if (p.requires.purchasable) {
-          if (getCount(p.requires.purchasable) === 0) return false;
-        }
-        if (p.requires.fundraise) {
-          if (!gameState.fundraiseRounds?.[p.requires.fundraise]?.raised) return false;
-        }
-      }
-      if (p.visibilityGate) {
-        if (p.visibilityGate.minPersonnel) {
-          const total = PERSONNEL_IDS.reduce((sum, id) => sum + getCount(id), 0);
-          if (total < p.visibilityGate.minPersonnel) return false;
-        }
-        if (p.visibilityGate.minCompute) {
-          const total = COMPUTE_IDS.reduce((sum, id) => sum + getCount(id), 0);
-          if (total < p.visibilityGate.minCompute) return false;
-        }
-        if (p.visibilityGate.fundingOrSeriesB) {
-          const funded = gameState.fundraiseRounds?.series_b?.raised ||
-            gameState.resources.funding > p.visibilityGate.fundingOrSeriesB;
-          if (!funded) return false;
-        }
-        if (p.visibilityGate.minPersonnelOrCompute) {
-          const min = p.visibilityGate.minPersonnelOrCompute;
-          const totalP = PERSONNEL_IDS.reduce((sum, id) => sum + getCount(id), 0);
-          const totalC = COMPUTE_IDS.reduce((sum, id) => sum + getCount(id), 0);
-          if (totalP < min && totalC < min) return false;
-        }
-      }
-      return true;
-    })
+  return getAllPurchasables()
+    .filter(p => (p.uiCategory || p.category) === category && isPurchasableVisible(p))
     .map(p => p.id);
 }
 
@@ -292,7 +275,7 @@ function buildNotifTooltip(tab) {
 
 export function initTabNotifications() {
   // Cache dot elements and attach tooltips to parent buttons
-  for (const tab of ['finance', 'personnel', 'compute', 'admin', 'data']) {
+  for (const tab of ['finance', 'personnel', 'compute', 'admin', 'data', 'ai']) {
     const dot = $(`${tab}-notify`);
     if (dot) {
       dots[tab] = dot;

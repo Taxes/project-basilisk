@@ -2,8 +2,36 @@
 // Economics - Grant processing, line of credit, bankruptcy
 
 import { gameState } from './game-state.js';
-import { GRANTS, LINE_OF_CREDIT } from '../data/balance.js';
 import { addActionMessage, addNewsMessage, hasMessageBeenTriggered, markMessageTriggered } from './messages.js';
+
+// Grant System Constants (single consumer — colocated per AGENTS.md)
+// Seed Grant: FUNDING.SEED_AMOUNT provides initial $100K, grant provides rate only ($750/s for 6 min)
+// Research Grant: pure rate, no initial lump sum
+const GRANTS = {
+  seed: {
+    id: 'seed',
+    name: 'Seed Grant',
+    initial: 0,             // Initial handled by FUNDING.SEED_AMOUNT
+    rate: 750,              // $0.75K/s
+    duration: 360,          // 6 min → $270K from rate, $370K total with seed
+    trigger: null,          // Active at game start
+  },
+  research: {
+    id: 'research',
+    name: 'Research Grant',
+    initial: 0,             // Pure rate, no lump sum
+    rate: 4000,             // $4K/s
+    duration: 600,          // 10 min → $2.4M total
+    trigger: 'basic_transformer',
+  },
+};
+
+// Line of Credit Constants (single consumer — colocated per AGENTS.md)
+const LINE_OF_CREDIT = {
+  BASE_LIMIT: 100000,             // $100K base credit limit
+  REVENUE_SCALING: 0.2,           // +0.2× annual revenue
+  INTEREST_RATE: 0.20,            // 20% APR
+};
 import { addNewsItem } from './news-feed.js';
 import { formatFunding } from './utils/format.js';
 import { creditWarningMessage, creditWarningPreAdaMessage } from './content/message-content.js';
@@ -279,17 +307,6 @@ export function getCreditStatus() {
     interestPerSecond,
     headroom: limit + funding, // How much left before bankruptcy
   };
-}
-
-// --- Initialization ---
-
-/**
- * Initialize grants for a new game
- * Called after game state is created to set up initial grant state
- */
-export function initializeGrants() {
-  // Seed grant starts active, initial handled by FUNDING.SEED_AMOUNT
-  // Research grant activates when basic_transformer is unlocked
 }
 
 // Exports for window (playtester access)

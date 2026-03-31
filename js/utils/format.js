@@ -7,15 +7,28 @@ function useGameTime() {
   return gameState.settings?.timeDisplay !== 'real';
 }
 
+const TIERS = [
+  { threshold: 1e15, suffix: 'Q' },
+  { threshold: 1e12, suffix: 'T' },
+  { threshold: 1e9,  suffix: 'B' },
+  { threshold: 1e6,  suffix: 'M' },
+  { threshold: 1e3,  suffix: 'K' },
+];
+
+/** Find the tier for a magnitude: returns { divisor, suffix } or null for < 1K. */
+function getTier(abs) {
+  for (const { threshold, suffix } of TIERS) {
+    if (abs >= threshold) return { divisor: threshold, suffix };
+  }
+  return null;
+}
+
 export function formatFunding(amount, { dollar = true, precision = 2 } = {}) {
   const sign = amount < 0 ? '-' : '';
   const abs = Math.abs(amount);
   const prefix = dollar ? '$' : '';
-  if (abs >= 1e15) return sign + prefix + (abs / 1e15).toFixed(precision) + 'Q';
-  if (abs >= 1e12) return sign + prefix + (abs / 1e12).toFixed(precision) + 'T';
-  if (abs >= 1e9) return sign + prefix + (abs / 1e9).toFixed(precision) + 'B';
-  if (abs >= 1e6) return sign + prefix + (abs / 1e6).toFixed(precision) + 'M';
-  if (abs >= 1e3) return sign + prefix + (abs / 1e3).toFixed(precision) + 'K';
+  const tier = getTier(abs);
+  if (tier) return sign + prefix + (abs / tier.divisor).toFixed(precision) + tier.suffix;
   return sign + prefix + abs.toFixed(precision);
 }
 
@@ -23,20 +36,14 @@ export function formatFunding(amount, { dollar = true, precision = 2 } = {}) {
 export function formatFundingParts(amount) {
   const sign = amount < 0 ? '-' : '';
   const abs = Math.abs(amount);
-  if (abs >= 1e15) return { sign, number: (abs / 1e15).toFixed(2), suffix: 'Q' };
-  if (abs >= 1e12) return { sign, number: (abs / 1e12).toFixed(2), suffix: 'T' };
-  if (abs >= 1e9) return { sign, number: (abs / 1e9).toFixed(2), suffix: 'B' };
-  if (abs >= 1e6) return { sign, number: (abs / 1e6).toFixed(2), suffix: 'M' };
-  if (abs >= 1e3) return { sign, number: (abs / 1e3).toFixed(2), suffix: 'K' };
+  const tier = getTier(abs);
+  if (tier) return { sign, number: (abs / tier.divisor).toFixed(2), suffix: tier.suffix };
   return { sign, number: abs.toFixed(0), suffix: '' };
 }
 
 export function formatNumber(num) {
-  if (num >= 1e15) return (num / 1e15).toFixed(2) + 'Q';
-  if (num >= 1e12) return (num / 1e12).toFixed(2) + 'T';
-  if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
-  if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
-  if (num >= 1e3) return (num / 1e3).toFixed(2) + 'K';
+  const tier = getTier(num);
+  if (tier) return (num / tier.divisor).toFixed(2) + tier.suffix;
   return num.toFixed(1);
 }
 
@@ -81,6 +88,7 @@ export function formatPercent(ratio, decimals = 1) {
 export function formatDuration(seconds) {
   if (useGameTime()) {
     const days = Math.round(seconds);
+    if (days >= 3650) return '>10y';
     if (days >= 365) {
       const years = Math.floor(days / 365);
       const remainingDays = days % 365;
@@ -90,7 +98,18 @@ export function formatDuration(seconds) {
   }
   if (seconds < 60) return `${Math.round(seconds)}s`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  if (seconds >= 36000) return '>10h';
   return `${(seconds / 3600).toFixed(1)}h`;
+}
+
+/**
+ * Format an ETA string: "~3d remaining" for normal durations, ">10y remaining" for capped ones.
+ * Skips the tilde when formatDuration already uses '>' to indicate a cap.
+ * @param {number} seconds - Duration in seconds
+ */
+export function formatEta(seconds) {
+  const dur = formatDuration(seconds);
+  return dur.startsWith('>') ? `${dur} remaining` : `~${dur} remaining`;
 }
 
 /**
@@ -164,6 +183,21 @@ export function renderMarkdown(text) {
 
     // Blank lines — skip (block elements provide their own spacing)
     if (line.trim() === '') continue;
+
+    // Text line — trailing backslash joins with next line(s) via <br>
+    if (line.endsWith('\\')) {
+      const group = [inlineMd(line.slice(0, -1))];
+      while (i + 1 < lines.length && lines[i + 1].endsWith('\\')) {
+        i++;
+        group.push(inlineMd(lines[i].slice(0, -1)));
+      }
+      if (i + 1 < lines.length && lines[i + 1].trim() !== '' && !/^[-#`]/.test(lines[i + 1])) {
+        i++;
+        group.push(inlineMd(lines[i]));
+      }
+      out.push(`<p>${group.join('<br>')}</p>`);
+      continue;
+    }
 
     // Text paragraph
     out.push(`<p>${inlineMd(line)}</p>`);

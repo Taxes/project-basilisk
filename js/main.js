@@ -7,12 +7,10 @@ import { showEndingModal, showChangelog } from './ui/modals.js';
 import { initializePhaseCompletion, checkPhaseCompletion } from './phase-completion.js';
 import { initializeCompetitor, updateCompetitor } from './competitor.js';
 import { checkEndings } from './endings.js';
-// checkIncidents disabled: incidents need UX rework (#333)
-// resetForPrestige/transitionToArc2: not yet used in Arc 1
-import { initializeNewsFeed, updateNewsFeed, checkAlignmentNews, checkAlignmentDebt, checkAlignmentTaxEvent } from './news-feed.js';
-import { checkAIRequests } from './ai-requests.js';
-import { checkConsequenceEvents } from './consequence-events.js';
-import { updateAlignmentTaxEffects } from './alignment-tax-handler.js';
+import { initializeNewsFeed, processNewsChains, checkAlignmentTaxEvent, checkAlignmentDriftWarning } from './news-feed.js';
+import { checkAIRequests, recomputeAutonomyEffects, processRevocationTimers } from './ai-requests.js';
+import { checkConsequenceEvents, processConsequenceSubmetricPenalties } from './consequence-events.js';
+import { checkSubmetricMessages } from './submetric-messages.js';
 // triggerExtinctionSequence: not yet used in Arc 1
 import { BALANCE } from '../data/balance.js';
 import { checkChoiceUnlocks } from './strategic-choices.js';
@@ -28,7 +26,10 @@ import { processAutomation } from './automation.js';
 import { processDataQuality } from './data-quality.js';
 import { milestone } from './analytics.js';
 import { checkMoratoriumTriggers, processMoratorium, initializeMoratoriums } from './moratoriums.js';
+import { checkAlignmentGates, restoreAlignmentGates, resetAlignmentGates } from './alignment-gates.js';
+import { processTemporaryMultipliers } from './temporary-effects.js';
 import { samplePersonalitySignals, calculatePersonalityAxes } from './personality.js';
+import { checkFlavorEvents, tickFlavorEventLawsuits, tickTemporaryDemandBoosts } from './flavor-events.js';
 import { applyDebugSettings } from './debug-commands.js';
 // VERSION: accessed via test-api.js
 import { initPlaytestLogger } from './playtest-logger.js';
@@ -40,9 +41,9 @@ import { initCueCards } from './ui/cue-cards.js';
 import { initializeMessagesPanel, updatePauseOverlay, prependNewMessage } from './ui/messages-panel.js';
 import { updateFavicon } from './favicon.js';
 import { initializeFarewells, checkFarewells } from './farewells.js';
-import { showNarrativeModal } from './narrative-modal.js';
+import { showNarrativeModal, reopenPendingModal } from './narrative-modal.js';
 import { onboardingMessage } from './content/message-content.js';
-import { VERSION, VERSION_INT } from './version.js';
+import { VERSION, VERSION_INT, DISPLAY_VERSION } from './version.js';
 import { changelog } from './changelog.js';
 
 
@@ -56,7 +57,7 @@ let lastDeadlineCheck = 0;
 // Game tick function
 function gameTick(deltaTime) {
   // -1. Check message deadlines (once per second, not every tick)
-  if (gameState.timeElapsed - lastDeadlineCheck >= 1000) {
+  if (gameState.timeElapsed - lastDeadlineCheck >= 1) {
     checkMessageDeadlines();
     lastDeadlineCheck = gameState.timeElapsed;
     // If we just paused for messages, update UI and return early
@@ -105,7 +106,7 @@ function gameTick(deltaTime) {
   const _wdAfter = gameState.resources.funding;
   const _wdDelta = _wdAfter - _wdBefore;
   const _wdExpectedRate = gameState.computed?.revenue?.freeCashFlow || 0;
-  const _wdExpectedDelta = _wdExpectedRate * deltaTime;
+  const _wdExpectedDelta = _wdExpectedRate * deltaTime * (gameState.gameSpeed || 1);
   // Trigger if actual change deviates from expected by more than 2x the expected magnitude
   const _wdThreshold = Math.max(Math.abs(_wdExpectedDelta) * 2, 100); // floor of $100 to avoid noise
   if (Math.abs(_wdDelta - _wdExpectedDelta) > _wdThreshold) {
@@ -129,29 +130,31 @@ function gameTick(deltaTime) {
   // 1b. Update competitor
   updateCompetitor(deltaTime);
 
-  // 1c. Check for safety incidents (Phase 2+)
-  // checkIncidents(deltaTime); // Disabled: incidents need UX rework (#333)
-
   // 1d.5 Update alignment sub-metrics (Arc 2)
   updateSubMetrics(deltaTime);
 
-  // 1d. Update news feed
-  updateNewsFeed();
+  // 1d.6 Submetric discovery + threshold messages (Arc 2)
+  checkSubmetricMessages(deltaTime);
 
-  // 1e. Check for ambient alignment news
-  checkAlignmentNews();
-
-  // 1f. Check for alignment debt news (Arc 2)
-  checkAlignmentDebt();
+  // 1d. Process scheduled news chains
+  processNewsChains();
 
   // 1g. Alignment consequences system (Arc 2)
   if (gameState.arc >= 2) {
     checkAIRequests();
+    processRevocationTimers();
+    recomputeAutonomyEffects();
     checkConsequenceEvents(deltaTime);
     checkAlignmentTaxEvent(deltaTime);
-    updateAlignmentTaxEffects();
+    checkAlignmentDriftWarning();
     checkMoratoriumTriggers();
     processMoratorium(deltaTime);
+    checkAlignmentGates();
+    processTemporaryMultipliers();
+    processConsequenceSubmetricPenalties();
+    checkFlavorEvents(deltaTime);
+    tickFlavorEventLawsuits(deltaTime);
+    tickTemporaryDemandBoosts(deltaTime);
 
     // 1h. Personality tracking (Arc 2) - sample every 60 ticks (~2 sec)
     gameState._personalityTickCounter++;
@@ -206,6 +209,9 @@ function startGameLoop() {
       saveGame();
       lastSave = now;
     }
+
+    // Sync pause state to DOM so CSS can disable transitions while paused
+    document.body.classList.toggle('game-paused', !!gameState.paused);
 
     // Skip time advancement and game logic if paused, but still update forecasts + UI
     if (gameState.paused) {
@@ -357,8 +363,9 @@ function initializeGame() {
 
   // Load saved game or start fresh
   const loaded = loadGame();
+  const wasImported = loaded && sessionStorage.getItem('agi-import-pending');
   // Track save imports (before clearing the flag)
-  if (loaded && sessionStorage.getItem('agi-import-pending')) {
+  if (wasImported) {
     milestone('save_imported', {
       milestones_in_save: [...(gameState.firedMilestones || [])],
       arc: gameState.arc,
@@ -385,8 +392,9 @@ function initializeGame() {
     console.log('Starting new game');
   }
 
-  // Restore persisted debug settings (separate from game save)
-  applyDebugSettings();
+  // Restore persisted debug settings (separate from game save).
+  // Skip ?arc2 URL transition if the player manually imported a save.
+  applyDebugSettings({ skipArc2: wasImported });
 
   // Initialize message system (must happen before rehydration so tutorial
   // content is registered in the content index)
@@ -395,6 +403,11 @@ function initializeGame() {
 
   // Rehydrate stripped message bodies now that all content is registered
   rehydrateMessages();
+
+  // Re-show any narrative modal that was open when the player saved
+  if (loaded) {
+    reopenPendingModal();
+  }
 
   // Set up message notification callback
   setOnNewMessageCallback((msg) => {
@@ -423,7 +436,11 @@ function initializeGame() {
 
   // Initialize UI
   initializeUI();
-  setOnHardReset(() => handleOnboarding());
+  setOnHardReset(() => {
+    lastDeadlineCheck = 0;
+    resetAlignmentGates();
+    handleOnboarding();
+  });
 
   // Initialize phase completion system
   initializePhaseCompletion();
@@ -433,6 +450,9 @@ function initializeGame() {
 
   // Initialize moratoriums system (Arc 2)
   initializeMoratoriums();
+
+  // Restore alignment gate state from saved messages (Arc 2)
+  restoreAlignmentGates();
 
   // Initialize focus queue exports
   initFocusQueueExports();
@@ -453,8 +473,10 @@ function initializeGame() {
   // Initialize farewell modal system
   initializeFarewells();
 
-  // Seed computed state so first UI render has data (e.g. CEO Focus panel)
+  // Seed computed state so first UI render has data
+  // (CEO Focus panel, safety dashboard reveal stage, autonomy level)
   processCEOFocus(0);
+  updateSubMetrics(0);
 
   // Initial UI update
   updateUI();
@@ -477,7 +499,7 @@ function initializeGame() {
 
   // Version update toast for returning players
   if (loaded && gameState.lastSeenVersion != null && gameState.lastSeenVersion < VERSION && changelog[0]?.version === VERSION) {
-    notify(`Updated to v${VERSION}`, 'Prestige bonus tracking and UI fixes. View the full changelog in Settings or click here.', 'info', {
+    notify(`Updated to ${DISPLAY_VERSION}`, 'Arc 2: Alignment is here. View the full changelog in Settings or click here.', 'info', {
       duration: BALANCE.VERSION_TOAST_DURATION,
       onClick: () => showChangelog(),
       onDismiss: () => { gameState.lastSeenVersion = VERSION; },

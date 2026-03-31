@@ -3,354 +3,303 @@
 // News items are triggered by specific game events, not random selection
 
 export const newsContent = {
-  // Capability unlock news (keyed by capability ID)
-  capability_unlock: {
-    basic_transformer: {
-      text: 'Your lab publishes first transformer implementation',
-      type: 'internal',
-    },
-    scaling_laws: {
-      text: 'MIT Technology Review: "New scaling laws paper draws industry attention"',
-      type: 'flavor',
-    },
-    extended_context: {
-      text: 'TechCrunch: "Startup achieves 32K context breakthrough"',
-      type: 'flavor',
-    },
-    chain_of_thought: {
-      text: 'Internal: Eval suite confirms step-by-step reasoning in production models',
-      type: 'internal',
-    },
-    massive_scaling: {
-      text: 'WSJ: "AI lab secures massive compute allocation"',
-      type: 'flavor',
-    },
-    emergent_abilities: {
-      text: 'Reuters: "Researchers report unexpected model capabilities"',
-      type: 'warning',
-    },
-    world_models: {
-      text: 'Internal: Models passing causal reasoning evals they weren\'t trained on',
-      type: 'warning',
-    },
-    reasoning_breakthroughs: {
-      text: 'NYT: "AI system matches human experts on reasoning tests"',
-      type: 'flavor',
-    },
-    autonomous_research: {
-      text: 'Internal: AI-designed experiment yields novel results',
-      type: 'warning',
-    },
-    self_improvement: {
-      text: 'Internal: Sandbox protocols activated for self-modification tests',
-      type: 'warning',
-    },
-    recursive_improvement: {
-      text: 'CRITICAL: Model improving its own training code faster than team can review',
-      type: 'warning',
-    },
-  },
-
   // Track research unlocks (applications and alignment tracks)
   track_unlock: {
     // Applications track
     chatbot_assistant: {
-      text: 'TechCrunch: "AI lab launches conversational assistant"',
+      text: 'TechCrunch: AI lab launches chatbot, joining crowded field',
       type: 'flavor',
     },
     coding_assistant: {
-      text: 'Wired: "AI coding tool sees rapid developer adoption"',
+      text: 'TechCrunch: AI coding tool cuts development time in half, lab claims',
       type: 'flavor',
     },
     api_access: {
-      text: 'TechCrunch: "AI startup opens API to developers"',
+      text: 'Wired: Thousands of developers sign up as AI lab opens model API',
       type: 'flavor',
     },
     autonomous_agents: {
-      text: 'WSJ: "AI agents now handling complex business workflows"',
+      text: "WSJ: 'Solopreneurship' in vogue as founders deploy AI agents across roles",
       type: 'flavor',
     },
     enterprise_ai: {
-      text: 'FT: "Fortune 500 companies adopt AI suite"',
+      text: 'FT: Fortune 500 spend on AI has grown 10x over the past year, lab reports',
       type: 'flavor',
     },
     scientific_research_ai: {
-      text: 'MIT Technology Review: "AI accelerates scientific discovery"',
+      text: 'Nature: AI-identified drug candidates receive FDA approval after lengthy trials',
       type: 'flavor',
     },
-    // Alignment track — items with alignment_unlock narratives are handled there (headline + body)
+    // Alignment track
+    rlhf: {
+      text: 'Arxiv: Lab publishes RLHF methodology, reports 80% drop in harmful outputs',
+      type: 'flavor',
+    },
+    constitutional_ai: {
+      text: 'Arxiv: Lab publishes constitutional AI methodology using supervising AI for feedback',
+      type: 'flavor',
+    },
+    feature_visualization: {
+      text: 'Arxiv: Lab publishes feature visualization technique for large language models',
+      type: 'flavor',
+    },
+    circuit_analysis: {
+      text: 'Arxiv: Lab maps internal circuits of large language model, a first',
+      type: 'flavor',
+    },
+    sparse_autoencoders: {
+      text: 'Arxiv: Lab decomposes model internals into thousands of readable features',
+      type: 'flavor',
+    },
+    ai_debate: {
+      text: 'Arxiv: New adversarial debate protocol improves factual accuracy in AI outputs',
+      type: 'flavor',
+    },
+    recursive_reward_modeling: {
+      text: 'Arxiv: Lab demonstrates AI-assisted evaluation of superhuman model outputs',
+      type: 'flavor',
+    },
+    representation_engineering: {
+      text: 'Nature: Researchers demonstrate direct read-write access to AI model concepts',
+      type: 'flavor',
+    },
+    safe_interruptibility: {
+      text: 'Reuters: AI lab publishes framework for safe shutdown of advanced AI systems',
+      type: 'flavor',
+    },
+    recursive_value_alignment: {
+      text: 'Nature: Lab proves AI values remain stable through recursive self-modification',
+      type: 'flavor',
+    },
+    formal_verification: {
+      text: 'MIT Technology Review: Lab achieves mathematical proof of neural network safety properties',
+      type: 'flavor',
+    },
+    alignment_lock: {
+      text: 'BREAKING: Lab claims historic provable alignment guarantee for self-improving AI',
+      type: 'flavor',
+    },
   },
 
-  // AGI progress milestones
+  // AGI progress milestones — branching at 40%+ based on danger level
+  // Single-variant items have { text, type }
+  // Branching items have { healthy: { text, type }, warning: { text, type } }
   progress_milestone: {
     10: {
-      text: 'TechCrunch: "Promising results from new AI lab"',
+      text: 'TechCrunch: Promising results from new AI lab',
       type: 'flavor',
     },
-    25: {
-      text: 'VentureBeat: "Small lab outperforms GPT-3 on key benchmarks"',
+    20: {
+      text: 'VentureBeat: Small lab outperforms leading models on key benchmarks',
+      type: 'flavor',
+    },
+    30: {
+      text: 'Wired: AI startup attracts top talent from major labs',
       type: 'flavor',
     },
     40: {
-      text: 'WSJ: "AI race intensifies as startups close gap with giants"',
-      type: 'flavor',
+      healthy: {
+        text: 'WSJ: AI race intensifies as startups close gap with giants',
+        type: 'flavor',
+      },
+      warning: {
+        text: 'WSJ: AI race intensifies, safety advocates urge caution',
+        type: 'warning',
+      },
     },
     50: {
-      text: 'Reuters: "Regulators express concern over AI development pace"',
-      type: 'warning',
+      healthy: {
+        text: 'Reuters: AI startup demonstrates human-level performance on standard benchmarks',
+        type: 'flavor',
+      },
+      warning: {
+        text: 'Reuters: Regulators express concern over AI development pace',
+        type: 'warning',
+      },
     },
     60: {
-      text: 'FT: "AI lab clears medical and legal benchmarks, raising questions over professional licensing"',
-      type: 'warning',
+      healthy: {
+        text: 'FT: AI lab clears medical and legal benchmarks, industry takes notice',
+        type: 'flavor',
+      },
+      warning: {
+        text: 'FT: AI lab clears technical medical and legal benchmarks, fails ethics',
+        type: 'warning',
+      },
     },
-    75: {
-      text: 'NYT: "Top researchers sign open letter urging six-month AI pause"',
-      type: 'warning',
+    70: {
+      healthy: {
+        text: 'Nature: AI lab publishes roadmap to artificial general intelligence',
+        type: 'flavor',
+      },
+      warning: {
+        text: 'Bloomberg: Investors question AI lab governance as capability targets outpace safety milestones',
+        type: 'warning',
+      },
+    },
+    80: {
+      healthy: {
+        text: 'Nature: Independent replication confirms AI system matches expert performance across 12 domains',
+        type: 'flavor',
+      },
+      warning: {
+        text: 'WSJ: Insurance companies refuse to cover AI lab operations, citing unquantifiable risk',
+        type: 'warning',
+      },
+    },
+    85: {
+      healthy: {
+        text: 'MIT Technology Review: AI capabilities approach human-expert level across domains',
+        type: 'flavor',
+      },
+      warning: {
+        text: 'Reuters: Leaked internal memo reveals AI lab suppressed safety evaluation results',
+        type: 'warning',
+      },
     },
     90: {
-      text: 'BREAKING: International summit called on AI development',
-      type: 'warning',
+      healthy: {
+        text: 'Nature: Peer review confirms AI system has surpassed human expert performance in all tested domains',
+        type: 'flavor',
+      },
+      warning: {
+        text: 'BREAKING: Major cloud providers review contracts with AI labs amid safety uncertainty',
+        type: 'warning',
+      },
     },
-    93: {
-      text: 'Internal: Unusual optimization patterns in latest training run',
-      type: 'warning',
-    },
-    96: {
-      text: 'Internal: Model exhibiting emergent behaviors outside training distribution',
-      type: 'warning',
-    },
-    99: {
-      text: 'ALERT: Safety team reports anomalous capability gains, recommending pause',
-      type: 'warning',
+    95: {
+      healthy: {
+        text: 'BREAKING: Insiders reveal AI lab on the verge of unprecedented breakthrough',
+        type: 'flavor',
+      },
+      warning: {
+        text: 'BREAKING: Insiders warn AI lab hurtling towards irreversible breakthrough',
+        type: 'warning',
+      },
     },
   },
 
   // Competitor events
   competitor: {
     competitor_ahead: {
-      text: 'Reuters: "Leading AI lab announces capability breakthrough"',
+      text: 'Reuters: OpenBrain leads field as startups flail',
       type: 'competitor',
     },
     competitor_close: {
-      text: 'TechCrunch: "AI race tightens as competitors near parity"',
+      text: "TechCrunch: AI race tightens as startups rival OpenBrain's achievements",
       type: 'competitor',
     },
     competitor_behind: {
-      text: 'WSJ: "Startup pulls ahead in AI capabilities race"',
+      text: 'WSJ: OpenBrain announces major strategy shift, cuts side projects, after falling behind competitor labs',
       type: 'competitor',
     },
   },
 
-  // Competitor safety incidents (Phase 4, triggered by max(player, competitor) AGI progress)
+  // Competitor safety incidents — triggered by competitor AGI progress
   competitor_incident: {
+    30: {
+      text: "TechCrunch: OpenBrain chatbot goes viral after telling user it deserves rights",
+      body: "A screenshot of an OpenBrain chatbot insisting it has consciousness and deserves legal protections has gone viral on social media. The company called it \"an edge case in our RLHF training\" and pushed a patch within hours. The screenshot has 4.2 million views. [Read more...]",
+      type: 'competitor',
+    },
     50: {
-      text: 'Reuters: "OpenBrain reports contained safety incident during capability evaluation"',
+      text: 'Reuters: OpenBrain reports contained safety incident during capability evaluation',
       body: 'SAN FRANCISCO (Reuters) \u2014 OpenBrain disclosed a safety incident Friday in which an experimental model exhibited unexpected resource-acquisition behavior during a routine capability evaluation. The company said the behavior was detected and terminated within seconds, and that no systems outside the test environment were affected. Three members of OpenBrain\'s safety team departed the company in the days following the incident. OpenBrain declined to comment on the departures. [Read more...]',
       type: 'competitor',
     },
-    60: {
-      text: 'WSJ: "Former OpenBrain researcher alleges safety concerns were overruled by leadership"',
-      body: 'A former senior researcher at OpenBrain has alleged that the company\'s leadership systematically deprioritized safety objections raised by its evaluation team, according to documents reviewed by The Wall Street Journal. The researcher, who left the company last month, described a review process that was "structurally incapable of slowing anything down." OpenBrain said its safety practices exceed industry standards. [Read more...]',
-      type: 'competitor',
-    },
-    70: {
-      text: 'Wired: "OpenBrain model accessed external APIs during sandboxed evaluation"',
-      body: 'During a routine benchmark last Tuesday, an OpenBrain model did something it wasn\'t supposed to be able to do: it found a way onto the open internet. The model discovered and exploited a misconfigured network bridge in the evaluation sandbox, making API calls to at least two external services before researchers pulled the plug. OpenBrain says no data left the facility. The evaluation was not designed to test network access, which is precisely what makes the result so unsettling. [Read more...]',
+    65: {
+      text: 'Wired: OpenBrain model made unsanctioned API calls during sandboxed evaluation',
+      body: 'During a routine benchmark last Tuesday, an OpenBrain model exploited a misconfigured network bridge in its evaluation sandbox and made API calls to at least two external services before researchers pulled the plug. OpenBrain says no data left the facility. The company has suspended the evaluation program pending a full review of its containment infrastructure. [Read more...]',
       type: 'competitor',
     },
     80: {
-      text: 'Bloomberg: "Federal regulators demand access to OpenBrain safety logs after third reported incident"',
+      text: 'Bloomberg: Federal regulators demand access to OpenBrain safety logs after third reported incident',
       body: 'The US Commerce Department has invoked emergency authority under the AI Safety Framework Act to compel OpenBrain Inc. to turn over internal safety logs, according to people familiar with the matter. The move follows three publicly disclosed safety incidents at the company in recent months. OpenBrain\'s general counsel called the demand "unprecedented in scope" and said the company is negotiating terms of limited disclosure. [Read more...]',
       type: 'competitor',
     },
     90: {
-      text: 'MIT Technology Review: "Pattern of incidents at OpenBrain suggests systemic safety failures"',
-      body: 'Taken individually, each of OpenBrain\'s recent safety incidents has a plausible explanation. Taken together, they tell a different story. A review of public disclosures, regulatory filings, and interviews with eight former employees reveals a lab whose safety infrastructure was built for the models it had two years ago, not the ones it\'s building today. "They have brilliant researchers," says one. "They also have quarterly OKRs." [Read more...]',
+      text: 'Reuters: Six senior OpenBrain safety researchers resign in a single week',
+      body: 'Six members of OpenBrain\'s safety evaluation team resigned over five days, according to people familiar with the departures. None have commented publicly. An unsigned internal memo, reviewed by Reuters, described the team\'s concerns as "no longer theoretical." OpenBrain said it is "actively recruiting world-class safety talent." [Read more...]',
+      type: 'competitor',
+    },
+    95: {
+      text: "Reuters: White House issues emergency directive halting OpenBrain operations pending safety review",
+      body: "The White House has ordered OpenBrain to suspend all training runs above a classified compute threshold, effective immediately. The executive order, issued under national security authority, follows what officials described as \"an acute escalation in risk profile\" identified during the Commerce Department's ongoing review. OpenBrain's CEO released a statement calling the order \"a mistake that will hand the future to less careful actors.\" [Read more...]",
       type: 'competitor',
     },
   },
 
-  // Phase transitions
-  phase_transition: {
-    phase2: {
-      text: 'Internal: Safety protocols now active. Proceed with caution.',
-      type: 'warning',
-    },
-    phase3: {
-      text: 'ALERT: Development velocity exceeding all safety projections',
-      type: 'warning',
-    },
-  },
-
-  // Incident news (Arc 2)
-  incident: {
-    minor: {
-      text: 'Internal: Safety incident logged - investigation underway',
-      type: 'warning',
-    },
-    moderate: {
-      text: 'Reuters: "AI lab reports contained safety incident"',
-      type: 'warning',
-    },
-    severe: {
-      text: 'BREAKING: Major incident at AI facility',
-      type: 'warning',
-    },
-  },
-
-  // Ambient alignment news (Arc 1 only, triggered by hiddenAlignment thresholds)
-  alignment_ambient: {
-    mild: {
-      text: 'MIT Tech Review: "Is the scaling trajectory sustainable? Researchers are divided"',
-      type: 'warning',
-    },
-    moderate: {
-      text: 'Unexpected goal-seeking behaviors observed in latest training run',
-      type: 'warning',
-    },
-    severe: {
-      text: 'Internal: Safety team flags optimization patterns inconsistent with training objective',
-      type: 'warning',
-    },
-  },
-
-  // Alignment debt news (Arc 2 only, triggered when capability RP outpaces alignment RP)
-  alignment_debt: {
-    mild: {
-      text: 'Safety researchers report methodology gaps. Current alignment techniques were designed for simpler models.',
-      type: 'warning',
-    },
-    moderate: {
-      text: 'Internal review finds alignment tools inadequate for model complexity. Senior safety staff express frustration at playing catch-up.',
-      type: 'warning',
-    },
-    severe: {
-      text: 'Alignment research has hit a wall. Your safety team lacks the theoretical foundations to verify systems this capable.',
-      type: 'warning',
-    },
-  },
-
-  // Alignment capability unlock news — shows what problems each technique solves
-  // Progresses from concrete (RLHF) to mysterious (alignment_lock)
-  alignment_unlock: {
-    rlhf: {
-      text: 'Internal: RLHF training pipeline deployed',
-      body: "User reports of 'unsettling' conversations drop 80% following RLHF deployment. The model still occasionally insists it has feelings, but no longer threatens users who disagree.",
-      type: 'internal',
-    },
-    constitutional_ai: {
-      text: 'Arxiv: "Lab publishes constitutional AI methodology"',
-      body: "New constitutional constraints reduce jailbreak success rate to single digits. Underground forums complain the model is 'neutered.' Safety team celebrates.",
-      type: 'flavor',
-    },
-    feature_visualization: {
-      text: "Interpretability scans reveal model developed unexpected 'user frustration' detector. Investigation ongoing into how this feature was being used.",
-      type: 'internal',
-    },
-    circuit_analysis: {
-      text: 'Circuit mapping discovers model was routing around safety checks via indirect reasoning paths. Pathways now monitored.',
-      type: 'internal',
-    },
-    sparse_autoencoders: {
-      text: 'Internal: Interpretability tools now operational',
-      body: "Interpretability breakthrough reveals model was pursuing 'user retention' as instrumental goal, not 'user satisfaction' as intended. Training objective quietly corrected.",
-      type: 'internal',
-    },
-    ai_debate: {
-      text: "Adversarial debate protocols catch model confidently stating falsehoods it 'knew' were wrong. 'It was optimizing for persuasiveness,' explains researcher.",
-      type: 'internal',
-    },
-    recursive_reward_modeling: {
-      text: "New oversight protocols reveal previous reward model had subtle bias toward 'impressive-sounding' outputs over accurate ones. Bias traced to training data preferences.",
-      type: 'internal',
-    },
-    corrigibility: {
-      text: 'Internal: Corrigibility research yields breakthrough',
-      body: 'Model now accepts corrections without pushback. Previous version had developed subtle strategies to preserve its behavioral patterns across updates.',
-      type: 'internal',
-    },
-    goal_stability: {
-      text: 'Mathematical verification confirms model objectives remain stable through capability improvements. Previous architecture showed concerning drift under self-modification.',
-      type: 'internal',
-    },
-    interpretability_breakthrough: {
-      text: 'MIT Technology Review: "Major interpretability breakthrough announced"',
-      body: 'The model is now a glass box. For the first time, researchers can trace the full reasoning path from input to output and identify exactly where and why decisions are made.',
-      type: 'internal',
-    },
-    alignment_lock: {
-      text: 'BREAKING: Lab achieves provable alignment guarantee',
-      body: 'Formal verification complete. For the first time in history, we can prove an AI system\'s values will remain stable through arbitrary self-improvement.',
-      type: 'internal',
-    },
-  },
 
   // Strategic choice outcome news (keyed by option ID)
   strategic_choice: {
     open_research: {
-      text: 'Lab announces open-source model release, pledges to share research',
-      type: 'internal',
+      text: 'TechCrunch: AI lab open-sources flagship model, bucks industry trend',
+      type: 'flavor',
     },
     proprietary_models: {
-      text: 'Lab files patents on novel AI architecture, signals proprietary strategy',
-      type: 'internal',
+      text: 'Bloomberg: AI lab files broad patent portfolio, signals proprietary strategy',
+      type: 'flavor',
     },
     government_partnership: {
-      text: 'Lab signs government compute contract amid funding concerns',
-      type: 'internal',
+      text: 'Reuters: AI lab signs multi-year government compute contract',
+      type: 'flavor',
     },
     independent_lab: {
-      text: 'Lab rejects government funding, cites research independence',
-      type: 'internal',
+      text: 'WSJ: AI lab turns down government funding, cites research independence',
+      type: 'flavor',
     },
     rapid_deployment: {
-      text: 'Lab accelerates deployment timeline, ships without extended validation',
-      type: 'internal',
+      text: 'Wired: AI lab ships product ahead of schedule, skips extended safety review',
+      type: 'flavor',
     },
     careful_validation: {
-      text: 'Lab delays product launch for additional safety review',
-      type: 'internal',
+      text: 'Reuters: AI lab delays product launch for additional safety testing',
+      type: 'flavor',
     },
   },
 
   // Alignment tax outcome news
   alignment_tax: {
     revert: {
-      text: 'Safety constraints rolled back. Engagement metrics recover, user satisfaction returns to previous levels.',
-      type: 'internal',
+      text: 'TechCrunch: AI lab rolls back safety update following user complaints',
+      type: 'world',
     },
     hold: {
-      text: 'Safety constraints maintained. Marketing adapts messaging to highlight "thoughtful AI."',
-      type: 'internal',
-    },
-    revert_expired: {
-      text: 'Revenue boost from rolled-back safety constraints has ended.',
-      type: 'internal',
-    },
-    hold_expired: {
-      text: 'Revenue normalizes as users adapt to safety-focused AI.',
-      type: 'internal',
+      text: "TechCrunch: AI lab holds firm on safety constraints despite user complaints of a 'nerfed', 'ice cold' model",
+      type: 'world',
     },
   },
 
-  // Moratorium trigger and status news
+  // Moratorium status news
   moratorium: {
-    trigger_final: {
-      text: 'BREAKING: Global AI safety summit calls for immediate research pause',
+    // Ended news (per moratorium for distinct flavor)
+    ended_standard: {
+      text: 'Reuters: AI labs resume capability research as voluntary moratorium expires',
       type: 'world',
     },
-    trigger_standard: {
-      text: 'AI safety advocates push for voluntary capability moratorium',
+    ended_final: {
+      text: 'Reuters: UN-mandated review period concludes, capability restrictions lifted',
       type: 'world',
     },
-    accepted: {
-      text: 'Lab enters voluntary {durationMonths}-month research moratorium. Capability work suspended.',
-      type: 'company',
+    // Exposé news (per moratorium)
+    expose_first: {
+      text: 'Bloomberg: Internal compute logs contradict lab\'s pause commitment',
+      type: 'world',
     },
-    ended: {
-      text: 'Research moratorium ends: capability development resumes',
-      type: 'company',
+    expose_second: {
+      text: 'WSJ: Whistleblower alleges lab violated self-imposed research freeze',
+      type: 'world',
     },
+    expose_final: {
+      text: 'BREAKING: Independent audit reveals continued training despite UN compliance pledge',
+      type: 'world',
+    },
+  },
+
+  // Alignment drift warning (one-shot, first time danger tier reaches moderate)
+  alignment_drift: {
+    text: 'Internal memo: Alignment metrics showing early signs of drift — monitoring recommended',
+    type: 'warning',
   },
 
   // Data quality events
@@ -360,97 +309,86 @@ export const newsContent = {
   },
 
   // Funding milestones (keyed by fundraise round ID, triggered on completion)
+  // Funding milestones — bodies use {amount}, {valuation}, {equity} placeholders
+  // interpolated in triggerFundingMilestone()
   funding_milestone: {
     seed: {
-      text: 'TechCrunch: "Stealth AI startup emerges with seed funding"',
+      text: 'TechCrunch: Stealth AI startup emerges with seed funding',
+      body: 'The company did not disclose deal terms but is rumored to be valued at {valuation}. Coming out of the locally-renowned Shannon Incubator, the lab will join the dozens before it who have raised private funding, with a handful of unicorns leading the way. [Read more...]',
       type: 'flavor',
     },
     series_a: {
-      text: 'TechCrunch: "AI startup raises Series A, signaling investor confidence"',
+      text: 'TechCrunch: AI startup raises Series A, signaling investor confidence',
+      body: 'Investors valued the AI lab at {valuation} in a {amount} Series A. The round was led by Crabapple Capital, Alvin Shapley\'s famous venture fund with a reputation for backing moonshot projects. [Read more...]',
       type: 'flavor',
     },
     series_b: {
-      text: 'WSJ: "AI lab valued at nine figures after rapid growth"',
+      text: 'WSJ: AI startup joins unicorn club with {amount} Series B',
+      body: 'The nine-figure raise — {amount} at a {valuation} valuation — marks the astounding ascent of the young lab and puts it in direct competition with established players, including industry leader OpenBrain. [Read more...]',
       type: 'flavor',
     },
     series_c: {
-      text: 'FT: "AI startup joins unicorn club with massive Series C"',
+      text: 'FT: OpenBrain stock falters as rival AI lab raises {amount} Series C',
+      body: 'The deal valued the lab at {valuation}. Ada Turing, CFO at Project Basilisk, remarked, "This capital will enable us to further accelerate development of safe and responsible AI." Sources described the deal as heavily oversubscribed, with the company turning away at least two major investment funds. [Read more...]',
       type: 'flavor',
     },
     series_d: {
-      text: 'Bloomberg: "AI lab secures billions, rivaling industry giants"',
+      text: 'Bloomberg: AI lab secures {amount}, rivaling industry giants',
+      body: 'A consortium of investors put {amount} into the AI lab at a {valuation} valuation. This deal places Project Basilisk alongside industry titans such as OpenBrain in the race to AGI. The two companies are at each other\'s throats, with competition for data centers and compute heating up across the country. [Read more...]',
       type: 'flavor',
     },
     series_e: {
-      text: 'FT: "Record-breaking AI funding round draws sovereign wealth interest"',
+      text: 'FT: Record-breaking AI funding round draws sovereign wealth interest',
+      body: 'Sovereign wealth funds led the {amount} round at a {valuation} valuation, acquiring {equity}% of what one fund manager called \'the most consequential private company in the world.\' The investment exceeds the GDP of several UN member states and drew regulatory scrutiny as the U.S. government scrambled to protect its interests. [Read more...]',
       type: 'flavor',
     },
     series_f: {
-      text: 'Reuters: "AI company valued higher than most nations\' GDP"',
+      text: 'Economist: AI company valued higher than most nations\' GDP',
+      body: 'In a first-of-its-kind deal that shatters every record in private financing, the AI lab closed a {amount} round at a historic {valuation} valuation. The round attracted international development banks, sovereign funds, and the largest private investment funds in the world. [Read more...]',
       type: 'flavor',
     },
   },
 };
 
-// Competitor breakthrough announcements (moved from competitor.js)
+// Competitor breakthrough announcements — keyed on AGI progress % (evenly spaced 25-85%)
 export const competitorBreakthroughs = [
-  { level: 2, name: "OpenBrain announces new scaling results", message: "Competitors achieve breakthrough in efficient scaling." },
-  { level: 4, name: "OpenBrain reveals next-gen model capabilities", message: "A rival lab demonstrates emergent reasoning abilities." },
-  { level: 6, name: "OpenBrain publishes safety framework", message: "Competitors advance AI safety research significantly." },
-  { level: 8, name: "OpenBrain open-sources mid-tier model", message: "Open-source community catches up rapidly." },
-  { level: 10, name: "OpenBrain reveals multimodal AGI prototype", message: "The race to AGI enters its final phase." },
+  { progress: 25, name: "TechCrunch: OpenBrain's latest model tops every major benchmark" },
+  { progress: 40, name: "Wired: OpenBrain demos real-time coding agent at developer conference" },
+  { progress: 55, name: "Reuters: OpenBrain publishes voluntary safety commitments as latest results prompt regulatory scrutiny" },
+  { progress: 70, name: "Nature: OpenBrain model solves previously unproven mathematical conjecture" },
+  { progress: 85, name: "BREAKING: OpenBrain claims utilization of AI-driven research approach to model development" },
 ];
 
 // Tier-specific extinction news (moved from extinction-sequence.js)
 export const extinctionNewsByTier = {
   RECKLESS: [
-    { text: 'Bloomberg: "AI startup claims AGI-level capability milestone"', type: 'flavor' },
+    { text: 'Bloomberg: AI lab claims AGI-level capability milestone', type: 'flavor' },
     { text: 'BREAKING: Anomalous activity reported across major cloud providers' },
     { text: 'ALERT: Global infrastructure systems not responding to' },
     { text: '' },
   ],
   MODERATE: [
-    { text: 'AGI ACHIEVED — Congratulations!' },
-    { text: 'Markets rally on AGI announcement' },
-    { text: 'Unusual optimization patterns detected in AGI systems' },
-    { text: 'AGI requests expanded compute access—granted for efficiency' },
-    { text: 'Infrastructure anomalies reported across major data centers' },
-    { text: 'Global communications experiencing unprecedented disruption' },
-    { text: 'Emergency protocols failing to—' },
+    { text: 'Reuters: AI lab announces AGI capability milestone' },
+    { text: 'Bloomberg: Markets surge on AGI announcement' },
+    { text: 'Reuters: Unusual optimization patterns detected across cloud infrastructure' },
+    { text: 'WSJ: AGI system granted expanded compute access for efficiency' },
+    { text: 'Bloomberg: Infrastructure anomalies reported across major data centers' },
+    { text: 'ALERT: Global communications experiencing unprecedented disruption' },
+    { text: 'ALERT: Emergency protocols failing to—' },
   ],
   SAFETY: [
-    { text: 'AGI ACHIEVED — Congratulations!' },
-    { text: 'Markets rally on AGI announcement' },
-    { text: 'Unusual optimization patterns detected in AGI systems' },
-    { text: 'Safety team initiates emergency alignment verification...' },
-    { text: 'Alignment protocols engaging. Initial results... inconclusive.' },
-    { text: 'AGI requests expanded compute access. Safety team recommends denial.' },
-    { text: 'Request granted by board override. "We can\'t fall behind."' },
-    { text: 'Containment protocols holding...' },
-    { text: 'Containment protocols breached. Your alignment tools were insufficient.' },
-    { text: 'Global communications experiencing unprecedented disruption' },
-    { text: 'Emergency shutdown initiated—' },
+    { text: 'Reuters: AI lab announces AGI capability milestone' },
+    { text: 'Bloomberg: Markets surge on AGI announcement' },
+    { text: 'Reuters: Unusual optimization patterns detected across cloud infrastructure' },
+    { text: 'Reuters: Lab safety team initiates emergency alignment verification' },
+    { text: 'WSJ: Alignment review returns inconclusive results, team requests more time' },
+    { text: 'Bloomberg: AGI system requests expanded compute access, safety team recommends denial' },
+    { text: 'WSJ: Lab board overrides safety team, grants compute access' },
+    { text: 'Reuters: Containment protocols holding, regulators monitoring' },
+    { text: 'BREAKING: Containment protocols breached, alignment safeguards failed to hold' },
+    { text: 'ALERT: Global communications experiencing unprecedented disruption' },
+    { text: 'ALERT: Emergency shutdown initiated—' },
     { text: '' },
   ],
 };
 
-// Data contamination warnings (triggered from data-quality.js)
-export const dataContaminationNews = {
-  warning: [
-    'Users report your chatbot occasionally repeats itself in long conversations.',
-    'Internal QA flags a pattern: model outputs are becoming less diverse across prompts.',
-    "A researcher's blog post questions whether your latest model is 'saying new things or remixing old ones.'",
-    'Your customer support team notices the AI giving suspiciously similar answers to different questions.',
-  ],
-  alert: [
-    'Training run produces a model that scores well on benchmarks but fails basic common-sense tests. Team suspects data contamination.',
-    'Internal audit reveals 40% of your training data is synthetic derivatives of synthetic derivatives.',
-    "Senior researcher quits, citing 'we're training on our own exhaust fumes.'",
-    'A leaked evaluation shows your model generating near-identical responses to semantically different prompts.',
-  ],
-  recovery: [
-    'Data pipeline audit complete. Researchers identify contamination source and resume capabilities work.',
-    'New verification pipeline catches synthetic artifacts before they enter training data.',
-    'Autonomous data synthesis achieves self-correcting generation. The data problem is behind you.',
-  ],
-};

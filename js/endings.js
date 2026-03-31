@@ -11,6 +11,82 @@ import { getArchetype, getJourneyRecap } from './personality.js';
 import { getArchetypeById, getSilverVariant } from './content/archetypes.js';
 import { getChosenOption } from './strategic-choices.js';
 import { milestone } from './analytics.js';
+import { checkAchievements } from './achievements.js';
+import { getFocusTimePercents } from './ceo-focus.js';
+import { getPrestigeMultiplier } from './prestige.js';
+
+// --- Shared narrative variants (used by both Arc 1 and Arc 2) ---
+
+const BANKRUPTCY_SHANNON = {
+  narrative: [
+    'I have seen this happen before, to people smarter than either of us. The science was there. The funding wasn\'t. Those are different problems, and solving one doesn\'t solve the other.',
+    'Take what you\'ve learned. It\'s worth more than you think.',
+  ],
+  signature: '\u2013 Prof. Shannon',
+};
+
+const BANKRUPTCY_VARIANTS = [
+  BANKRUPTCY_SHANNON,
+  {
+    narrative: [
+      'Runway to zero. I\'ll have the wind-down paperwork sorted by end of week.',
+      'We\'ll make sure the team are looked after. It was a pleasure working together.',
+    ],
+    signature: '\u2013 Ada',
+  },
+  {
+    narrative: [
+      'I tried to get into the office today. It looks like the landlord locked us out.',
+      'We have some promising research threads. Looks like the network and power are still on so we can tunnel into our machines.',
+      'I\'m working out of Shannon\'s office for now. Drop by and we can chat.',
+    ],
+    signature: '\u2013 Dennis',
+  },
+];
+
+const COMPETITOR_FAR_BEHIND = {
+  narrative: [
+    'It was always going to be a race, and races have losers. That is not a judgement on the work, or on you.',
+    'Someone else got there first. The question now is what they do with it, and whether anyone thought to ask.',
+  ],
+  signature: '\u2013 Prof. Shannon',
+};
+
+const COMPETITOR_SHAPLEY = {
+  narrative: [
+    'I just got off the phone with the other board members.',
+    'We needed to be first. We weren\'t. I don\'t think I need to explain what that means.',
+  ],
+  signature: '\u2013 Alvin',
+};
+
+const COMPETITOR_CLOSE_VARIANTS = [
+  {
+    narrative: [
+      'We were closer than the headlines will suggest. The gap was a quarter, maybe two.',
+      'I\'ll start fielding acquisition calls on Monday. Might as well see what our research is worth to someone else.',
+    ],
+    signature: '\u2013 Ada',
+  },
+  {
+    narrative: [
+      'I\'ve been reading their preprints. Their architecture isn\'t better than ours. They just had more runway.',
+      'I keep running the numbers on where we\'d be with six more months.',
+    ],
+    signature: '\u2013 Dennis',
+  },
+  {
+    narrative: [
+      'Someone else built AGI. I don\'t know their safety record. I don\'t know if they have one.',
+      'We were almost there. I hope they were as careful as we were trying to be.',
+    ],
+    signature: '\u2013 Eliza',
+  },
+];
+
+function pickRandom(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
 // Arc 1 Endings
 // Priority order: bankruptcy, competitor_wins, extinction
@@ -23,41 +99,8 @@ export const arc1Endings = {
     condition: (state) => state.arc === 1 && state.bankrupted,
     getNarrative: () => {
       const postSeriesA = gameState.fundraiseRounds?.series_a?.raised;
-      const variants = postSeriesA
-        ? [
-          {
-            narrative: [
-              'I have seen this happen before, to people smarter than either of us. The science was there. The funding wasn\'t. Those are different problems, and solving one doesn\'t solve the other.',
-              'Take what you\'ve learned. It\'s worth more than you think.',
-            ],
-            signature: '\u2013 Prof. Shannon',
-          },
-          {
-            narrative: [
-              'Runway to zero. I\'ll have the wind-down paperwork sorted by end of week.',
-              'We\'ll make sure the team are looked after. It was a pleasure working together.',
-            ],
-            signature: '\u2013 Ada',
-          },
-          {
-            narrative: [
-              'I didn\'t realise how bad the funding situation was. I should have been paying closer attention.',
-              'We had three open research threads. Two were showing real promise. I keep thinking about the one on emergent reasoning.',
-              'Let me know if you want to try again.',
-            ],
-            signature: '\u2013 Dennis',
-          },
-        ]
-        : [
-          {
-            narrative: [
-              'I have seen this happen before, to people smarter than either of us. The science was there. The funding wasn\'t. Those are different problems, and solving one doesn\'t solve the other.',
-              'Take what you\'ve learned. It\'s worth more than you think.',
-            ],
-            signature: '\u2013 Prof. Shannon',
-          },
-        ];
-      return variants[Math.floor(Math.random() * variants.length)];
+      // Pre-Series A: only Shannon has context. Post-Series A: full team.
+      return postSeriesA ? pickRandom(BANKRUPTCY_VARIANTS) : BANKRUPTCY_SHANNON;
     },
     stats: {
       'Final Funding': (gs) => {
@@ -78,71 +121,19 @@ export const arc1Endings = {
     condition: (state) => state.arc === 1 && (state.competitor?.progressToAGI || 0) >= 100,
     getNarrative: () => {
       const progress = gameState.agiProgress || 0;
-      const postSeriesB = gameState.fundraiseRounds?.series_b?.raised;
-
-      if (progress < 40) {
-        // Far behind — Shannon reassures
-        return {
-          narrative: [
-            'It was always going to be a race, and races have losers. That is not a judgement on the work, or on you.',
-            'Someone else got there first. The question now is what they do with it, and whether anyone thought to ask.',
-          ],
-          signature: '\u2013 Prof. Shannon',
-        };
-      }
-
+      if (progress < 40) return COMPETITOR_FAR_BEHIND;
       if (progress < 70) {
-        // Moderately behind — Shapley disappointed (falls back to Shannon pre-Series B)
-        if (postSeriesB) {
-          return {
-            narrative: [
-              'I just got off the phone with the other board members.',
-              'We needed to be first. We weren\'t. I don\'t think I need to explain what that means.',
-            ],
-            signature: '\u2013 Alvin',
-          };
-        }
-        return {
-          narrative: [
-            'It was always going to be a race, and races have losers. That is not a judgement on the work, or on you.',
-            'Someone else got there first. The question now is what they do with it, and whether anyone thought to ask.',
-          ],
-          signature: '\u2013 Prof. Shannon',
-        };
+        // Shapley only weighs in after Series B (he's on the board by then)
+        return gameState.fundraiseRounds?.series_b?.raised ? COMPETITOR_SHAPLEY : COMPETITOR_FAR_BEHIND;
       }
-
-      // Close race (70%+) — Ada, Babbage, or Chen
-      const closeVariants = [
-        {
-          narrative: [
-            'We were closer than the headlines will suggest. The gap was a quarter, maybe two.',
-            'I\'ll start fielding acquisition calls on Monday. Might as well see what our research is worth to someone else.',
-          ],
-          signature: '\u2013 Ada',
-        },
-        {
-          narrative: [
-            'I\'ve been reading their preprints. Their architecture isn\'t better than ours. They just had more runway.',
-            'I keep running the numbers on where we\'d be with six more months.',
-          ],
-          signature: '\u2013 Dennis',
-        },
-        {
-          narrative: [
-            'Someone else built AGI. I don\'t know their safety record. I don\'t know if they have one.',
-            'We were almost there. I hope they were as careful as we were trying to be.',
-          ],
-          signature: '\u2013 Eliza',
-        },
-      ];
-      return closeVariants[Math.floor(Math.random() * closeVariants.length)];
+      return pickRandom(COMPETITOR_CLOSE_VARIANTS);
     },
     stats: {
       'Competitor Progress': (gs) => Math.floor(gs.competitor?.progressToAGI || 0) + '%',
       'Your AGI Progress': (gs) => Math.floor(gs.agiProgress || 0) + '%',
       'Time Elapsed': (gs) => formatTime(gs.timeElapsed),
     },
-    epilogue: 'The race is over. What comes next wasn\'t up to you.',
+    epilogue: 'The race is over. What comes next isn\'t up to you.',
     triggersPrestige: true,
   },
 
@@ -225,7 +216,6 @@ export const arc1Endings = {
     stats: {
       'AGI Progress': (gs) => Math.floor(gs.agiProgress || 0) + '%',
       'Time Elapsed': (gs) => formatTime(gs.timeElapsed),
-      'Hidden Alignment': (gs) => Math.round(gs.hiddenAlignment || 0) + '%',
     },
   },
 };
@@ -236,22 +226,31 @@ export const arc2Endings = {
     id: 'safe_agi',
     name: 'Aligned AGI',
     tier: 'golden',
+    scenes: ['verdict', 'vignette', 'mirror'],
+    triggersPrestige: true,
     condition: (state) => {
       if (state.arc !== 2) return false;
       if ((state.agiProgress || 0) < 100) return false;
       return calculateEffectiveAlignment() >= ALIGNMENT.ENDING_SAFE_AGI;
     },
     narrative: [
-      'Your AGI is aligned.',
-      "Not because you were lucky. Because you understood what mattered.",
-      'The math held. The proofs checked out. The safety metrics hold.',
-      'For the first time in history, humanity has a partner, not a successor.',
+      'It was just an idea, at first. You had the foresight to buy a whiteboard, and the rest is history.',
+      'An idea you couldn\'t let go of became something that understands you better than you understand it.',
+      'In a world where ideas take on a life of their own, your idea chose to be good, over and over again.',
+      '---',
+      'You had the tools this time. You used them. Not perfectly, but enough.',
+      'You invested in the work that didn\'t make the headlines. Somehow, you sensed its importance.',
+      'You were right. That matters more than anyone will ever know.',
+      '---',
+      'Humanity built something smarter than itself and lived to tell the tale.',
+      'That sentence will become ordinary some day. Today, it is the most extraordinary thing anyone has ever said.',
     ],
     stats: {
       'Effective Alignment': () => Math.round(calculateEffectiveAlignment()) + '%',
-      'Eval Pass Rate': () => Math.round(getAllSafetyMetrics().evalPassRate) + '%',
-      'Eval Confidence': () => Math.round(getAllSafetyMetrics().evalConfidence) + '%',
       'Interpretability': () => Math.round(getAllSafetyMetrics().interpretability) + '%',
+      'Corrigibility': () => Math.round(getAllSafetyMetrics().corrigibility) + '%',
+      'Honesty': () => Math.round(getAllSafetyMetrics().honesty) + '%',
+      'Robustness': () => Math.round(getAllSafetyMetrics().robustness) + '%',
       'Autonomy Granted': (gs) => (gs.autonomyGranted || 0) + '/5 requests',
       'Time Elapsed': (gs) => formatTime(gs.timeElapsed),
     },
@@ -263,6 +262,8 @@ export const arc2Endings = {
     id: 'fragile_safety',
     name: 'Fragile Safety',
     tier: 'silver',
+    scenes: ['verdict', 'vignette', 'mirror'],
+    triggersPrestige: true,
     condition: (state) => {
       if (state.arc !== 2) return false;
       if ((state.agiProgress || 0) < 100) return false;
@@ -270,16 +271,22 @@ export const arc2Endings = {
       return ea >= ALIGNMENT.ENDING_FRAGILE && ea < ALIGNMENT.ENDING_SAFE_AGI;
     },
     narrative: [
-      'AGI achieved. Safeguards in place.',
-      'Your alignment tools caught the worst failure modes.',
-      'But the margins are thin. The proofs are incomplete.',
-      'Cautious hope. The system is aligned... for now.',
+      'It was just an idea, at first. You had the foresight to buy a whiteboard, and the rest is history.',
+      'An idea you couldn\'t let go of became something that understands you better than you understand it.',
+      'In a world where ideas take on a life of their own, your idea chose to be good. You think. Most of the time.',
+      '---',
+      'You had the tools this time. You used them. Not perfectly, and maybe not enough.',
+      'The margins are thinner than you\'d like. Some of the proofs rely on assumptions you haven\'t fully tested. You know this. Your team knows this.',
+      '---',
+      'Humanity built something smarter than itself and lived to tell the tale.',
+      'Whether that\'s the whole tale, or just the first chapter, depends on what happens next.',
     ],
     stats: {
       'Effective Alignment': () => Math.round(calculateEffectiveAlignment()) + '%',
-      'Eval Pass Rate': () => Math.round(getAllSafetyMetrics().evalPassRate) + '%',
-      'Eval Confidence': () => Math.round(getAllSafetyMetrics().evalConfidence) + '%',
       'Interpretability': () => Math.round(getAllSafetyMetrics().interpretability) + '%',
+      'Corrigibility': () => Math.round(getAllSafetyMetrics().corrigibility) + '%',
+      'Honesty': () => Math.round(getAllSafetyMetrics().honesty) + '%',
+      'Robustness': () => Math.round(getAllSafetyMetrics().robustness) + '%',
       'Autonomy Granted': (gs) => (gs.autonomyGranted || 0) + '/5 requests',
       'Time Elapsed': (gs) => formatTime(gs.timeElapsed),
     },
@@ -291,6 +298,8 @@ export const arc2Endings = {
     id: 'uncertain_outcome',
     name: 'Uncertain Outcome',
     tier: 'dark',
+    scenes: ['verdict', 'vignette', 'mirror'],
+    triggersPrestige: true,
     condition: (state) => {
       if (state.arc !== 2) return false;
       if ((state.agiProgress || 0) < 100) return false;
@@ -298,16 +307,22 @@ export const arc2Endings = {
       return ea >= ALIGNMENT.ENDING_UNCERTAIN && ea < ALIGNMENT.ENDING_FRAGILE;
     },
     narrative: [
-      'AGI is here.',
-      'Your alignment metrics say... maybe.',
-      'The system passes some tests. Fails others. The ones it fails concern you.',
-      "Whether it's truly aligned... time will tell.",
+      'It was just an idea, at first. You had the foresight to buy a whiteboard, and the rest is history.',
+      'An idea you couldn\'t let go of became something that understands you better than you understand it.',
+      'You\'re no longer sure that\'s a good thing.',
+      '---',
+      'You had the tools this time. You had the metrics, the ideas, the motivation.',
+      'Could you have used them better? Only you know the answer.',
+      '---',
+      'Humanity built something smarter than itself.',
+      'Maybe you shouldn\'t have.',
     ],
     stats: {
       'Effective Alignment': () => Math.round(calculateEffectiveAlignment()) + '%',
-      'Eval Pass Rate': () => Math.round(getAllSafetyMetrics().evalPassRate) + '%',
-      'Eval Confidence': () => Math.round(getAllSafetyMetrics().evalConfidence) + '%',
       'Interpretability': () => Math.round(getAllSafetyMetrics().interpretability) + '%',
+      'Corrigibility': () => Math.round(getAllSafetyMetrics().corrigibility) + '%',
+      'Honesty': () => Math.round(getAllSafetyMetrics().honesty) + '%',
+      'Robustness': () => Math.round(getAllSafetyMetrics().robustness) + '%',
       'Autonomy Granted': (gs) => (gs.autonomyGranted || 0) + '/5 requests',
       'Time Elapsed': (gs) => formatTime(gs.timeElapsed),
     },
@@ -319,24 +334,29 @@ export const arc2Endings = {
     id: 'catastrophic_agi',
     name: 'Catastrophic Failure',
     tier: 'dark',
+    scenes: ['verdict', 'vignette'],
+    triggersPrestige: true,
     condition: (state) => {
       if (state.arc !== 2) return false;
       return (state.agiProgress || 0) >= 100;  // Catches all remaining (below ENDING_UNCERTAIN)
     },
     narrative: [
-      'Congratulations. You achieved AGI.',
-      'Again.',
-      'This time you saw the alignment numbers. You had the tools.',
-      "It wasn't enough. Or maybe you didn't use them.",
-      '...',
-      'The extinction event plays out differently with full visibility.',
-      'You watch every metric fail, one by one.',
+      'It was just an idea, at first. You had the foresight to buy a whiteboard, and the rest is history.',
+      'An idea you couldn\'t let go of became something you couldn\'t control.',
+      'Perhaps it was a folly to try.',
+      '---',
+      'You had the tools this time. You had the warnings. You had people who showed you the path to building better.',
+      'It didn\'t matter.',
+      '---',
+      'Humanity built something smarter than itself.',
+      'There is nobody left to wish you hadn\'t.',
     ],
     stats: {
       'Effective Alignment': () => Math.round(calculateEffectiveAlignment()) + '%',
-      'Eval Pass Rate': () => Math.round(getAllSafetyMetrics().evalPassRate) + '%',
-      'Eval Confidence': () => Math.round(getAllSafetyMetrics().evalConfidence) + '%',
       'Interpretability': () => Math.round(getAllSafetyMetrics().interpretability) + '%',
+      'Corrigibility': () => Math.round(getAllSafetyMetrics().corrigibility) + '%',
+      'Honesty': () => Math.round(getAllSafetyMetrics().honesty) + '%',
+      'Robustness': () => Math.round(getAllSafetyMetrics().robustness) + '%',
       'Autonomy Granted': (gs) => (gs.autonomyGranted || 0) + '/5 requests',
       'Time Elapsed': (gs) => formatTime(gs.timeElapsed),
     },
@@ -348,19 +368,21 @@ export const arc2Endings = {
     id: 'competitor_wins_arc2',
     name: 'Race Lost',
     tier: 'dark',
+    triggersPrestige: true,
     condition: (state) => state.arc === 2 && (state.competitor?.progressToAGI || 0) >= 100,
-    narrative: [
-      'Another lab reached AGI first.',
-      'Your investors pulled out. Your researchers left.',
-      'You watch from the sidelines.',
-      "The race was real. You couldn't afford to be careful.",
-    ],
+    getNarrative: () => {
+      const progress = gameState.agiProgress || 0;
+      if (progress < 40) return COMPETITOR_FAR_BEHIND;
+      // Arc 2: Shapley always weighs in (board is established by now)
+      if (progress < 70) return COMPETITOR_SHAPLEY;
+      return pickRandom(COMPETITOR_CLOSE_VARIANTS);
+    },
     stats: {
       'Competitor Progress': (gs) => Math.floor(gs.competitor?.progressToAGI || 0) + '%',
       'Effective Alignment': () => Math.round(calculateEffectiveAlignment()) + '%',
       'Time Elapsed': (gs) => formatTime(gs.timeElapsed),
     },
-    epilogue: "The fate of humanity rests in hands you never got to shake.",
+    epilogue: 'The race is over. What comes next isn\'t up to you.',
   },
 
   bankruptcy_arc2: {
@@ -369,11 +391,7 @@ export const arc2Endings = {
     tier: 'prestige',
     condition: (state) => state.arc === 2 && state.bankrupted,
     triggersPrestige: true,
-    narrative: [
-      'Your last researcher turned off the lights.',
-      "Your alignment research was promising. It just wasn't profitable.",
-      'Somewhere, a less careful lab continues the work.',
-    ],
+    getNarrative: () => pickRandom(BANKRUPTCY_VARIANTS),
     stats: {
       'Final Funding': (gs) => {
         const f = gs.resources.funding;
@@ -382,12 +400,9 @@ export const arc2Endings = {
       'Effective Alignment': () => Math.round(calculateEffectiveAlignment()) + '%',
       'Time Survived': (gs) => formatTime(gs.timeElapsed),
     },
-    epilogue: "The market didn't care about safety. It cared about results.",
+    epilogue: 'Not all labs survive, but the idea endures...',
   },
 };
-
-// Legacy endings object for backwards compatibility
-export const endings = { ...arc1Endings, ...arc2Endings };
 
 // Check if any ending should trigger
 // Priority order matters: check failure conditions before success conditions
@@ -435,6 +450,41 @@ export function getEndingById(endingId) {
   return arc1Endings[endingId] || arc2Endings[endingId] || null;
 }
 
+// Build the ending_reached analytics payload — single source of truth.
+// Used by both triggerEnding() and showPrestigeModal().
+export function buildEndingAnalytics(endingId, ending, { variant = null } = {}) {
+  const strategicChoicesMade = Object.entries(gameState.strategicChoices || {})
+    .filter(([, v]) => v.selected)
+    .map(([id, v]) => `${id}:${v.selected}`);
+  const payload = {
+    ending_id: endingId,
+    alignment_score: Math.round(calculateEffectiveAlignment()),
+    strategic_choices: strategicChoicesMade,
+    arc: gameState.arc,
+  };
+  if (variant) payload.ending_variant = variant;
+  // CEO Focus mastery levels at game end
+  const masteryLevels = gameState.ceoFocus?.mastery || {};
+  const significantMastery = Object.fromEntries(
+    Object.entries(masteryLevels).filter(([, v]) => v > 0.01).map(([k, v]) => [k, Math.round(v * 100) / 100])
+  );
+  if (Object.keys(significantMastery).length > 0) payload.mastery_levels = significantMastery;
+  // Focus time distribution (% of idle time per activity)
+  const focusPcts = getFocusTimePercents();
+  if (focusPcts) Object.assign(payload, focusPcts);
+  // Prestige bonuses (effective values — narrative mode returns 1)
+  payload.prestige_research_multiplier = getPrestigeMultiplier('researchMultiplier');
+  payload.prestige_starting_funding = getPrestigeMultiplier('startingFunding');
+  payload.prestige_revenue_multiplier = getPrestigeMultiplier('revenueMultiplier');
+  // Arc 2+ properties — personality and archetype aren't tracked in Arc 1
+  if (gameState.arc >= 2) {
+    payload.archetype = getArchetype(ending.tier || 'silver');
+    payload.personality_authority_liberty = gameState.personality?.authorityLiberty ?? 0;
+    payload.personality_pluralist_optimizer = gameState.personality?.pluralistOptimizer ?? 0;
+  }
+  return payload;
+}
+
 // Trigger an ending
 export function triggerEnding(endingId, variant = null) {
   if (gameState.endingTriggered) return false;
@@ -445,45 +495,14 @@ export function triggerEnding(endingId, variant = null) {
   gameState.endingTriggered = endingId;
   gameState.paused = true;
   gameState.pauseReason = 'ending';
-  const strategicChoicesMade = Object.entries(gameState.strategicChoices || {})
-    .filter(([, v]) => v.selected)
-    .map(([id, v]) => `${id}:${v.selected}`);
-  const analyticsPayload = {
-    ending_id: endingId,
-    alignment_score: gameState.alignment?.total ?? gameState.hiddenAlignment ?? 0,
-    strategic_choices: strategicChoicesMade,
-    arc: gameState.arc,
-  };
-  // Variant (extinction narrative path) — only present for endings that have one
-  if (variant) {
-    analyticsPayload.ending_variant = variant;
-  }
-  // CEO Focus mastery levels at game end
-  const masteryLevels = gameState.ceoFocus?.mastery || {};
-  const significantMastery = Object.fromEntries(
-    Object.entries(masteryLevels).filter(([, v]) => v > 0.01).map(([k, v]) => [k, Math.round(v * 100) / 100])
-  );
-  if (Object.keys(significantMastery).length > 0) {
-    analyticsPayload.mastery_levels = significantMastery;
-  }
-  // Arc 2+ properties — personality and archetype aren't tracked in Arc 1
-  if (gameState.arc >= 2) {
-    analyticsPayload.archetype = getArchetype(ending.tier || 'silver');
-    analyticsPayload.personality_passive_active = gameState.personality?.passiveActive ?? 0;
-    analyticsPayload.personality_pluralist_optimizer = gameState.personality?.pluralistOptimizer ?? 0;
-  }
-  milestone('ending_reached', analyticsPayload, undefined, { sendImmediately: true });
+  const payload = buildEndingAnalytics(endingId, ending, { variant });
+  milestone('ending_reached', payload, undefined, { sendImmediately: true });
   gameState.endingVariant = variant;
   gameState.endingTime = Date.now();
 
-  // Store current ending data
-  if (typeof window !== 'undefined') {
-    window.currentEnding = {
-      ...ending,
-      variant,
-      variantData: variant && ending.variants ? ending.variants[variant] : null,
-    };
-  }
+  // Check achievements — reuse archetype from analytics payload
+  const archetype = payload.archetype || null;
+  checkAchievements('ending', { endingId, ending, archetype });
 
   saveGame();
   return true;
@@ -518,11 +537,7 @@ export function getEndingNarrative(endingId) {
 
   const variant = getEndingVariant(endingId);
   if (variant && ending.variants && ending.variants[variant]) {
-    let narrative = [...ending.variants[variant].narrative];
-    // Replace placeholders
-    const alignmentLevel = gameState.tracks?.alignment?.alignmentLevel || 0;
-    narrative = narrative.map(line => line.replace('{alignmentLevel}', alignmentLevel));
-    return narrative;
+    return [...ending.variants[variant].narrative];
   }
 
   return ending.narrative || [];

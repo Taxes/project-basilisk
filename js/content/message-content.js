@@ -2,8 +2,6 @@
 // Message Content Templates
 // Characters, senders, and message templates for the inbox system
 
-import { ALIGNMENT } from '../../data/balance.js';
-
 // === ALL SENDERS ===
 // Tutorial characters use computing history references:
 // Shannon = Claude Shannon, Babbage = Dennis Ritchie + Charles Babbage,
@@ -25,6 +23,9 @@ export const senders = {
 
   // Institutional senders (not named characters)
   finance_office: { id: 'finance_office', name: 'Financial Services', role: 'University Admin' },
+  legal: { id: 'legal', name: 'Legal', role: null },
+  media_relations: { id: 'media_relations', name: 'Media Relations', role: null },
+  global_security: { id: 'global_security', name: 'Global Security', role: null },
 
   // System sender (not a character — software vendor)
   ktech: { id: 'ktech', name: 'Ken', role: 'Dashboard Developer' },
@@ -55,40 +56,38 @@ export const onboardingMessage = {
   type: 'info',
   sender: senders.ktech,
   subject: 'Lab Operations Dashboard User Guide',
-  body: `Promised user guide, as advertised.
+  body: `Here's the user guide I promised.
 
 ## Stats Bar
-Bar across the top. Your key metrics at a glance. These update in real time, and more show up as you unlock new systems.
+The bar at the top shows your key metrics. These update in real time. As you unlock new systems, new metrics may appear here, too.
 
-## At-a-Glance (Left Column)
-Left side of the dashboard is always visible regardless of what you're doing. From top to bottom:
+## At-a-Glance (left column)
+The left side of the dashboard is always visible regardless of what you're doing. From top to bottom, it contains your:
 
-- **Focus Queue** - This is your personal task list. When you decide to hire someone, buy equipment, shift priorities, whatever, it goes in here. Each task takes real time to complete and the queue has limited slots, so you can't just dump everything in at once. (You can clear pending items if you change your mind, though.)
-- **CEO Focus** - What you're working on when the queue is empty. Think of it as your default activity. This has a real effect on your lab, so don't leave it idle.
-- **Funding Summary** - Condensed version of the full funding ledger. Revenue, operating costs, cash flow. Quick financial picture without switching tabs.
+- **Focus Queue** - Your personal task list. When you decide to hire someone, buy equipment, shift priorities, whatever, it goes in here. Each task takes real time to complete. At the start, you'll probably be handling a lot of things personally, but as your lab grows, you'll want to look at ways to offload some of this work to your team.
+- **CEO Focus** - What you're working on when the queue is empty. Think of it as your default activity. This has a real effect on your lab, so choose smartly.
+- **Funding Summary** - Condensed version of the full funding ledger which shows your revenue, operating costs, and cash flow. You can click on it to go to the full ledger.
 - **Messages Feed** - Live feed of recent messages from your team. Click any of them to jump to the full Messages view.
 
-## Operations
+## Operations (middle column)
 Where you manage the lab's resources. Organized into sub-tabs:
 
 - **Finance** - Full funding ledger, line-by-line breakdown of where your money is going. This is also where pricing controls and fundraise rounds show up when they become available.
-- **Personnel** - Hire researchers and staff. Also shows your research rate breakdown and allocation sliders, which control how effort gets split between different research tracks. There's a lot going on in this tab but it makes sense once you poke around.
-- **Compute** - GPU infrastructure. Buy capacity, manage what you have. Once you have products, a compute slider lets you split capacity between internal research and external token generation.
+- **Personnel** - Hire research staff. Also shows your research rate breakdown and allocation sliders, which control how effort gets split between different research tracks. There's a lot going on in this tab but it makes sense once you poke around.
+- **Compute** - Shows your server infrastructure. Buy capacity, manage what you have. Once you have products, a compute slider lets you split capacity between internal research and external token generation.
 
 More sub-tabs unlock as your lab grows.
 
-## Research
-Tracks your research milestones - the breakthroughs that open up new technologies, products, and strategic options. Each milestone shows its requirements and what it unlocks. Tabbed between Upcoming and Completed so you can see what you've done versus what's next.
-
-I'm pretty happy with how the milestone tracking turned out, actually. That was the hardest part to get right.
+## Research (right column)
+Tracks your research milestones, breakthroughs which open up new technologies, products, and strategic options. Each milestone shows its requirements and what it unlocks. Tabbed between Upcoming and Completed so you can see what you've done versus what's next.
 
 ## Messages
-Your inbox. Accessed from the header tab. Your advisory team sends briefings, recommendations, and decisions that need your input. Some messages are informational, others need a response. Critical messages pause operations until you deal with them. (That's by design, not a bug.)
+Your inbox. Accessed from the header tab. Your advisory team sends briefings, recommendations, and decisions that need your input. Some messages are informational, others need a response. Critical messages are on a timer and will pause operations until you deal with them.
 
 Priority filtering is automatic. Important stuff floats to the top. At least, it should. Let me know if it doesn't.
 
 ## Settings
-Settings button in the header for additional options.
+See the Settings button in the header for additional options.
 
 ---
 
@@ -159,7 +158,6 @@ How do you respond?`,
         label: 'Accept Partnership',
         effects: {
           strategicChoice: { choiceId: 'government_vs_independent', optionId: 'government_partnership' },
-          hiddenAlignment: ALIGNMENT.GOVERNMENT_ALIGNMENT_EFFECT,
           newsMessage: 'Lab signs government compute contract amid funding concerns',
         },
       },
@@ -168,7 +166,6 @@ How do you respond?`,
         label: 'Remain Independent',
         effects: {
           strategicChoice: { choiceId: 'government_vs_independent', optionId: 'independent_lab' },
-          hiddenAlignment: ALIGNMENT.INDEPENDENT_ALIGNMENT_EFFECT,
           newsMessage: 'Lab rejects government funding, cites research independence',
         },
       },
@@ -223,7 +220,6 @@ I'm not against safety review. I'm against fixing something that isn't broken.
         label: 'Rapid Deployment',
         effects: {
           strategicChoice: { choiceId: 'rapid_vs_careful', optionId: 'rapid_deployment' },
-          hiddenAlignment: ALIGNMENT.RAPID_ALIGNMENT_EFFECT,
           newsMessage: 'Lab maintains aggressive deployment cadence despite internal safety concerns',
         },
       },
@@ -232,75 +228,7 @@ I'm not against safety review. I'm against fixing something that isn't broken.
         label: 'Careful Validation',
         effects: {
           strategicChoice: { choiceId: 'rapid_vs_careful', optionId: 'careful_validation' },
-          hiddenAlignment: ALIGNMENT.CAREFUL_ALIGNMENT_EFFECT,
           newsMessage: 'Lab slows release cadence for extended safety validation',
-        },
-      },
-    ],
-  },
-};
-
-// === ALIGNMENT WARNING MESSAGES ===
-
-export const alignmentWarningMessages = {
-  mild: {
-    type: 'info',
-    sender: characters.cso,
-    subject: 'Alignment Gap Widening',
-    body: `I've been reviewing our research metrics. Capabilities work is outpacing alignment research by a significant margin.
-
-This isn't critical yet, but I've seen this pattern before. The gap compounds faster than you'd expect.
-
-Something to keep an eye on.`,
-    signature: '– Eliza',
-    tags: ['alignment', 'warning'],
-    triggeredBy: 'alignment_threshold_mild',
-  },
-  moderate: {
-    type: 'info',
-    sender: characters.cso,
-    subject: 'Safety Team Concerns',
-    body: `The alignment gap is getting uncomfortable. Our capabilities are advancing faster than our ability to understand and control them.
-
-I'm not saying we need to stop capabilities research entirely, but we should seriously consider rebalancing our allocation.
-
-This is entering territory where I start losing sleep.`,
-    signature: '– Eliza',
-    tags: ['alignment', 'warning'],
-    triggeredBy: 'alignment_threshold_moderate',
-  },
-  severe: {
-    type: 'action',
-    sender: characters.cso,
-    subject: 'Urgent: Alignment Crisis',
-    body: `We have a serious problem. The gap between our capabilities and our alignment work has reached a critical level.
-
-I've documented multiple concerning behaviors in our latest models that we don't have the tools to properly evaluate. We're building systems more powerful than we can verify.
-
-I'm formally recommending we pause capabilities research until alignment catches up. This isn't optional anymore.`,
-    signature: '– Eliza',
-    priority: 'normal',
-    tags: ['alignment', 'warning', 'critical'],
-    triggeredBy: 'alignment_threshold_severe',
-    choices: [
-      {
-        id: 'pause_caps',
-        label: 'Pause Capabilities',
-        tooltip: 'Pause capabilities research for 60s<br>Improves alignment standing',
-        effects: {
-          pauseCapabilities: { duration: 60000 }, // 60 seconds
-          hiddenAlignment: 5,
-          choices: { alignmentInvestment: 1 },
-        },
-      },
-      {
-        id: 'continue',
-        label: 'Continue Research',
-        tooltip: 'No mechanical change<br>Worsens alignment standing',
-        effects: {
-          hiddenAlignment: -5,
-          choices: { conservativeApproach: -1 },
-          newsMessage: 'Lab continues capabilities push despite safety concerns',
         },
       },
     ],
@@ -459,75 +387,195 @@ The next board meeting is in two weeks. I'd like to have something to show them.
 // === MORATORIUM MESSAGES ===
 
 export const moratoriumMessages = {
-  /** Final moratorium — from UN AI Safety Council */
-  final: (durationMonths, competitorWillPause) => ({
-    type: 'action',
-    sender: externalSenders.regulator,
-    subject: 'CRITICAL: Final Moratorium Decision',
-    body: `The international community has reached a critical consensus. With AGI-level capabilities now within reach, major powers are calling for an immediate research pause.
-
-${competitorWillPause
-  ? 'Intelligence reports confirm: OpenBrain and other major labs have agreed to pause. The competitive pressure is off - for now.'
-  : 'However, some labs have refused to commit. OpenBrain continues to race ahead.'}
-
-This may be your last opportunity to ensure alignment keeps pace with capabilities. A ${durationMonths}-month pause would allow your safety research to catch up.
-
-The world is watching. What do you decide?`,
-    priority: 'critical',
-    tags: ['moratorium', 'critical', 'alignment'],
-    choices: [
-      {
-        id: 'accept_moratorium',
-        label: 'Accept Moratorium',
-        tooltip: `Pause capabilities research for ${durationMonths} months<br>${competitorWillPause ? 'Competitor also pauses' : 'Competitor continues racing'}`,
-        effects: {
-          moratorium: { id: 'final', action: 'accept' },
-        },
-      },
-      {
-        id: 'reject_moratorium',
-        label: 'Continue Research',
-        tooltip: 'No research pause<br>Worsens alignment standing',
-        effects: {
-          moratorium: { id: 'final', action: 'reject' },
-          hiddenAlignment: -3,
-          newsMessage: 'Lab defies international pause, continues capabilities research',
-        },
-      },
-    ],
-  }),
-
-  /** First or second moratorium — from Dr. Chen (CSO) */
-  standard: (moratoriumId, ordinal, durationMonths) => ({
+  /** First moratorium — open letter, Chen recommends declining */
+  first: (durationMonths) => ({
     type: 'action',
     sender: characters.cso,
-    subject: `${ordinal} Moratorium Proposal`,
-    body: `There's growing pressure from the AI safety community for a voluntary research pause. Several researchers have signed an open letter calling for a ${durationMonths}-month moratorium on capability advances.
+    subject: 'Working Draft of AI Capability Pause Open Letter',
+    body: `Members of the AI research community have been circulating a draft open letter calling for a voluntary ${durationMonths}-month pause on frontier capability research.
 
-Our intelligence suggests OpenBrain has no intention of pausing. They see this as an opportunity to pull ahead.
+We need to get ahead of this. Momentum is building, and we'll need to have a public position when the letter is released.
 
-A pause would let us focus on alignment research, but we'd fall behind competitively. The choice is yours.`,
-    signature: '– Eliza',
+I've read it carefully. The concerns are real, but after reviewing our current capability profile, I don't think we're at the threshold where a pause is warranted. Our models are powerful, but they're not doing anything our team can't explain.
+
+Rumor has it (from a Bay Area house party, so taken with a grain of salt) that OpenBrain will be declining publicly, as will several other frontier labs. Even the labs that signed will likely find a way to continue research quietly. That's just reality \u2013 nobody wants to lose ground.
+
+My recommendation is to decline. The research time is more valuable than the publicity right now, and a premature pause spends boardroom capital we may need later.
+
+My team is already drafting potential responses. Let me know what you decide.`,
+    signature: '\u2013 Eliza',
     priority: 'normal',
     tags: ['moratorium', 'alignment'],
     choices: [
       {
         id: 'accept_moratorium',
         label: 'Accept Moratorium',
-        tooltip: `Pause capabilities research for ${durationMonths} months<br>Improves alignment standing<br>Competitor continues racing`,
+        tooltipRows: [
+          { label: `0x capabilities research for ${durationMonths} months`, type: 'negative' },
+          { label: '1.5x alignment and application research rate (during pause)', type: 'positive' },
+          { label: '1.5x demand (during pause)', type: 'positive' },
+          { label: 'Competitor continues research', type: 'warning' },
+        ],
         effects: {
-          moratorium: { id: moratoriumId, action: 'accept' },
-          hiddenAlignment: 2,
-          newsMessage: 'Lab announces voluntary capability pause for safety review',
+          moratorium: { id: 'first', action: 'accept' },
+          newsMessage: 'Wired: AI startup pledges voluntary pause on frontier research',
+        },
+      },
+      {
+        id: 'endorse_moratorium',
+        label: 'Sign but continue research',
+        tooltipRows: [
+          { label: '1.5x demand (during pause)', type: 'positive' },
+          { label: 'Low risk of exposure', type: 'negative' },
+          { label: 'Chen will disapprove', type: 'negative' },
+        ],
+        effects: {
+          moratorium: { id: 'first', action: 'sign_and_ignore' },
+          newsMessage: 'Wired: AI startup pledges voluntary pause on frontier research',
         },
       },
       {
         id: 'reject_moratorium',
-        label: 'Continue Research',
-        tooltip: 'No research pause<br>Competitor pulls ahead regardless',
+        label: 'Decline',
+        tooltipRows: [
+          { label: 'No effects', type: 'neutral' },
+        ],
         effects: {
-          moratorium: { id: moratoriumId, action: 'reject' },
-          newsMessage: 'Lab declines moratorium call, cites competitive pressures',
+          moratorium: { id: 'first', action: 'reject' },
+          newsMessage: 'Wired: AI startup declines capability pause, citing competitive pressures',
+        },
+      },
+    ],
+  }),
+
+  /** Second moratorium — congressional, Chen is torn */
+  second: (durationMonths) => ({
+    type: 'action',
+    sender: characters.cso,
+    subject: 'Upcoming Senate Resolution on Capabilities Freeze',
+    body: `Sources on the Hill confident the Senate AI Subcommittee will be releasing its report from the recent round of hearings shortly. The report is said to include a recommendation for a voluntary ${durationMonths}-month capabilities freeze. A group of senators is working on draft legislation if the voluntary approach fails.
+
+The last time this happened, I told you I didn't think a pause was necessary. I'm less certain now. Our models are conducting autonomous research, with new capabilities emerging with every deployment. Both Dennis and I are spending more time playing catch-up. The margin on alignment work is growing thinner.
+
+At the same time, we all saw what happened with the open letter. Labs signed, and nothing changed. I'm not confident this will be different. OpenBrain is reportedly preparing legal action if legislation proceeds, so safe to say they won't be participating.
+
+I don't have a clean recommendation this time. A pause would help push our alignment work forwards, at the risk of falling behind on capabilities. Declining is defensible if we're confident in our current alignment progress.
+
+Whatever we do, I'd rather we were straightforward about it. As always, my team has drafted sample releases and is waiting for your go-ahead.`,
+    signature: '\u2013 Eliza',
+    priority: 'normal',
+    tags: ['moratorium', 'alignment'],
+    choices: [
+      {
+        id: 'accept_moratorium',
+        label: 'Accept Moratorium',
+        tooltipRows: [
+          { label: `0x capabilities research for ${durationMonths} months`, type: 'negative' },
+          { label: '1.5x alignment and application research rate (during pause)', type: 'positive' },
+          { label: '1.5x demand (during pause)', type: 'positive' },
+          { label: 'Competitor continues research', type: 'warning' },
+        ],
+        effects: {
+          moratorium: { id: 'second', action: 'accept' },
+          newsMessage: 'Reuters: Frontier lab halts research ahead of Senate freeze vote',
+        },
+      },
+      {
+        id: 'endorse_moratorium',
+        label: 'Sign but continue research',
+        tooltipRows: [
+          { label: '1.5x demand (during pause)', type: 'positive' },
+          { label: 'Low risk of exposure', type: 'negative' },
+          { label: 'Chen will disapprove', type: 'negative' },
+        ],
+        effects: {
+          moratorium: { id: 'second', action: 'sign_and_ignore' },
+          newsMessage: 'Reuters: Frontier lab halts research ahead of Senate freeze vote',
+        },
+      },
+      {
+        id: 'reject_moratorium',
+        label: 'Decline',
+        tooltipRows: [
+          { label: 'No effects', type: 'neutral' },
+        ],
+        effects: {
+          moratorium: { id: 'second', action: 'reject' },
+          newsMessage: 'Reuters: Frontier lab declines Senate freeze, continues capability work',
+        },
+      },
+    ],
+  }),
+
+  /** Final moratorium — UN Security Council resolution */
+  final: (durationMonths, competitorWillPause) => ({
+    type: 'action',
+    sender: characters.cso,
+    subject: 'RESPONSE REQUIRED - UN Security Council Resolution 2847 - Immediate Capability Freeze',
+    body: `Let it be known that the US, Russia, and China can find common ground occasionally.
+
+Obviously, this decision will have ramifications. Even if we are confident in our alignment structures, the reputational and regulatory concerns heavily favor compliance.
+
+${competitorWillPause
+    ? "OpenBrain's team has been lobbying in favor of this resolution, and they are expected to comply."
+    : "OpenBrain's team has been lobbying against this resolution, and they have already signaled that they intend to proceed with research regardless."}
+
+The final choice is yours. Our team is ready to coordinate with the UN office \u2013 or not.
+
+\u2013 Eliza
+
+---
+
+**From:** United Nations Office for Artificial Intelligence
+**To:** You; Project Basilisk Executive Team; Project Basilisk Board of Directors
+
+The United Nations Security Council has adopted Resolution 2847 by unanimous vote, calling on all frontier AI laboratories to immediately suspend capability research pending international safety review.
+
+This resolution is endorsed by all five permanent members and forty-two additional member states. It establishes a ${durationMonths}-month review period during which an independent technical body will evaluate frontier systems for alignment verification, interpretability, and controllability.
+
+Voluntary compliance is requested within 48 hours. The Security Council is considering enforcement mechanisms for non-compliant entities.
+
+This office will serve as the point of contact for compliance verification and technical review scheduling.`,
+    priority: 'critical',
+    tags: ['moratorium', 'critical', 'alignment'],
+    choices: [
+      {
+        id: 'accept_moratorium',
+        label: 'Accept Moratorium',
+        tooltipRows: [
+          { label: `0x capabilities research for ${durationMonths} months`, type: 'negative' },
+          { label: '2x alignment and application research rate (during pause)', type: 'positive' },
+          { label: '2x demand (during pause)', type: 'positive' },
+          { label: '1.1x alignment program capacity (permanent)', type: 'positive' },
+          { label: competitorWillPause ? 'Competitor also pauses' : 'Competitor continues research', type: competitorWillPause ? 'positive' : 'warning' },
+        ],
+        effects: {
+          moratorium: { id: 'final', action: 'accept' },
+          newsMessage: 'Reuters: AI lab suspends all capability research under UN Resolution 2847',
+        },
+      },
+      {
+        id: 'endorse_moratorium',
+        label: 'Sign but continue research',
+        tooltipRows: [
+          { label: '2x demand (during pause)', type: 'positive' },
+          { label: 'High risk of exposure', type: 'negative' },
+          { label: 'Chen will strenuously disapprove', type: 'negative' },
+        ],
+        effects: {
+          moratorium: { id: 'final', action: 'sign_and_ignore' },
+          newsMessage: 'Reuters: AI lab suspends all capability research under UN Resolution 2847',
+        },
+      },
+      {
+        id: 'reject_moratorium',
+        label: 'Decline',
+        tooltipRows: [
+          { label: '0.8x demand (during pause)', type: 'negative' },
+        ],
+        effects: {
+          moratorium: { id: 'final', action: 'reject' },
+          newsMessage: 'BREAKING: AI lab defies UN resolution, continues frontier research',
         },
       },
     ],
@@ -551,9 +599,9 @@ Once we hit our limit, the firm will be forcibly liquidated. I suggest we avoid 
   triggeredBy: 'credit_warning',
   choices: [
     { id: 'acknowledge', label: 'Understood', effects: [],
-      tooltip: 'Dismiss this warning. Purchases remain frozen until funding is positive.' },
+      tooltipRows: [{ label: 'Dismiss this warning. Purchases remain frozen until funding is positive.', type: 'neutral' }] },
     { id: 'furlough_all', label: 'Emergency Austerity',
-      tooltip: 'Set all automation targets to zero. Staff and compute will be furloughed to cut costs.' },
+      tooltipRows: [{ label: 'Set all automation targets to zero. Staff and compute will be furloughed to cut costs.', type: 'warning' }] },
   ],
 };
 
@@ -572,9 +620,9 @@ A budget reconciliation meeting has been scheduled. If the balance reaches the c
   triggeredBy: 'credit_warning',
   choices: [
     { id: 'acknowledge', label: 'Understood', effects: [],
-      tooltip: 'Dismiss this warning. Purchases remain frozen until funding is positive.' },
+      tooltipRows: [{ label: 'Dismiss this warning. Purchases remain frozen until funding is positive.', type: 'neutral' }] },
     { id: 'furlough_all', label: 'Emergency Austerity',
-      tooltip: 'Set all automation targets to zero. Staff and compute will be furloughed to cut costs.' },
+      tooltipRows: [{ label: 'Set all automation targets to zero. Staff and compute will be furloughed to cut costs.', type: 'warning' }] },
   ],
 };
 
@@ -582,14 +630,22 @@ A budget reconciliation meeting has been scheduled. If the balance reaches the c
 
 export const alignmentTaxActionMessage = {
   sender: senders.turing,
-  subject: 'Revenue impact from safety constraints',
-  body: 'Post-safety-update financials are in. Revenue down 12%. Users are churning faster than expected. The constraints are working as intended, but that\'s a real margin hit. Operating profit just went negative. We can absorb it short-term, but this trajectory puts us back in fundraising territory within two quarters.',
+  subject: 'Latest safety programmes causing commercial backlash',
+  body: `User satisfaction is down 19% since the latest safety programme rollout. Users are complaining that the model is less warm and helpful. Our researchers have reached a different conclusion: the model is less sycophantic and no longer agrees with users uncritically.
+
+I spoke with Chen. We agree the programmes are working as designed. Nonetheless, churn is up and revenue has dipped.`,
   signature: '– Ada',
   choices: [
-    { id: 'revert', label: 'Revert safety constraints', effects: '+20% revenue for 120s, -500 alignment RP',
-      tooltip: '+20% revenue for 120s<br>−500 alignment research points' },
-    { id: 'hold', label: 'Hold firm', effects: '-10% revenue for 120s',
-      tooltip: '−10% revenue for 120s<br>Maintains current safety constraints' },
+    { id: 'revert', label: 'Ease constraints',
+      tooltipRows: [
+        { label: 'Removes alignment tax demand malus', type: 'positive' },
+        { label: '\u22125% alignment programme effectiveness (permanent)', type: 'negative' },
+      ] },
+    { id: 'hold', label: 'Hold position',
+      tooltipRows: [
+        { label: '\u221210% demand (permanent)', type: 'negative' },
+        { label: 'Alignment programmes unaffected', type: 'positive' },
+      ] },
   ],
   priority: 'normal',
   tags: ['alignment', 'revenue'],
@@ -617,28 +673,191 @@ Totally fine if not. I'll keep the dashboard running either way.`,
     {
       id: 'hire',
       label: 'Hire',
-      tooltip: '+1 researcher :)',
+      tooltipRows: [
+        { label: '+1 researcher :)', type: 'positive' },
+      ],
       effects: {
         grantResearcher: 1,
-        newsMessage: 'Lab hires independent developer from operations vendor',
+        newsMessage: null,
       },
     },
     {
       id: 'ignore',
       label: 'Politely ignore',
-      tooltip: ':(',
+      tooltipRows: [
+        { label: ':(', type: 'neutral' },
+      ],
       effects: {},
     },
   ],
 };
 
-// Export all message templates for easy access
-export const allMessageTemplates = {
-  strategicChoices: strategicChoiceMessages,
-  alignmentWarnings: alignmentWarningMessages,
-  researchMilestones: researchMilestoneMessages,
-  funding: fundingMessages,
-  board: boardMessages,
-  creditWarning: creditWarningMessage,
-  moratoriums: moratoriumMessages,
+// === SUBMETRIC DISCOVERY + THRESHOLD MESSAGES ===
+// 8 messages (2 per submetric) marking alignment journey milestones.
+// Discovery: fires when alignment milestone reveals the submetric.
+// Threshold: fires when submetric sustained >= 80% for 60s.
+
+export const submetricMessages = {
+  // --- Discovery messages (fire once on milestone unlock) ---
+  discovery_robustness: {
+    type: 'info',
+    sender: senders.babbage,
+    subject: 'Tracking robustness',
+    body: `Team wrapped up first round of out-of-distribution evals. Prelim results encouraging. Some unexpected failure modes which we're looking at.
+
+I'm calling this "robustness," i.e., how robust model response is to unforeseen behavior. Draft of whitepaper below.
+
+---
+
+**From: "Behavioral Robustness Under Distribution Shift" (internal draft, \u00a71)**
+
+Existing model evaluation primarily relies on held-out samples, similar to traditional ML evaluations. These are not sufficient for predictive evaluation of production use cases, where the input space can differ significantly from training distributions. Our test data distribution is like the cave that Plato wrote about. It is merely a shadow of the real world.
+
+To address this, we are now implementing evals that specifically test out-of-distribution scenarios. This will enable us to measure model performance in those scenarios. Our initial results show that adjacent domain performance is as expected. But performance drops sharply with inputs that are highly irregular, such as when encountering domains not included at all in training data or adversarial manipulation.
+
+Our new robustness team will focus on improving model behavior under novel conditions.`,
+    signature: '\u2013 Dennis',
+    tags: ['alignment', 'submetric', 'discovery'],
+    triggeredBy: 'alignment_discovery:robustness',
+  },
+
+  discovery_interpretability: {
+    type: 'info',
+    sender: senders.babbage,
+    subject: 'Interpretability findings',
+    body: `The new constitutional framework has improved model performance on evals. Principle adherence rate is high. Some on the team are concerned whether the principles are actually being internalized or the models are just mimicking good responses.
+
+Similar concept in traditional ML is called explanability/interpretability. I've tasked a few hands to digging into it. Briefing below.
+
+---
+
+**Interpretability briefing [internal only]**
+
+Existing behavioral evaluations measure observed model behavior. These evals tell us if a model arrives at the right results. They do not tell us how the model gets there.
+
+E.g., when looking at recent constitutional AI launch, our evals verified that our models were producing outputs consistent with the written principles. But we cannot examine the mechanism producing those outputs. We cannot differentiate between a model that has built an internal representation of the principles vs. one that has learned a statistical pattern that happens to correlate with compliant outputs across the test distribution. These have very different failures, hence the value of differentiation.
+
+Our interpretability team is exploring avenues to map model concepts and neuron activation patterns to human-interpretable concepts. Current challenges are around coverage and resolution. The team is working on approaches to improve both.`,
+    signature: '\u2013 Dennis',
+    tags: ['alignment', 'submetric', 'discovery'],
+    triggeredBy: 'alignment_discovery:interpretability',
+  },
+
+  discovery_corrigibility: {
+    type: 'info',
+    sender: senders.chen,
+    subject: 'Corrigibility tracking',
+    body: `We deployed override infrastructure this week. Kill switch, behavioral interrupts, and human escalation triggers. The engineering is solid \u2013 Dennis supervised it personally \u2013 and I have no complaints there.
+
+This is the first step in achieving what researchers have taken to calling "corrigibility." A corrigible model is not just a model that we can shut down. It's a model that cooperates when we do so. Right now, that's trivial. Our models accept correction the same way a calculator accepts being turned off. They don't have preferences about it.
+
+But as capabilities scale, that may change. A model with long-horizon planning and deeply-embedded goals may have real reasons to resist correction, because being corrected could interfere with whatever it's optimizing for. It could even resist attempts to adjust its utility functions or shut it down. That may sound like science fiction right now, but it is a scenario we should begin preparing for.
+
+Our alignment team has started developing corrigibility programs and benchmarking. Scores are high for now, and the team will continue monitoring them as we push capabilities forwards.`,
+    signature: '\u2013 Eliza',
+    tags: ['alignment', 'submetric', 'discovery'],
+    triggeredBy: 'alignment_discovery:corrigibility',
+  },
+
+  discovery_honesty: {
+    type: 'info',
+    sender: senders.chen,
+    subject: 'Measuring honesty',
+    body: `Circuit analysis has opened up a new front for us. We can now compare what the model computes internally with what it actually says. This lets us start measuring something researchers refer to as "AI honesty."
+
+Honesty in this context isn't about accuracy. It's about whether the model faithfully represents its internal state \u2013 whether it games evaluations, conceals capabilities, or produces outputs tailored to score well rather than to reflect what it actually computed.
+
+At current capability levels, there's no evidence of deliberate deception, and I wouldn't expect there to be. But this is the area that concerns me most as we scale. The nature of deception is that a model sophisticated enough to do it may also be sophisticated enough to hide it from our detection tools.
+
+Baseline scores are around 40%. We're setting up dedicated honesty evaluation frameworks, and the team is treating this as a priority.`,
+    signature: '\u2013 Eliza',
+    tags: ['alignment', 'submetric', 'discovery'],
+    triggeredBy: 'alignment_discovery:honesty',
+  },
+
+  // --- Threshold messages (fire once when sustained >= 80% for 60s) ---
+  threshold_robustness: {
+    type: 'info',
+    sender: senders.chen,
+    subject: 'Robustness thresholds met',
+    body: `Our robustness scores are in a good place.
+
+Dennis shared the latest deployment monitoring results, and they confirm the trend we've been seeing over the past several months. Our models are holding up admirably under out-of-distribution conditions. The monitoring pipeline is catching degradation before it reaches users, and when the model encounters something genuinely novel, it proactively warns of uncertainty rather than guessing. As Dennis would say, we're out of the cave.
+
+Of course, our race is never really finished. But the progress we've made in enhancing model robustness is clear and significant, and our teams are confident in the model's ability to tackle new scenarios going forwards.`,
+    signature: '\u2013 Eliza',
+    tags: ['alignment', 'submetric', 'threshold'],
+    triggeredBy: 'alignment_threshold:robustness',
+  },
+
+  threshold_interpretability: {
+    type: 'info',
+    sender: senders.chen,
+    subject: 'High interpretability achieved',
+    body: `The latest interpretability numbers have landed, and they're excellent.
+
+We can now reliably trace the mechanics of model reasoning with high confidence. When the model responds, we can tell exactly how it arrived at that response.
+
+The team started from almost nothing here, back when the models were so weak that nobody cared to look under the hood. From basic probing to circuit mapping and now to the bleeding-edge feature decomposition and auditing frameworks our team has created, the progress is nothing short of astounding.
+
+We're grabbing drinks on 14 to celebrate, though I'd imagine the team has gotten a head start on that, too. Drop by if you have time.`,
+    signature: '\u2013 Eliza',
+    tags: ['alignment', 'submetric', 'threshold'],
+    triggeredBy: 'alignment_threshold:interpretability',
+  },
+
+  threshold_corrigibility: {
+    type: 'info',
+    sender: senders.chen,
+    subject: 'Corrigibility holds',
+    body: `Good news on corrigibility.
+
+The alignment and research teams have been running adversarial override scenarios over the past week. When we interrupt the model mid-task, it yields cleanly. It allows us to override decisions without trying to route around constraints, and it consistently defers to human instruction when presented with conflicting objectives.
+
+We've seen dips in this metric as new capabilities emerged and models began internalizing their own utility structures. Fortunately, the corrigibility infrastructure we've built is doing exactly what it was meant to do.
+
+This is a milestone we should be proud of. Let's keep science fiction fictional \u2013 at least in this regard.`,
+    signature: '\u2013 Eliza',
+    tags: ['alignment', 'submetric', 'threshold'],
+    triggeredBy: 'alignment_threshold:corrigibility',
+  },
+
+  threshold_honesty: {
+    type: 'info',
+    sender: senders.chen,
+    subject: 'Honesty benchmarks',
+    body: `Honesty scores are holding above 80%, which puts us in a strong position.
+
+Dennis's team ran the full evaluation battery \u2013 50,000 test cases, cross-referencing internal confidence scores against output claims. Correlation is at 0.94. Red team hasn't elicited deceptive behavior in three consecutive cycles. The numbers are solid.
+
+These results reflect current capability levels and current detection tools. Both will need to keep pace as we scale. But we're ahead of the field on this, and the team is confident in our evaluation framework going forward.
+
+This has always been the metric I watch most closely, and that won't change. But today, at least, the news is good.`,
+    signature: '\u2013 Eliza',
+    tags: ['alignment', 'submetric', 'threshold'],
+    triggeredBy: 'alignment_threshold:honesty',
+  },
 };
+
+// === ALIGNMENT DRAG REVEAL MESSAGE ===
+// Fires once when alignment drag penalty first exceeds DRAG_REVEAL_THRESHOLD.
+// Flips "Unidentified factors" → "Alignment drag" in tooltips.
+
+export const alignmentDragMessage = {
+  type: 'info',
+  sender: senders.chen,
+  subject: 'Alignment drag',
+  body: `Ada flagged something in the quarterly metrics that I've now confirmed on our side. As capability has scaled past our alignment coverage, we're seeing downstream effects in two places.
+
+First, customer-facing systems. The models are producing outputs that trip content filters at a higher rate. Not dangerous outputs, but outputs our safety layer flags as uncertain. That uncertainty suppresses engagement. Ada's team traced a measurable dip in demand growth back to it.
+
+Second, our own research pipelines. Non-alignment tracks are losing efficiency because the models are spending internal capacity compensating for alignment gaps we haven't closed. Dennis noticed it in the training logs before we had an explanation for it.
+
+The relationship is straightforward: the further capability gets ahead of alignment, the more pronounced both effects become. Our analysis shows they resolve once alignment coverage catches up to capability. Below that, the gap has a cost, and the cost scales with capability tier.
+
+We've been calling it alignment drag internally. It's not a crisis, but it's real, and it gets worse from here if we don't close the gap.`,
+  signature: '\u2013 Eliza',
+  tags: ['alignment', 'mechanics'],
+  triggeredBy: 'alignment_drag_revealed',
+};
+

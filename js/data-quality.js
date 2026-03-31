@@ -3,7 +3,7 @@ import { gameState } from './game-state.js';
 import { BALANCE } from '../data/balance.js';
 import { getCount, getActiveCount, getPurchasableState } from './purchasable-state.js';
 import { capabilitiesTrack } from './content/capabilities-track.js';
-import { addActionMessage, addNewsMessage } from './messages.js';
+import { addActionMessage, addInfoMessage, addNewsMessage } from './messages.js';
 import { addNewsItem } from './news-feed.js';
 import { notify } from './ui.js';
 import { senders } from './content/message-content.js';
@@ -102,6 +102,10 @@ export function getEffectiveCap(src, state) {
   return getCapForCopies(src, activeCopies, state);
 }
 
+/** Ratio of freshness tau to total tau — maps raw growth cap to equilibrium score. */
+export const EQUILIBRIUM_RATIO = BALANCE.DATA_RENEWABLE_FRESH_TAU /
+  (BALANCE.DATA_RENEWABLE_TAU + BALANCE.DATA_RENEWABLE_FRESH_TAU);
+
 /** Calculate effectiveness = effectiveScore / tierRequirement. */
 export function calculateEffectiveness(state) {
   const score = calculateDataScore(state);
@@ -111,50 +115,34 @@ export function calculateEffectiveness(state) {
   return score.effective / required;
 }
 
-/** Map effectiveness to a capabilities research multiplier. */
+/** Map effectiveness to a capabilities research multiplier (capped). */
 export function effectivenessToMultiplier(effectiveness) {
   if (effectiveness <= 0) return 0;
   if (effectiveness <= 1.0) return effectiveness * effectiveness;
-  return 1.0 + Math.log(1 + (effectiveness - 1.0));
+  return Math.min(1.0 + Math.log(1 + (effectiveness - 1.0)), BALANCE.DATA_EFFECTIVENESS_MULTIPLIER_CAP);
 }
 
 /**
  * Calculate data quality as weighted average of per-source quality values.
  * quality = Σ(source_score × source_quality) / Σ(source_score)
+ * Since calculateDataScore already computes effective (= Σ score×quality)
+ * and total (= Σ score), quality is simply effective / total.
  */
-export function calculateQuality(scores, state) {
+export function calculateQuality(scores) {
   if (scores.total <= 0) return 1.0;
+  return scores.effective / scores.total;
+}
 
-  let weightedSum = 0;
-  let totalWeight = 0;
-
-  // Bulk sources
-  const st = state || gameState;
-  for (const src of BALANCE.DATA_BULK_SOURCES) {
-    if (getCount('data_' + src.id) > 0) {
-      weightedSum += src.score * src.quality;
-      totalWeight += src.score;
-    }
-  }
-
-  // Renewable sources
-  for (const src of BALANCE.DATA_RENEWABLE_SOURCES) {
-    const renewScore = st.data.renewableScores?.[src.id] || 0;
-    if (renewScore > 0 && getActiveCount('data_' + src.id) > 0) {
-      weightedSum += renewScore * src.quality;
-      totalWeight += renewScore;
-    }
-  }
-
-  // Synthetic (uses current upgrade quality)
-  if (scores.synthetic > 0) {
-    const synthQuality = getSyntheticQuality();
-    weightedSum += scores.synthetic * synthQuality;
-    totalWeight += scores.synthetic;
-  }
-
-  if (totalWeight <= 0) return 1.0;
-  return weightedSum / totalWeight;
+/**
+ * Compute collapse MTTH for a given quality value.
+ * Shared by the tick simulation and the UI display so they agree.
+ */
+export function getCollapseMTTH(quality) {
+  const floor = BALANCE.DATA_QUALITY_COLLAPSE_QUALITY_FLOOR;
+  const clamped = Math.max(quality, floor);
+  const ratio = (clamped - floor) / (BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD - floor);
+  return BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MIN + ratio *
+    (BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MAX - BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MIN);
 }
 
 // --- Synthetic Generator Functions ---
@@ -188,7 +176,7 @@ export function computeDataDisplay() {
   const effectiveness = required > 0 ? scores.effective / required : (scores.effective > 0 ? 10 : 1);
 
   // Calculate quality (weighted average of per-source quality)
-  const quality = calculateQuality(scores, gameState);
+  const quality = calculateQuality(scores);
   data.quality = quality;
 
   // Cache values for UI (legacy)
@@ -203,16 +191,16 @@ export function computeDataDisplay() {
     const activeCopies = getActiveCount('data_' + src.id);
     const ec = activeCopies > 0 ? getEffectiveCap(src, gameState) : 0;
     const score = data.renewableScores?.[src.id] || 0;
-    const isGrowing = score < ec;
-    const tau = isGrowing ? BALANCE.DATA_RENEWABLE_TAU : BALANCE.DATA_RENEWABLE_DECAY_TAU;
-    const growthRate = activeCopies > 0
-      ? (ec - score) / tau
-      : (score > 0 ? -score / BALANCE.DATA_RENEWABLE_DECAY_TAU : 0);
+    // Instantaneous net rate: growth toward cap minus constant freshness decay
+    const freshDecay = score / BALANCE.DATA_RENEWABLE_FRESH_TAU;
+    const growth = score < ec ? (ec - score) / BALANCE.DATA_RENEWABLE_TAU : 0;
+    const growthRate = growth - freshDecay;
     const rawPow = Math.pow(activeCopies, BALANCE.DATA_RENEWABLE_CAP_ALPHA);
     const scm = BALANCE.DATA_RENEWABLE_SOFT_CAP_MULT;
     const baseCap = activeCopies > 0 ? src.growthCap * scm * rawPow / (rawPow + scm - 1) : 0;
     const tokenBonus = src.id === 'user_interaction' ? ec - baseCap : 0;
-    renewablesComputed[src.id] = { score, maxScore: ec, effectiveCap: ec, growthRate, tokenBonus };
+    const eqScore = ec * EQUILIBRIUM_RATIO; // attainable equilibrium (growth cap offset by freshness decay)
+    renewablesComputed[src.id] = { score, maxScore: eqScore, effectiveCap: eqScore, rawCap: ec, growthRate, tokenBonus };
   }
 
   // Compute trend arrow: compare current to previous 5s snapshot
@@ -253,6 +241,8 @@ export function computeDataDisplay() {
     },
     quality: data.quality,
     effectiveness,
+    effectivenessMultiplier: effectivenessToMultiplier(effectiveness),
+    effectivenessAtCap: effectivenessToMultiplier(effectiveness) >= BALANCE.DATA_EFFECTIVENESS_MULTIPLIER_CAP,
     trend,
   };
 }
@@ -269,21 +259,24 @@ export function processDataQuality(deltaTime) {
   // Ensure renewableScores exists
   if (!data.renewableScores) data.renewableScores = {};
 
-  // 1. Grow/decay renewable scores
+  // 1. Renewable scores: constant freshness decay + growth toward cap
+  // Data naturally goes stale (freshness decay always active).
+  // Active sources generate data to counteract staleness.
+  // Equilibrium = growthCap × freshTau / (growthTau + freshTau).
   for (const src of BALANCE.DATA_RENEWABLE_SOURCES) {
     const activeCopies = getActiveCount('data_' + src.id);
     const cap = activeCopies > 0 ? getEffectiveCap(src, gameState) : 0;
-    const currentScore = data.renewableScores[src.id] || 0;
+    let score = data.renewableScores[src.id] || 0;
 
-    if (currentScore < cap) {
-      // Growth: approach cap at normal tau
-      const gain = (cap - currentScore) * (1 - Math.exp(-deltaTime / BALANCE.DATA_RENEWABLE_TAU));
-      data.renewableScores[src.id] = currentScore + gain;
-    } else if (currentScore > cap) {
-      // Decay: approach cap at faster decay tau
-      const loss = (currentScore - cap) * (1 - Math.exp(-deltaTime / BALANCE.DATA_RENEWABLE_DECAY_TAU));
-      data.renewableScores[src.id] = currentScore - loss;
+    // Always: freshness decay (data goes stale over time)
+    score -= score * (1 - Math.exp(-deltaTime / BALANCE.DATA_RENEWABLE_FRESH_TAU));
+
+    // Growth: approach cap when active and below cap
+    if (score < cap) {
+      score += (cap - score) * (1 - Math.exp(-deltaTime / BALANCE.DATA_RENEWABLE_TAU));
     }
+
+    data.renewableScores[src.id] = score;
   }
 
   // 2. Synthetic score growth from running generators
@@ -311,8 +304,7 @@ export function processDataQuality(deltaTime) {
     const floor = BALANCE.DATA_QUALITY_COLLAPSE_QUALITY_FLOOR;
     const clamped = Math.max(quality, floor);
     const ratio = (clamped - floor) / (BALANCE.DATA_QUALITY_COLLAPSE_THRESHOLD - floor);
-    const mtth = BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MIN + ratio *
-                 (BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MAX - BALANCE.DATA_QUALITY_COLLAPSE_MTTH_MIN);
+    const mtth = getCollapseMTTH(quality);
     const probability = 1 - Math.exp(-deltaTime / mtth);
     if (Math.random() < probability) {
       const pauseDuration = BALANCE.DATA_COLLAPSE_PAUSE_DURATION_MAX - ratio *
@@ -348,9 +340,9 @@ export function processDataQuality(deltaTime) {
     const allBulkPurchased = BALANCE.DATA_BULK_SOURCES.every(src => getCount('data_' + src.id) > 0);
     const renewablesNearCap = BALANCE.DATA_RENEWABLE_SOURCES.every(src => {
       if (getActiveCount('data_' + src.id) <= 0) return false;
-      const effectiveCap = getEffectiveCap(src, gameState);
+      const equilibrium = getEffectiveCap(src, gameState) * EQUILIBRIUM_RATIO;
       const currentScore = data.renewableScores[src.id] || 0;
-      return currentScore >= effectiveCap * 0.95;
+      return currentScore >= equilibrium * 0.95;
     });
     if (allBulkPurchased && renewablesNearCap) {
       data.dataExhaustionTriggered = true;
@@ -429,6 +421,48 @@ export function getNextTierInfo(capRP) {
   return null;
 }
 
+function buildModelCollapseChoices(pauseDuration) {
+  return [
+    { id: 'evaluate', label: "I'll evaluate our options",
+      tooltipRows: [
+        { label: 'Opens the Data tab', type: 'neutral' },
+        { label: 'No mechanical effect', type: 'neutral' },
+      ] },
+    { id: 'cleanup', label: 'Temporarily pause research to clean up data',
+      tooltipRows: [
+        { label: `Pause ALL research for ${pauseDuration} days`, type: 'negative' },
+        { label: 'Purge 50% synthetic data', type: 'warning' },
+        { label: 'Furlough all synthetic generators', type: 'warning' },
+      ] },
+  ];
+}
+
+/**
+ * Build a model collapse action message for debug triggering.
+ * Uses realistic defaults since runtime values aren't available.
+ */
+export function debugModelCollapseMessage() {
+  const pauseDuration = 14;
+  const qualityPct = 30;
+  return {
+    type: 'action',
+    sender: senders.babbage,
+    subject: 'Model collapse detected',
+    body: `Models produced degenerate output in production. Garbled text, hallucinated patterns, nonsense. I rolled back the deployment.
+
+Data quality is at ${qualityPct}%. That's below the threshold where training runs produce reliable results. Capabilities research is paused for ${pauseDuration} days while we audit the pipeline.
+
+This will keep happening. The synthetic contamination is systemic. Every collapse costs us research time and we're not getting it back.
+
+Your call on next steps.`,
+    signature: '– Dennis',
+    priority: 'normal',
+    tags: ['data', 'crisis'],
+    triggeredBy: 'model_collapse',
+    choices: buildModelCollapseChoices(pauseDuration),
+  };
+}
+
 function triggerCollapseNews(pauseDuration) {
   // Initialize collapse tracking
   if (!gameState.data.collapseCount) gameState.data.collapseCount = 0;
@@ -453,39 +487,49 @@ This will keep happening. The synthetic contamination is systemic. Every collaps
 
 Your call on next steps.`,
       '– Dennis',
-      [
-        { id: 'evaluate', label: "I'll evaluate our options", effects: 'Navigate to data tab',
-          tooltip: 'Opens the Data tab<br>No mechanical effect' },
-        { id: 'cleanup', label: 'Temporarily pause research to clean up data', effects: `Pause all research ${pauseDuration} days, purge 50% synthetic data, furlough generators`,
-          tooltip: `Pause ALL research for ${pauseDuration} days<br>Purge 50% synthetic data<br>Furlough all synthetic generators` },
-      ],
+      buildModelCollapseChoices(pauseDuration),
       'normal',
       ['data', 'crisis'],
       'model_collapse',
       { qualityPct, pauseDuration }
     );
   } else {
-    // Subsequent collapses: incident-style toast notification
-    const toastMessages = [
-      `Model collapse — capabilities research paused ${pauseDuration} days. Quality: ${qualityPct}%.`,
-      `Another collapse — synthetic contamination spreading. Research paused ${pauseDuration} days.`,
-      `Recurring collapse — data pipeline critically unstable. Quality: ${qualityPct}%.`,
+    // Subsequent collapses: incident pattern (info message + toast with click-to-navigate)
+    const subjects = [
+      'Model collapse — pipeline contaminated',
+      'Recurring collapse — synthetic contamination spreading',
+      'Data pipeline critically unstable',
     ];
-    const msgIndex = Math.min(count - 2, toastMessages.length - 1);
-    const hint = count <= 3
-      ? ' Reduce synthetic generators or invest in real data.'
-      : '';
+    const bodies = [
+      `Another training run produced degenerate output. Data quality at ${qualityPct}%. Capabilities research paused for ${pauseDuration} days.\n\nThe synthetic contamination is getting worse. Every collapse costs research time we're not getting back.`,
+      `Models collapsed again. Quality: ${qualityPct}%. Research paused ${pauseDuration} days.\n\nThis is becoming a pattern. The pipeline can't sustain this level of synthetic data.`,
+      `Collapse #${count}. Quality: ${qualityPct}%. Research paused ${pauseDuration} days.\n\nThe data pipeline is critically unstable. This won't stop until the underlying quality problem is addressed.`,
+    ];
+    const msgIndex = Math.min(count - 2, bodies.length - 1);
 
-    notify(
-      'DATA COLLAPSE',
-      toastMessages[msgIndex] + hint,
-      'warning'
+    const msg = addInfoMessage(
+      senders.babbage,
+      subjects[msgIndex],
+      bodies[msgIndex],
+      '– Dennis',
+      ['data', 'incident', 'model_collapse'],
+      `model_collapse_${count}`,
+      { qualityPct, pauseDuration, collapseCount: count }
     );
 
-    // Also add to news feed for the record
-    addNewsMessage(
-      `Model collapse #${count}.`,
-      ['data', 'negative']
+    const effectDesc = `Research paused ${pauseDuration} days`;
+    notify(
+      'Incident',
+      `${subjects[msgIndex]}<br><span class="notification-effect">${effectDesc}</span>`,
+      'warning',
+      {
+        onClick: () => {
+          import('./ui/tab-navigation.js').then(({ navigateToMessage }) => {
+            navigateToMessage(msg.id);
+          });
+        },
+        duration: 8000,
+      }
     );
   }
 }

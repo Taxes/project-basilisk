@@ -9,7 +9,7 @@ import { triggerFundingMilestone } from './news-feed.js';
 import { getStaffingSpeedMultiplier, getFundraiseSpeedMultiplier } from './automation.js';
 import { getCount, incrementCount, getPurchasableState, getActiveCount } from './purchasable-state.js';
 import { milestone } from './analytics.js';
-import { processCEOFocus, onFundraiseCompleted } from './ceo-focus.js';
+import { processCEOFocus, onFundraiseCompleted, getFocusTimePercents } from './ceo-focus.js';
 
 /** Culture drift speed multiplier based on org size. Small orgs pivot fast. */
 export function getCultureSpeedMultiplier() {
@@ -613,6 +613,7 @@ function completeFundraise(item) {
     valuation: state.valuation,
     equity_percent: effectiveEquity,
     multiplier: liveMultiplier,
+    ...getFocusTimePercents(),
   }, `funding_milestone_${item.target}`);
 
   triggerFundingMilestone(item.target, raiseAmount, effectiveEquity, liveMultiplier);

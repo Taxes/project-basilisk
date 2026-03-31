@@ -1,69 +1,26 @@
 // Player-facing text: see docs/message-registry.json
 // News Feed System - Event-driven narrative delivery
-// News items are triggered by game events, not random selection
-//
-// NOTE: This is transitioning to the new message system.
-// New messages go to both the old feed (for now) and the new message system.
+// News items are triggered by game events and delivered via the message system.
+// Dedup tracking lives in messages.js (triggeredMessageKeys).
 
 import { newsContent } from './content/news-content.js';
 import { alignmentTaxActionMessage } from './content/message-content.js';
+import { applyAlignmentTaxOnFire } from './alignment-tax-handler.js';
 import { gameState } from './game-state.js';
-import { ALIGNMENT, BALANCE } from '../data/balance.js';
-import { addNewsMessage, addActionMessage } from './messages.js';
-import { getAlignmentRatio } from './resources.js';
+import { ALIGNMENT } from '../data/balance.js';
+import { addNewsMessage, addActionMessage, hasMessageBeenTriggered } from './messages.js';
 import { formatFunding } from './utils/format.js';
 
-const MAX_NEWS_ITEMS = 20;
-let newsFeed = [];
+let lastNewsText = null;
 
-// Track progress milestones that have fired
-let firedProgressMilestones = new Set();
-
-// Track alignment thresholds that have fired
-let firedAlignmentThresholds = new Set();
-
-// Track alignment debt tiers that have fired (Arc 2)
-let firedAlignmentDebtTiers = new Set();
-
-// Track which news keys have been triggered (to prevent duplicates)
-let triggeredNews = new Set();
-
-// Add a news item to the feed
-export function addNewsItem(text, type = 'flavor', triggeredBy = null, body = null) {
+// Add a news item to the message system
+export function addNewsItem(text, type = 'flavor', triggeredBy = null, body = null, contentParams = null) {
   // Dedup: skip if most recent item has identical text
-  if (newsFeed.length > 0 && newsFeed[newsFeed.length - 1].text === String(text)) {
-    return;
-  }
+  const textStr = String(text);
+  if (textStr === lastNewsText) return;
+  lastNewsText = textStr;
 
-  const item = {
-    text: String(text),
-    type,  // 'flavor', 'warning', 'competitor', 'internal'
-    timestamp: gameState.timeElapsed,
-  };
-
-  newsFeed.push(item);
-
-  // Keep max items (remove oldest from front)
-  if (newsFeed.length > MAX_NEWS_ITEMS) {
-    newsFeed = newsFeed.slice(-MAX_NEWS_ITEMS);
-  }
-
-  // Also add to new message system as a news message
-  addNewsMessage(String(text), [type], triggeredBy, body);
-
-  // Trigger UI update
-  renderNewsFeed();
-}
-
-// Clear all news
-export function clearNewsFeed() {
-  newsFeed = [];
-  renderNewsFeed();
-}
-
-// Get current feed items
-export function getNewsFeedItems() {
-  return [...newsFeed];
+  addNewsMessage(textStr, [type], triggeredBy, body, contentParams);
 }
 
 // Trigger news for a specific event
@@ -71,109 +28,85 @@ export function triggerNewsForEvent(eventType, eventId) {
   const newsKey = `${eventType}:${eventId}`;
 
   // Don't repeat the same news
-  if (triggeredNews.has(newsKey)) {
-    return;
-  }
+  if (hasMessageBeenTriggered(newsKey)) return;
 
   const categoryContent = newsContent[eventType];
-  if (!categoryContent) {
-    return;
-  }
+  if (!categoryContent) return;
 
   const newsItem = categoryContent[eventId];
-  if (!newsItem) {
-    return;
-  }
+  if (!newsItem) return;
 
-  triggeredNews.add(newsKey);
   addNewsItem(newsItem.text, newsItem.type, newsKey, newsItem.body || null);
 }
 
 // Check for progress milestone news
+// Milestones at 40%+ branch on danger level: healthy vs warning variant
 export function checkProgressMilestones(progress) {
   const milestones = Object.keys(newsContent.progress_milestone || {})
     .map(Number)
     .sort((a, b) => a - b);
 
+  const dangerScore = gameState.computed?.danger?.score || 0;
+  const isWarning = dangerScore >= ALIGNMENT.DANGER_THRESHOLDS.MODERATE;
+
   for (const milestone of milestones) {
-    if (progress >= milestone && !firedProgressMilestones.has(milestone)) {
-      firedProgressMilestones.add(milestone);
-      triggerNewsForEvent('progress_milestone', milestone);
+    if (progress >= milestone && !hasMessageBeenTriggered(`progress_milestone:${milestone}`)) {
+      const entry = newsContent.progress_milestone[milestone];
+      if (!entry) continue;
+
+      // Branching entries have { healthy, warning }; simple entries have { text, type }
+      const newsItem = entry.text != null ? entry : (isWarning ? entry.warning : entry.healthy);
+      if (!newsItem) continue;
+
+      const newsKey = `progress_milestone:${milestone}`;
+      addNewsItem(newsItem.text, newsItem.type, newsKey, newsItem.body || null);
     }
   }
+}
+
+// Interpolate funding milestone body from content template + raise details.
+// Shared by triggerFundingMilestone (dispatch) and message-content-index (rehydration).
+export function interpolateFundingBody(roundId, raiseAmount, effectiveEquity) {
+  const content = newsContent.funding_milestone?.[roundId];
+  if (!content?.body) return null;
+
+  const valuation = effectiveEquity > 0 ? raiseAmount / effectiveEquity : 0;
+  const vars = {
+    amount: formatFunding(raiseAmount, { precision: 1 }),
+    valuation: formatFunding(valuation, { precision: 1 }),
+    equity: (effectiveEquity * 100).toFixed(1),
+  };
+  let body = content.body.replace(/\{(\w+)}/g, (_, key) => vars[key] ?? _);
+
+  // Series F: append mega-valuation line if applicable
+  if (roundId === 'series_f' && valuation > 30e12) {
+    body += ' Project Basilisk now dwarfs the largest national economies in the world, leading many to ask: is it time to welcome our new AI overlords?';
+  }
+  return body;
 }
 
 // Trigger funding milestone news on fundraise completion
 // Called from focus-queue.js with actual raise details
-export function triggerFundingMilestone(roundId, raiseAmount, effectiveEquity, multiplier) {
+export function triggerFundingMilestone(roundId, raiseAmount, effectiveEquity, _multiplier) {
   const newsKey = `funding_milestone:${roundId}`;
-  if (triggeredNews.has(newsKey)) return;
+  if (hasMessageBeenTriggered(newsKey)) return;
 
   const content = newsContent.funding_milestone?.[roundId];
   if (!content) return;
 
-  const equityPct = (effectiveEquity * 100).toFixed(1);
-  triggeredNews.add(newsKey);
-  addNewsItem(
-    content.text,
-    content.type,
-    newsKey,
-    `${formatFunding(raiseAmount, { precision: 1 })} raised for ${equityPct}% equity at ${multiplier.toFixed(0)}x valuation.`,
-  );
-}
+  const vars = {
+    amount: formatFunding(raiseAmount, { precision: 1 }),
+    valuation: formatFunding(effectiveEquity > 0 ? raiseAmount / effectiveEquity : 0, { precision: 1 }),
+    equity: (effectiveEquity * 100).toFixed(1),
+  };
+  const interpolate = (s) => s.replace(/\{(\w+)}/g, (_, key) => vars[key] ?? _);
+  const body = interpolateFundingBody(roundId, raiseAmount, effectiveEquity);
 
-// Check for ambient alignment news triggers
-export function checkAlignmentNews() {
-  // Only fire in Arc 1
-  if (gameState.arc !== 1) return;
-
-  const ha = gameState.hiddenAlignment || 0;
-
-  const thresholds = [
-    { key: 'mild', threshold: ALIGNMENT.AMBIENT_THRESHOLD_MILD },
-    { key: 'moderate', threshold: ALIGNMENT.AMBIENT_THRESHOLD_MODERATE },
-    { key: 'severe', threshold: ALIGNMENT.AMBIENT_THRESHOLD_SEVERE },
-  ];
-
-  for (const { key, threshold } of thresholds) {
-    if (ha <= threshold && !firedAlignmentThresholds.has(key)) {
-      firedAlignmentThresholds.add(key);
-      triggerNewsForEvent('alignment_ambient', key);
-    }
-  }
-}
-
-// Check for alignment debt news triggers (Arc 2 only)
-// Fires when capability RP significantly outpaces alignment RP
-export function checkAlignmentDebt() {
-  // Only fire in Arc 2
-  if (gameState.arc < 2) return;
-
-  const ratio = getAlignmentRatio();
-  const thresholds = BALANCE.ALIGNMENT_RATIO_THRESHOLDS;
-
-  // Tier thresholds: mild at 2:1 (MODERATE), moderate at 4:1 (SEVERE), severe at 6:1 (CRITICAL)
-  const tiers = [
-    { key: 'mild', ratioThreshold: thresholds.MODERATE },
-    { key: 'moderate', ratioThreshold: thresholds.SEVERE },
-    { key: 'severe', ratioThreshold: thresholds.CRITICAL },
-  ];
-
-  for (const { key, ratioThreshold } of tiers) {
-    if (ratio >= ratioThreshold && !firedAlignmentDebtTiers.has(key)) {
-      firedAlignmentDebtTiers.add(key);
-      triggerNewsForEvent('alignment_debt', key);
-
-      // Update game state tier for UI/debugging
-      const tierNum = key === 'mild' ? 1 : key === 'moderate' ? 2 : 3;
-      gameState.alignmentDebtTier = Math.max(gameState.alignmentDebtTier || 0, tierNum);
-    }
-  }
+  addNewsItem(interpolate(content.text), content.type, newsKey, body, { raiseAmount, effectiveEquity });
 }
 
 // Check for Alignment Tax event (Arc 2 only)
-// Fires once when alignment allocation > 30% for 60 consecutive seconds
-// Presents choice: revert safety constraints (+20% revenue 120s, -500 alignment RP) vs hold firm (-10% revenue 120s)
+// Fires once when active alignment programs draw >= 50 AP for 30 consecutive seconds
 export function checkAlignmentTaxEvent(deltaTime) {
   // Only fire in Arc 2
   if (gameState.arc < 2) return;
@@ -181,15 +114,18 @@ export function checkAlignmentTaxEvent(deltaTime) {
   // Already fired
   if (gameState.alignmentTaxEventFired) return;
 
-  const alignmentAlloc = gameState.tracks?.alignment?.researcherAllocation || 0;
-  const threshold = 0.30;
-  const requiredDuration = 60; // seconds
+  const totalDraw = gameState.computed.programs?.totalDraw || 0;
+  const threshold = 50;
+  const requiredDuration = 30; // seconds
 
-  if (alignmentAlloc > threshold) {
+  if (totalDraw >= threshold) {
     gameState.alignmentTaxTimer = (gameState.alignmentTaxTimer || 0) + deltaTime;
 
     if (gameState.alignmentTaxTimer >= requiredDuration) {
       gameState.alignmentTaxEventFired = true;
+
+      // Apply permanent demand malus immediately
+      applyAlignmentTaxOnFire();
 
       // Fire the Alignment Tax action message
       const msg = alignmentTaxActionMessage;
@@ -205,73 +141,92 @@ export function checkAlignmentTaxEvent(deltaTime) {
       );
     }
   } else {
-    // Reset timer if allocation drops below threshold
+    // Reset timer if draw drops below threshold
     gameState.alignmentTaxTimer = 0;
   }
 }
 
-// Legacy function - now a no-op since news is event-driven
-export function updateNewsFeed() {
-  // No longer does periodic random news
-  // All news is now event-triggered
+// Check for first alignment drift (danger tier reaches moderate or worse)
+export function checkAlignmentDriftWarning() {
+  if (gameState.arc < 2) return;
+  if (gameState.alignmentDriftWarningFired) return;
+
+  const tier = gameState.computed?.danger?.tier;
+  if (tier === 'moderate' || tier === 'severe' || tier === 'critical') {
+    gameState.alignmentDriftWarningFired = true;
+    const content = newsContent.alignment_drift;
+    addNewsItem(content.text, content.type, 'alignment_drift');
+  }
 }
 
-// Render news feed to DOM
-export function renderNewsFeed() {
-  const container = document.getElementById('news-feed-list');
-  if (!container) return;
+// --- Scheduled News Chains ---
+// Fire news items on game-time delays. Pauses when game is paused (uses timeElapsed).
 
-  container.innerHTML = '';
+export function scheduleNewsChain(id, items) {
+  if (!gameState.pendingNewsChains) gameState.pendingNewsChains = [];
+  // Dedup: don't schedule the same chain twice
+  if (gameState.pendingNewsChains.some(c => c.id === id)) return;
 
-  // Render oldest to newest (newest at bottom like a terminal)
-  for (const item of newsFeed) {
-    const el = document.createElement('div');
-    el.className = `news-item news-${item.type}`;
-    el.textContent = item.text;
-    container.appendChild(el);
+  const startTime = gameState.timeElapsed;
+  let nextIndex = 0;
+
+  // Fire any delay-0 items immediately
+  while (nextIndex < items.length && items[nextIndex].delay <= 0) {
+    addNewsItem(items[nextIndex].text, items[nextIndex].type || 'news');
+    nextIndex++;
   }
 
-  // Auto-scroll to bottom to show newest items
-  const feedEl = document.getElementById('news-feed');
-  if (feedEl) {
-    feedEl.scrollTop = feedEl.scrollHeight;
+  // Only enqueue if there are remaining items
+  if (nextIndex < items.length) {
+    gameState.pendingNewsChains.push({
+      id,
+      items,
+      startTime,
+      nextIndex,
+    });
+  }
+}
+
+export function processNewsChains() {
+  const chains = gameState.pendingNewsChains;
+  if (!chains || chains.length === 0) return;
+
+  const now = gameState.timeElapsed;
+  let i = chains.length;
+  while (i--) {
+    const chain = chains[i];
+    // Fire all items whose delay has elapsed
+    while (chain.nextIndex < chain.items.length) {
+      const item = chain.items[chain.nextIndex];
+      if (now - chain.startTime < item.delay) break;
+      addNewsItem(item.text, item.type || 'news');
+      chain.nextIndex++;
+    }
+    // Remove completed chains
+    if (chain.nextIndex >= chain.items.length) {
+      chains.splice(i, 1);
+    }
   }
 }
 
 // Initialize news feed
 export function initializeNewsFeed() {
-  newsFeed = [];
-  triggeredNews = new Set();
-  firedProgressMilestones = new Set();
-  firedAlignmentThresholds = new Set();
-  firedAlignmentDebtTiers = new Set();
-
-  // Rebuild triggered state from saved messages so page refreshes
-  // don't re-fire news items
-  if (gameState.messages) {
-    for (const msg of gameState.messages) {
-      if (!msg.triggeredBy) continue;
-      triggeredNews.add(msg.triggeredBy);
-      // Restore milestone sets from news keys (e.g. "progress_milestone:10")
-      const [category, id] = msg.triggeredBy.split(':');
-      if (category === 'progress_milestone') firedProgressMilestones.add(Number(id));
-      else if (category === 'alignment_ambient') firedAlignmentThresholds.add(id);
-      else if (category === 'alignment_debt') firedAlignmentDebtTiers.add(id);
-    }
-  }
-
+  lastNewsText = null;
+  // Clear any pending news chains from a previous run
+  if (gameState.pendingNewsChains) gameState.pendingNewsChains = [];
+  // Dedup state is managed by initializeMessages() in messages.js
 }
 
 // Export for testing and external triggering
 if (typeof window !== 'undefined') {
   window.addNewsItem = addNewsItem;
-  window.clearNewsFeed = clearNewsFeed;
-  window.getNewsFeedItems = getNewsFeedItems;
   window.triggerNewsForEvent = triggerNewsForEvent;
   window.checkProgressMilestones = checkProgressMilestones;
   window.triggerFundingMilestone = triggerFundingMilestone;
-  window.checkAlignmentNews = checkAlignmentNews;
-  window.checkAlignmentDebt = checkAlignmentDebt;
+
   window.checkAlignmentTaxEvent = checkAlignmentTaxEvent;
+  window.checkAlignmentDriftWarning = checkAlignmentDriftWarning;
   window.initializeNewsFeed = initializeNewsFeed;
+  window.scheduleNewsChain = scheduleNewsChain;
+  window.processNewsChains = processNewsChains;
 }

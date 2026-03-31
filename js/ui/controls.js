@@ -30,7 +30,6 @@ import { requestFullUpdate } from './signals.js';
 import { getTotalResearcherCount } from './economics.js';
 import { getTrackResearchRate } from './research.js';
 import { logSliderChange } from '../playtest-logger.js';
-import { getCultureBonuses } from '../resources.js';
 import { attachTooltip } from './stats-tooltip.js';
 import { isCultureShiftUnlocked } from '../automation-state.js';
 
@@ -87,6 +86,7 @@ export function initAllocationSliders() {
       // Set initial value from game state
       const allocation = Math.round(gameState.tracks[track].researcherAllocation * 100);
       slider.value = allocation;
+      slider.style.setProperty('--val', `${allocation}%`);
 
       // Slider drag updates allocation + syncs number input
       slider.addEventListener('input', (e) => {
@@ -184,76 +184,80 @@ export function initAllocationSliders() {
   updateAllocationDisplay();
 }
 
+// Cycle order for waterfall redistribution: Cap → App → Ali → Cap
+const TRACK_CYCLE = ['capabilities', 'applications', 'alignment'];
+
+/**
+ * Waterfall redistribution for Arc 2+ three-way allocation.
+ * When a track changes, the delta is taken from / given to the next track
+ * in the cycle, overflowing to the one after if needed.
+ * Completed tracks are skipped.
+ */
+function waterfallRedistribute(changedTrack, newPct, allocations) {
+  const result = { ...allocations };
+  const oldPct = Math.round(result[changedTrack] * 100);
+  newPct = Math.max(0, Math.min(100, newPct));
+  let delta = newPct - oldPct;
+
+  result[changedTrack] = newPct / 100;
+
+  const startIdx = TRACK_CYCLE.indexOf(changedTrack);
+  for (let i = 1; i <= 2 && delta !== 0; i++) {
+    const neighborIdx = (startIdx + i) % 3;
+    const neighbor = TRACK_CYCLE[neighborIdx];
+
+    const neighborPct = Math.round(result[neighbor] * 100);
+    if (delta > 0) {
+      const take = Math.min(delta, neighborPct);
+      result[neighbor] = (neighborPct - take) / 100;
+      delta -= take;
+    } else {
+      result[neighbor] = (neighborPct - delta) / 100;
+      delta = 0;
+    }
+  }
+
+  return result;
+}
+
 /**
  * Update allocation — sets TARGET allocation; actual drifts toward it via
  * culture system.
  */
 export function updateAllocation(changedTrack, newValue) {
-  // Don't allow allocation to a completed track
-  if (window.isTrackComplete(changedTrack)) return;
+  // In Arc 1, alignment is always derived — ignore direct changes
+  if (changedTrack === 'alignment' && gameState.arc === 1) return;
 
-  // In Arc 1, alignment is hidden — only work with capabilities and applications
   const isArc1 = gameState.arc === 1;
-  const tracks = isArc1
-    ? ['capabilities', 'applications']
-    : ['capabilities', 'applications', 'alignment'];
 
-  // If trying to change alignment in Arc 1, ignore
-  if (isArc1 && changedTrack === 'alignment') {
-    return;
-  }
+  // Initialize target from current state if needed
+  gameState.targetAllocation = gameState.targetAllocation || {
+    capabilities: gameState.tracks.capabilities.researcherAllocation,
+    applications: gameState.tracks.applications.researcherAllocation,
+    alignment: gameState.tracks.alignment.researcherAllocation,
+  };
 
-  const otherTracks = tracks.filter(t => t !== changedTrack);
-
-  // Clamp newValue between 0 and 100
   newValue = Math.max(0, Math.min(100, newValue));
 
-  // Calculate remaining percentage for other tracks
-  const remaining = 100 - newValue;
-
   if (isArc1) {
-    // In Arc 1, no alignment — cap/app split the full 100%
-    gameState.targetAllocation = gameState.targetAllocation || {
-      capabilities: gameState.tracks.capabilities.researcherAllocation,
-      applications: gameState.tracks.applications.researcherAllocation,
-      alignment: 0,
-    };
-    const otherValue = 100 - newValue;
+    // Arc 1: two-way split, app = 100 - cap
     gameState.targetAllocation[changedTrack] = newValue / 100;
-    gameState.targetAllocation[otherTracks[0]] = otherValue / 100;
+    const other = changedTrack === 'capabilities' ? 'applications' : 'capabilities';
+    gameState.targetAllocation[other] = (100 - newValue) / 100;
     gameState.targetAllocation.alignment = 0;
   } else {
-    gameState.targetAllocation = gameState.targetAllocation || {
-      capabilities: gameState.tracks.capabilities.researcherAllocation,
-      applications: gameState.tracks.applications.researcherAllocation,
-      alignment: gameState.tracks.alignment.researcherAllocation,
+    // Arc 2+: waterfall redistribution across all three tracks
+    const current = {
+      capabilities: gameState.targetAllocation.capabilities,
+      applications: gameState.targetAllocation.applications,
+      alignment: gameState.targetAllocation.alignment,
     };
-    // Get current target allocations of other tracks
-    const currentOther1 = (gameState.targetAllocation[otherTracks[0]] ?? gameState.tracks[otherTracks[0]].researcherAllocation) * 100;
-    const currentOther2 = (gameState.targetAllocation[otherTracks[1]] ?? gameState.tracks[otherTracks[1]].researcherAllocation) * 100;
-    const otherSum = currentOther1 + currentOther2;
-
-    let newOther1, newOther2;
-
-    if (otherSum > 0) {
-      // Distribute remaining proportionally based on existing ratios
-      const ratio1 = currentOther1 / otherSum;
-      const ratio2 = currentOther2 / otherSum;
-      newOther1 = remaining * ratio1;
-      newOther2 = remaining * ratio2;
-    } else {
-      // If other tracks are both zero, split evenly
-      newOther1 = remaining / 2;
-      newOther2 = remaining / 2;
-    }
-
-    // Update target allocation (convert percentage to decimal 0-1)
-    gameState.targetAllocation[changedTrack] = newValue / 100;
-    gameState.targetAllocation[otherTracks[0]] = newOther1 / 100;
-    gameState.targetAllocation[otherTracks[1]] = newOther2 / 100;
+    const result = waterfallRedistribute(changedTrack, newValue, current);
+    gameState.targetAllocation.capabilities = result.capabilities;
+    gameState.targetAllocation.applications = result.applications;
+    gameState.targetAllocation.alignment = result.alignment;
   }
 
-  // Update display
   updateAllocationDisplay();
 }
 
@@ -279,34 +283,13 @@ export function updateAllocationDisplay() {
     const numInput = $(`${track}-percent-input`);
     const driftDisplay = $(`${track}-drift`);
 
-    // Check if track is complete — lock slider
-    const row = document.querySelector(`.allocation-row[data-track="${track}"]`);
-    if (row) {
-      const complete = window.isTrackComplete(track);
-      row.classList.toggle('track-complete', complete);
-
-      // Add or remove "Complete" label
-      let completeLabel = row.querySelector('.allocation-complete-label');
-      if (complete && !completeLabel) {
-        completeLabel = document.createElement('span');
-        completeLabel.className = 'allocation-complete-label';
-        completeLabel.textContent = 'Complete';
-        row.appendChild(completeLabel);
-      } else if (!complete && completeLabel) {
-        completeLabel.remove();
-      }
-
-      // Disable inputs
-      if (slider) slider.disabled = complete;
-      if (numInput) numInput.disabled = complete;
-    }
-
     if (slider) {
       const actualAlloc = state.tracks[track].researcherAllocation * 100;
       const targetAlloc = target ? target[track] * 100 : actualAlloc;
 
       // Slider shows target value (what player is aiming for)
       slider.value = Math.round(targetAlloc);
+      slider.style.setProperty('--val', `${Math.round(targetAlloc)}%`);
 
       // Number input shows target value (only update if not focused to avoid clobbering user typing)
       if (numInput && document.activeElement !== numInput) {
@@ -331,12 +314,12 @@ export function updateAllocationDisplay() {
     totalEl.textContent = totalResearchers;
   }
 
-  // In Arc 1, hide alignment slider row
+  // Hide alignment slider row until fine_tuning is unlocked (RLHF requires it)
   const alignmentRow = document.querySelector('.allocation-row[data-track="alignment"]');
-  if (gameState.arc === 1) {
-    if (alignmentRow) alignmentRow.classList.add('hidden-until-unlocked');
-  } else {
-    if (alignmentRow) alignmentRow.classList.remove('hidden-until-unlocked');
+  if (alignmentRow) {
+    const hasFineTuning = gameState.tracks?.capabilities?.unlockedCapabilities?.includes('fine_tuning');
+    const showAlignment = gameState.arc >= 2 && hasFineTuning;
+    alignmentRow.classList.toggle('hidden-until-unlocked', !showAlignment);
   }
 
   // Culture shift button: show when target differs from actual
@@ -390,52 +373,28 @@ export function updateAllocationDisplay() {
 const TRACK_ABBREVS = { capabilities: 'cap', applications: 'app', alignment: 'ali' };
 
 /** Build the combined modifier for a track (data quality, culture bonuses, etc.) */
-function getTrackModifier(trackId) {
+function getTrackModifierValue(trackId) {
   const breakdown = gameState.computed?.research?.tracks?.[trackId];
-  if (!breakdown) return { combined: 1, parts: [] };
+  if (!breakdown) return 1;
 
-  const parts = [];
-
+  // Combined modifier from all track-specific multiplicative factors.
+  // The tooltip breakdown lives in research-tooltips.js (single source of truth).
+  let combined = 1;
   if (trackId === 'capabilities') {
-    const dataEff = breakdown.dataEffectiveness ?? 1;
-    if (Math.abs(dataEff - 1) > 0.005) {
-      parts.push({ label: 'Data quality', value: dataEff });
-    }
-    const capCulture = breakdown.cultureCapBonus ?? 0;
-    if (capCulture > 0.005) {
-      parts.push({ label: 'Cap focus culture', value: 1 + capCulture });
-    }
-    const custFeedback = breakdown.customerFeedback ?? 0;
-    if (custFeedback > 0.005) {
-      parts.push({ label: 'Customer feedback', value: 1 + custFeedback });
-    }
-    const autonomy = breakdown.autonomyGrant ?? 0;
-    if (autonomy && Math.abs(autonomy - 1) > 0.005) {
-      parts.push({ label: 'Autonomy grant', value: autonomy });
-    }
-    if (breakdown.paused) {
-      parts.push({ label: 'Research paused', value: 0 });
-    }
+    combined *= breakdown.dataEffectiveness ?? 1;
+    combined *= 1 + (breakdown.customerFeedback ?? 0);
+    combined *= breakdown.autonomySoftCap ?? 1;
+    if (breakdown.paused) combined = 0;
   }
-
   if (trackId === 'alignment') {
-    const decay = breakdown.alignmentDecay ?? 1;
-    if (Math.abs(decay - 1) > 0.005) {
-      parts.push({ label: 'Alignment decay', value: decay });
-    }
+    combined *= breakdown.alignmentDecay ?? 1;
   }
-
-  // Balanced bonus applies to all tracks
-  const balanced = breakdown.balancedBonus ?? 0;
-  if (balanced > 0.005) {
-    parts.push({ label: 'Balanced culture', value: 1 + balanced });
+  combined *= 1 + (breakdown.cultureTrackBonus ?? 0);
+  combined *= 1 + (breakdown.cultureAllResearch ?? 0);
+  if (breakdown.alignmentDrag !== undefined) {
+    combined *= breakdown.alignmentDrag;
   }
-
-  const combined = parts.length > 0
-    ? parts.reduce((acc, p) => acc * p.value, 1)
-    : 1;
-
-  return { combined, parts };
+  return combined;
 }
 
 /** Update the per-track rate rows on the left side. */
@@ -450,10 +409,11 @@ function updateTrackRates() {
     appRow.classList.toggle('hidden-until-unlocked', !hasBasicTransformer);
   }
 
-  // Show alignment row only in Arc 2
+  // Show alignment row only in Arc 2 after fine_tuning unlocked
   const aliRow = $('track-rate-ali-row');
   if (aliRow) {
-    aliRow.classList.toggle('hidden-until-unlocked', gameState.arc === 1);
+    const hasFineTuning = gameState.tracks?.capabilities?.unlockedCapabilities?.includes('fine_tuning');
+    aliRow.classList.toggle('hidden-until-unlocked', !(gameState.arc >= 2 && hasFineTuning));
   }
 
   for (const track of tracks) {
@@ -465,7 +425,7 @@ function updateTrackRates() {
     const actualAlloc = gameState.tracks[track].researcherAllocation;
     const targetAlloc = gameState.targetAllocation?.[track];
     const rate = getTrackResearchRate(track);
-    const mod = getTrackModifier(track);
+    const mod = getTrackModifierValue(track);
 
     if (allocEl) {
       // Show target allocation (what player set) when available, to avoid
@@ -475,25 +435,13 @@ function updateTrackRates() {
     }
 
     if (modEl) {
-      if (Math.abs(mod.combined - 1) > 0.005) {
-        modEl.textContent = `\u00d7${mod.combined.toFixed(2)}`;
+      if (Math.abs(mod - 1) > 0.005) {
+        modEl.textContent = `\u00d7${mod.toFixed(2)}`;
         modEl.classList.remove('hidden');
 
-        // Color code: penalty or bonus
-        modEl.classList.toggle('mod-penalty', mod.combined < 1);
-        modEl.classList.toggle('mod-bonus', mod.combined > 1);
-
-        // Attach tooltip (once)
-        if (!modEl._hasModTooltip) {
-          attachTooltip(modEl, () => {
-            const currentMod = getTrackModifier(track);
-            const html = currentMod.parts.map(p =>
-              `<div class="tooltip-row"><span>${p.label}</span><span>\u00d7${p.value.toFixed(2)}</span></div>`
-            ).join('');
-            return `<div class="tooltip-header"><span>Modifiers</span></div>${html}`;
-          });
-          modEl._hasModTooltip = true;
-        }
+        // Color code: penalty or bonus (tooltip is on the row, not the badge)
+        modEl.classList.toggle('mod-penalty', mod < 1);
+        modEl.classList.toggle('mod-bonus', mod > 1);
       } else {
         modEl.classList.add('hidden');
       }
@@ -509,29 +457,27 @@ function updateTrackRates() {
 // Culture display (right side, below allocation sliders)
 // ---------------------------------------------------------------------------
 
-const CULTURE_THRESHOLD = BALANCE.CULTURE_BALANCED_THRESHOLD;
-
-/** Determine the culture label based on actual allocation. */
+/** Determine culture label from axis positions. */
 function getCultureLabel() {
-  const cap = gameState.tracks.capabilities.researcherAllocation;
-  const app = gameState.tracks.applications.researcherAllocation;
-  const ali = gameState.tracks.alignment.researcherAllocation;
+  const culture = gameState.computed?.culture;
+  if (!culture) return 'Generalist';
 
-  const max = Math.max(cap, app, ali);
-  if (max <= CULTURE_THRESHOLD) return 'Generalist';
+  // Find the strongest axis lean
+  const positions = culture.axes.map(ax => ({ id: ax.id, abs: Math.abs(ax.position), pos: ax.position }));
+  positions.sort((a, b) => b.abs - a.abs);
 
-  // Dominant = strictly above threshold AND highest (ties = Generalist)
-  const aboveThreshold = [];
-  if (cap > CULTURE_THRESHOLD) aboveThreshold.push({ track: 'capabilities', value: cap });
-  if (app > CULTURE_THRESHOLD) aboveThreshold.push({ track: 'applications', value: app });
-  if (ali > CULTURE_THRESHOLD) aboveThreshold.push({ track: 'alignment', value: ali });
+  const strongest = positions[0];
+  if (strongest.abs < 0.2) return 'Generalist'; // no strong lean
 
-  if (aboveThreshold.length !== 1) return 'Generalist';
-
-  const dominant = aboveThreshold[0].track;
-  if (dominant === 'capabilities') return 'Breakthrough';
-  if (dominant === 'applications') return 'Commercial';
-  if (dominant === 'alignment') return 'Safety-first';
+  if (strongest.id === 'researchCommercial') {
+    return strongest.pos > 0 ? 'Breakthrough' : 'Commercial';
+  }
+  if (strongest.id === 'speedSafety') {
+    return strongest.pos > 0 ? 'Move Fast' : 'Safety-first';
+  }
+  if (strongest.id === 'profitResponsibility') {
+    return strongest.pos > 0 ? 'Profit-Driven' : 'Responsible';
+  }
   return 'Generalist';
 }
 
@@ -540,26 +486,49 @@ function updateCultureDisplay() {
   const display = $('culture-display');
   if (!display) return;
 
-  const culture = getCultureBonuses();
+  const culture = gameState.computed?.culture;
   const label = getCultureLabel();
 
-  // Build bonus lines
+  // Build bonus lines from axis system
   const lines = [];
 
-  if (culture.capBonus > 0.005) {
-    lines.push(`<span class="positive">+${Math.round(culture.capBonus * 100)}%</span> capabilities research`);
-  }
-  if (culture.appEdgeSlow > 0.005) {
-    lines.push(`<span class="positive">+${Math.round(culture.appEdgeSlow * 100)}%</span> market edge retention`);
-  }
-  if (culture.aliMult > 1.005) {
-    lines.push(`<span class="positive">\u00d7${culture.aliMult.toFixed(1)}</span> alignment effectiveness`);
-  }
-  if (culture.balancedResearch > 0.005) {
-    lines.push(`<span class="positive">+${Math.round(culture.balancedResearch * 100)}%</span> all research`);
-  }
-  if (culture.balancedRevenue > 0.005) {
-    lines.push(`<span class="positive">+${Math.round(culture.balancedRevenue * 100)}%</span> revenue`);
+  if (culture) {
+    const allRes = culture.allResearch || 0;
+    const demand = culture.demand || 0;
+    const apGen = culture.apGeneration || 0;
+
+    // Research line: show net per track inline (trackResearch + allResearch)
+    const trackEntries = [
+      ['cap', culture.trackResearch?.capabilities || 0],
+      ['app', culture.trackResearch?.applications || 0],
+    ];
+    // Only show alignment in Arc 2
+    if (gameState.arc >= 2) {
+      trackEntries.push(['ali', culture.trackResearch?.alignment || 0]);
+    }
+    const resParts = [];
+    for (const [abbr, trackBonus] of trackEntries) {
+      const net = trackBonus + allRes;
+      if (Math.abs(net) > 0.005) {
+        const sign = net > 0 ? '+' : '';
+        const cls = net > 0 ? 'positive' : 'negative';
+        resParts.push(`${abbr} <span class="${cls}">${sign}${Math.round(net * 100)}%</span>`);
+      }
+    }
+    if (resParts.length > 0) {
+      lines.push(`Research: ${resParts.join('  ')}`);
+    }
+
+    if (Math.abs(demand) > 0.005) {
+      const sign = demand > 0 ? '+' : '';
+      const cls = demand > 0 ? 'positive' : 'negative';
+      lines.push(`Demand: <span class="${cls}">${sign}${Math.round(demand * 100)}%</span>`);
+    }
+    if (Math.abs(apGen) > 0.005) {
+      const sign = apGen > 0 ? '+' : '';
+      const cls = apGen > 0 ? 'positive' : 'negative';
+      lines.push(`AP gen: <span class="${cls}">${sign}${Math.round(apGen * 100)}%</span>`);
+    }
   }
 
   // Show section only when there are active bonuses
@@ -710,13 +679,13 @@ function updateResearchBreakdown() {
   const aiRow = $('research-ai-row');
   const aiRate = $('research-ai-rate');
   if (aiRow && aiRate) {
-    const val = research.feedbackContribution || 0;
+    const val = research.tracks?.capabilities?.effectiveFeedbackContribution || 0;
     aiRow.classList.toggle('hidden', val === 0);
     aiRate.textContent = '+' + formatNumber(val) + getRateUnit();
   }
 
-  // Base research rate = personnel subtotal + AI self-improvement (before track-specific modifiers)
-  const total = (research.total || 0) + (research.feedbackContribution || 0);
+  // Total research rate = sum of track rates (post-allocation, post-ceiling actual RP/s)
+  const total = gameState.resources.researchRate || 0;
   const totalEl = $('research-total-rate');
   if (totalEl) totalEl.textContent = '+' + formatNumber(total) + getRateUnit();
 }
@@ -735,6 +704,7 @@ export function initComputeAllocationSlider() {
   // Set initial values
   const initial = Math.round(gameState.resources.computeAllocation * 100);
   slider.value = initial;
+  slider.style.setProperty('--val', `${initial}%`);
   if (internalInput) internalInput.value = initial;
   if (externalInput) externalInput.value = 100 - initial;
 
@@ -758,6 +728,7 @@ export function initComputeAllocationSlider() {
       e.target.value = v;
       gameState.resources.computeAllocation = v / 100;
       slider.value = v;
+      slider.style.setProperty('--val', `${v}%`);
       if (externalInput) externalInput.value = 100 - v;
       updateComputeAllocationDisplay();
       logSliderChange('compute', v / 100);
@@ -775,6 +746,7 @@ export function initComputeAllocationSlider() {
       const internal = 100 - v;
       gameState.resources.computeAllocation = internal / 100;
       slider.value = internal;
+      slider.style.setProperty('--val', `${internal}%`);
       if (internalInput) internalInput.value = internal;
       updateComputeAllocationDisplay();
       logSliderChange('compute', internal / 100);
@@ -919,6 +891,7 @@ function createQueueItemElement(item, isActive) {
   const textSpan = document.createElement('span');
   textSpan.className = 'queue-item-text';
   textSpan.textContent = text;
+  attachTooltip(textSpan, () => textSpan.textContent);
 
   const controlsSpan = document.createElement('span');
   controlsSpan.className = 'queue-item-controls';

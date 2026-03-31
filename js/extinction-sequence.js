@@ -1,24 +1,54 @@
 // Player-facing text: see docs/message-registry.json
-// Extinction Sequence - Variable pacing based on hidden alignment
+// Extinction Sequence - Variable pacing based on rapid_vs_careful strategic choice
 // Reckless players: fast, brutal (~30s). Safety-conscious: slow, tragic (~90s).
 
 import { gameState } from './game-state.js';
-import { transitionToArc2, resetForExtinction } from './prestige.js';
+import { transitionToArc2 } from './prestige.js';
 import { applyDebugSettings, isDebugMode } from './debug-commands.js';
-import { addNewsItem, clearNewsFeed } from './news-feed.js';
-import { EXTINCTION_TIMING, ALIGNMENT } from '../data/balance.js';
+import { addNewsItem } from './news-feed.js';
 import { arc1Endings, triggerEnding } from './endings.js';
+
+// Extinction Sequence Timing (ms) — single consumer, colocated per AGENTS.md
+const EXTINCTION_TIMING = {
+  // Reckless tier (rapid_deployment choice): ~30s
+  RECKLESS: {
+    NEWS_DELAYS: [0, 2000, 5000, 10000],
+    DEGRADATION_DELAY: 15000,
+    FADE_TO_BLACK_DELAY: 22000,
+    ARC2_UNLOCK_DELAY: 28000,
+  },
+  // Moderate tier (no choice made): ~55s
+  MODERATE: {
+    NEWS_DELAYS: [0, 3000, 8000, 15000, 22000, 30000, 38000],
+    DEGRADATION_DELAY: 42000,
+    FADE_TO_BLACK_DELAY: 50000,
+    ARC2_UNLOCK_DELAY: 55000,
+  },
+  // Safety-conscious tier (careful_validation choice): ~90s
+  SAFETY: {
+    NEWS_DELAYS: [0, 4000, 10000, 18000, 26000, 34000, 42000, 50000, 58000, 66000, 74000, 80000],
+    DEGRADATION_DELAY: 82000,
+    FADE_TO_BLACK_DELAY: 88000,
+    ARC2_UNLOCK_DELAY: 93000,
+  },
+  SAFETY_TIMEOUT: 120000,
+};
 import { resetTriggeredMessages } from './messages.js';
 import { extinctionNewsByTier } from './content/news-content.js';
+import { getChosenOption } from './strategic-choices.js';
+import {
+  setFastPacing, restoreNormalPacing,
+  buildEndingDOM, typeNarrative,
+} from './ui/typewriter.js';
 
 
 let sequenceActive = false;
 let sequenceTimeouts = [];
 
 export function getExtinctionTier() {
-  const ha = gameState.hiddenAlignment || 0;
-  if (ha < ALIGNMENT.EXTINCTION_RECKLESS_THRESHOLD) return 'RECKLESS';
-  if (ha > ALIGNMENT.EXTINCTION_SAFETY_THRESHOLD) return 'SAFETY';
+  const choice = getChosenOption('rapid_vs_careful');
+  if (choice === 'careful_validation') return 'SAFETY';
+  if (choice === 'rapid_deployment') return 'RECKLESS';
   return 'MODERATE';
 }
 
@@ -57,7 +87,6 @@ export function triggerExtinctionSequence() {
   const timing = EXTINCTION_TIMING[tier];
   const news = extinctionNewsByTier[tier];
 
-  clearNewsFeed();
   document.body.classList.add('extinction-active');
 
   news.forEach((item, i) => {
@@ -114,103 +143,11 @@ function fadeToBlack() {
 }
 
 // --- Terminal Ending Screen ---
-// Typewriter pacing constants (mutable for debug fast mode)
-let CHAR_DELAY = 40;          // ms per character
-let LINE_PAUSE = 1500;        // ms pause between lines
-let SENTENCE_PAUSE = 1500;    // ms pause after sentence-ending punctuation
-let PROMPT_DELAY = 1500;      // ms after last line before prompt appears
-
-function setFastPacing() {
-  CHAR_DELAY = 5;
-  LINE_PAUSE = 200;
-  SENTENCE_PAUSE = 200;
-  PROMPT_DELAY = 200;
-}
-
-function restoreNormalPacing() {
-  CHAR_DELAY = 40;
-  LINE_PAUSE = 1500;
-  SENTENCE_PAUSE = 1500;
-  PROMPT_DELAY = 1500;
-}
-
-// Detect sentence boundary: .?! (not ellipsis) optionally followed by closing quote, then space
-function isSentenceBreak(text, nextIdx) {
-  if (nextIdx >= text.length || text[nextIdx] !== ' ') return false;
-  let i = nextIdx - 1;
-  // Skip closing quotes
-  while (i >= 0 && '"\'\u201D\u2019'.includes(text[i])) i--;
-  if (i < 0 || !'.?!'.includes(text[i])) return false;
-  // Exclude ellipsis (two or more consecutive dots)
-  if (text[i] === '.' && i > 0 && text[i - 1] === '.') return false;
-  return true;
-}
-
-// Parse **emphasis** markers from a line, return { clean, emphStart, emphEnd }
-// emphStart/emphEnd are char indices in the cleaned string (-1 if no emphasis)
-function parseEmphasis(line) {
-  const open = line.indexOf('**');
-  if (open === -1) return { clean: line, emphStart: -1, emphEnd: -1 };
-  const afterOpen = line.substring(open + 2);
-  const close = afterOpen.indexOf('**');
-  if (close === -1) return { clean: line, emphStart: -1, emphEnd: -1 };
-  const clean = line.substring(0, open) + afterOpen.substring(0, close) + afterOpen.substring(close + 2);
-  return { clean, emphStart: open, emphEnd: open + close };
-}
-
-// Render text into a line element, with optional emphasis span
-function renderLineText(lineEl, text, emphStart, emphEnd) {
-  lineEl.textContent = '';
-  if (emphStart >= 0 && emphStart < text.length) {
-    const eStart = Math.min(emphStart, text.length);
-    const eEnd = Math.min(emphEnd, text.length);
-    if (eStart > 0) lineEl.appendChild(document.createTextNode(text.substring(0, eStart)));
-    if (eEnd > eStart) {
-      const em = document.createElement('span');
-      em.className = 'ending-emphasis';
-      em.textContent = text.substring(eStart, eEnd);
-      lineEl.appendChild(em);
-    }
-    if (eEnd < text.length) lineEl.appendChild(document.createTextNode(text.substring(eEnd)));
-  } else {
-    lineEl.appendChild(document.createTextNode(text));
-  }
-}
-
-// Show blinking cursor at end of text in a line element
-function showBlinkCursor(lineEl, text, emphStart, emphEnd) {
-  renderLineText(lineEl, text, emphStart !== undefined ? emphStart : -1, emphEnd !== undefined ? emphEnd : -1);
-  const cursorSpan = document.createElement('span');
-  cursorSpan.className = 'ending-cursor-blink';
-  cursorSpan.textContent = '\u258C';
-  lineEl.appendChild(cursorSpan);
-}
-
-// Build the ending screen DOM: scroll area (narrative) + prompt (fixed at bottom)
-function buildEndingDOM(overlay) {
-  overlay.innerHTML = '';
-  overlay.classList.add('ending-screen');
-
-  // Scroll area holds the narrative — separate from prompt so prompt never moves
-  const scrollArea = document.createElement('div');
-  scrollArea.className = 'ending-scroll-area';
-
-  const container = document.createElement('div');
-  container.className = 'ending-container';
-  scrollArea.appendChild(container);
-
-  // Prompt sits below scroll area, outside scrollable content
-  const promptBlock = document.createElement('div');
-  promptBlock.className = 'ending-prompt';
-  promptBlock.style.display = 'none';
-
-  overlay.appendChild(scrollArea);
-  overlay.appendChild(promptBlock);
-
-  return { scrollArea, container, promptBlock };
-}
 
 function showEndingScreen(_tier) {
+  if (!sequenceActive) return; // Already shown (e.g. safety timeout after normal trigger)
+  sequenceActive = false;
+
   const overlay = document.getElementById('extinction-overlay');
   if (!overlay) {
     console.error('Extinction overlay not found');
@@ -229,155 +166,14 @@ function showEndingScreen(_tier) {
   });
 }
 
-// Split narrative lines into sections (split on '---')
-function splitSections(lines) {
-  const sections = [];
-  let current = [];
-  for (const line of lines) {
-    if (line === '---') {
-      sections.push(current);
-      current = [];
-    } else {
-      current.push(line);
-    }
-  }
-  if (current.length) sections.push(current);
-  return sections;
-}
-
-function typeNarrative(scrollArea, container, lines, onComplete) {
-  const sections = splitSections(lines);
-  let sectionIndex = 0;
-
-  // Lock user scrolling (but allow programmatic scrollBy)
-  function blockScroll(e) { e.preventDefault(); }
-  scrollArea.addEventListener('wheel', blockScroll, { passive: false });
-  scrollArea.addEventListener('touchmove', blockScroll, { passive: false });
-
-  function unlockScroll() {
-    scrollArea.removeEventListener('wheel', blockScroll);
-    scrollArea.removeEventListener('touchmove', blockScroll);
-  }
-
-  function scrollToSection(sectionEl) {
-    const areaRect = scrollArea.getBoundingClientRect();
-    const sectionRect = sectionEl.getBoundingClientRect();
-    const currentOffset = sectionRect.top - areaRect.top;
-    const desiredOffset = areaRect.height * 0.3;
-    scrollArea.scrollBy({ top: currentOffset - desiredOffset, behavior: 'smooth' });
-  }
-
-  function playSection() {
-    if (sectionIndex >= sections.length) {
-      // All sections done — unlock scrolling, smoothly transition to final layout
-      unlockScroll();
-      container.style.transition = 'padding-bottom 1s ease';
-      container.style.paddingBottom = '2rem';
-      // Don't scroll — keep user at section 3 where they just finished reading
-      setTimeout(onComplete, PROMPT_DELAY);
-      return;
-    }
-
-    const sectionLines = sections[sectionIndex];
-    sectionIndex++;
-
-    // Create section element
-    const sectionEl = document.createElement('div');
-    sectionEl.className = 'ending-section';
-    container.appendChild(sectionEl);
-
-    // Smooth-scroll so new section starts at consistent position
-    scrollToSection(sectionEl);
-
-    // Type lines within this section
-    let lineIdx = 0;
-    function nextLine() {
-      if (lineIdx >= sectionLines.length) {
-        // Section complete
-        if (sectionIndex < sections.length) {
-          // More sections — show cursor, wait for advance
-          const cursor = document.createElement('div');
-          cursor.className = 'ending-line ending-cursor-pause';
-          cursor.textContent = '\u258C';
-          sectionEl.appendChild(cursor);
-
-          function advance(e) {
-            if (e.type === 'keydown' && (e.metaKey || e.ctrlKey || e.altKey)) return;
-            if (e.type === 'keydown' && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Shift', 'Control', 'Alt', 'Meta', 'Tab'].includes(e.key)) return;
-            e.preventDefault();
-            document.removeEventListener('keydown', advance);
-            document.removeEventListener('click', advance);
-            cursor.remove();
-            // Dim the completed section
-            sectionEl.classList.add('dimmed');
-            // Brief pause, then scroll up and start next section
-            setTimeout(playSection, 400);
-          }
-
-          setTimeout(() => {
-            document.addEventListener('keydown', advance);
-            document.addEventListener('click', advance);
-          }, 200);
-        } else {
-          // Last section — go to prompt
-          playSection(); // triggers unlock + onComplete
-        }
-        return;
-      }
-
-      const rawLine = sectionLines[lineIdx];
-      lineIdx++;
-
-      const { clean: line, emphStart, emphEnd } = parseEmphasis(rawLine);
-
-      const lineEl = document.createElement('div');
-      lineEl.className = 'ending-line';
-      sectionEl.appendChild(lineEl);
-
-      // Typewriter effect with trailing cursor and sentence pauses
-      let charIndex = 0;
-      const CURSOR = '\u258C';
-      function typeChar() {
-        if (charIndex < line.length) {
-          const partial = line.substring(0, charIndex + 1);
-          renderLineText(lineEl, partial + CURSOR, emphStart, emphEnd);
-          charIndex++;
-
-          // Sentence break: pause with blinking cursor
-          if (isSentenceBreak(line, charIndex)) {
-            showBlinkCursor(lineEl, line.substring(0, charIndex), emphStart, emphEnd);
-            setTimeout(typeChar, SENTENCE_PAUSE);
-          } else {
-            setTimeout(typeChar, CHAR_DELAY);
-          }
-        } else {
-          // End of line: blink cursor during pause, then advance
-          showBlinkCursor(lineEl, line, emphStart, emphEnd);
-          setTimeout(() => {
-            renderLineText(lineEl, line, emphStart, emphEnd);
-            nextLine();
-          }, LINE_PAUSE);
-        }
-      }
-      typeChar();
-    }
-
-    nextLine();
-  }
-
-  playSection();
-}
-
 function showTerminalPrompt(promptBlock, overlay) {
   promptBlock.style.display = '';
 
   const options = [
-    { label: 'Arc 2: Alignment [coming soon]', action: 'arc2', enabled: false },
-    { label: 'New game', action: 'new_game', enabled: true },
+    { label: 'Begin Arc 2: Alignment', action: 'arc2', enabled: true },
   ];
 
-  // Start selection on first enabled option
-  let selectedIndex = options.findIndex(o => o.enabled);
+  let selectedIndex = 0;
 
   function render() {
     promptBlock.innerHTML = '';
@@ -401,10 +197,16 @@ function showTerminalPrompt(promptBlock, overlay) {
   }
 
   function activateOption(action) {
-    if (action === 'new_game') {
+    if (action === 'arc2') {
+      // Record extinction ending in endingsSeen before arc reset wipes state
       const endingId = gameState.endingTriggered;
       const variant = gameState.endingVariant;
-      resetForExtinction(endingId, variant);
+      const endingsSeen = [...(gameState.endingsSeen || [])];
+      const endingKey = variant ? `${endingId}_${variant}` : endingId;
+      if (endingKey && !endingsSeen.includes(endingKey)) endingsSeen.push(endingKey);
+      gameState.endingsSeen = endingsSeen;
+
+      transitionToArc2();
       applyDebugSettings();
       resetTriggeredMessages();
       cleanup();
@@ -415,15 +217,11 @@ function showTerminalPrompt(promptBlock, overlay) {
   function handleKeydown(e) {
     if (e.key === 'ArrowUp') {
       e.preventDefault();
-      do {
-        selectedIndex = (selectedIndex - 1 + options.length) % options.length;
-      } while (!options[selectedIndex].enabled && selectedIndex !== 0);
+      selectedIndex = (selectedIndex - 1 + options.length) % options.length;
       render();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      do {
-        selectedIndex = (selectedIndex + 1) % options.length;
-      } while (!options[selectedIndex].enabled && selectedIndex !== options.length - 1);
+      selectedIndex = (selectedIndex + 1) % options.length;
       render();
     } else if (e.key === 'Enter') {
       e.preventDefault();

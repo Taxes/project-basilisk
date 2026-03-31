@@ -1,29 +1,30 @@
 // Modal UI — stats, changelog, events, endings, prestige
 
-import { gameState, resetGame, saveGame, prepareSaveData } from '../game-state.js';
+import { gameState, resetGame, saveGame, prepareSaveData, SAVE_KEY } from '../game-state.js';
 import { getTotalFlavorCount } from '../flavor-discovery.js';
 import LZString from '../../vendor/lz-string.min.js';
 import { tracks, isCapabilityUnlocked } from '../capabilities.js';
-import { getEndingById, getEndingStats, triggerEnding, getEndingNarrative, getPersonalityEpilogue } from '../endings.js';
+import { getEndingById, getEndingStats, triggerEnding, getEndingNarrative, getPersonalityEpilogue, buildEndingAnalytics } from '../endings.js';
 import { milestone } from '../analytics.js';
-import { getArchetype } from '../personality.js';
-import { calculatePrestigeGain, applyPrestigeGains, resetForPrestige } from '../prestige.js';
+import { calculatePrestigeGain, applyPrestigeGains, resetForPrestige, resetForArcSwitch } from '../prestige.js';
 import { resetQueueIdCounter } from '../focus-queue.js';
 import { resetTriggeredMessages, hasMessageBeenTriggered } from '../messages.js';
 import { triggerExtinctionSequence } from '../extinction-sequence.js';
+import { showEndingCinematic } from '../ending-sequence.js';
 import { checkPhaseCompletion } from '../phase-completion.js';
 import { formatNumber, formatFunding, formatPercent, formatTime, getRateUnit } from '../utils/format.js';
 import { changelog } from '../changelog.js';
-import { VERSION } from '../version.js';
+import { VERSION, DISPLAY_VERSION } from '../version.js';
 import { attachTooltip } from './stats-tooltip.js';
 import { $ } from '../utils/dom-cache.js';
 import { restartTutorial, skipTutorial, disableHints, MAIN_SEQUENCE_END } from '../tutorial-state.js';
+import { renderAchievementsTab } from './achievements-tab.js';
 import { requestFullUpdate } from './signals.js';
 import { applyDebugSettings } from '../debug-commands.js';
 import { getDebugMessageStatus } from '../tutorial-messages.js';
 import {
   onboardingMessage, strategicChoiceMessages,
-  alignmentWarningMessages, researchMilestoneMessages, fundingMessages,
+  researchMilestoneMessages, fundingMessages,
   boardMessages, creditWarningMessage, creditWarningPreAdaMessage,
   alignmentTaxActionMessage, kenJobApplicationMessage,
 } from '../content/message-content.js';
@@ -314,7 +315,7 @@ function renderChangelogContent() {
   });
 
   const versionEl = document.getElementById('settings-version');
-  if (versionEl) versionEl.textContent = `v${VERSION}`;
+  if (versionEl) versionEl.textContent = DISPLAY_VERSION;
 
   _changelogRendered = true;
 }
@@ -331,6 +332,7 @@ function switchSettingsTab(tabName) {
   // Toggle tab content
   document.getElementById('settings-tab-settings')?.classList.toggle('hidden', tabName !== 'settings');
   document.getElementById('settings-tab-stats')?.classList.toggle('hidden', tabName !== 'stats');
+  document.getElementById('settings-tab-achievements')?.classList.toggle('hidden', tabName !== 'achievements');
   document.getElementById('settings-tab-changelog')?.classList.toggle('hidden', tabName !== 'changelog');
   document.getElementById('settings-tab-about')?.classList.toggle('hidden', tabName !== 'about');
 
@@ -339,9 +341,13 @@ function switchSettingsTab(tabName) {
     renderStatsContent();
   }
 
+  if (tabName === 'achievements') {
+    renderAchievementsTab();
+  }
+
   if (tabName === 'about') {
     const aboutVersion = document.getElementById('about-version');
-    if (aboutVersion) aboutVersion.textContent = `v${VERSION}`;
+    if (aboutVersion) aboutVersion.textContent = DISPLAY_VERSION;
   }
 
   // Mark changelog as seen when switching to it
@@ -380,7 +386,17 @@ export function showSettingsModal() {
   const modeEl = document.getElementById('game-mode-value');
   if (modeEl && gameState.gameMode) {
     const labels = { arcade: 'Guided (beginner-friendly)', narrative: 'Narrative (challenging)' };
-    modeEl.textContent = labels[gameState.gameMode] || gameState.gameMode;
+    const modeLabel = labels[gameState.gameMode] || gameState.gameMode;
+    const arc = gameState.arc || 1;
+    modeEl.textContent = `Arc ${arc} | ${modeLabel}`;
+  }
+
+  // Update arc/mode switch button label
+  const arcModeBtn = document.getElementById('arc-mode-switch-button');
+  if (arcModeBtn) {
+    arcModeBtn.textContent = gameState.arcUnlocked >= 2
+      ? 'Change Arc / Mode (reset)'
+      : 'Change Mode (reset)';
   }
 
   // Hide tutorial section in narrative mode (tutorials are disabled)
@@ -406,6 +422,93 @@ export function showChangelog() {
 
 export function hideSettingsModal() {
   const modal = $('settings-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+// ---------------------------------------------------------------------------
+// Arc / Mode selector modal
+// ---------------------------------------------------------------------------
+
+export function showArcModeModal() {
+  const modal = document.getElementById('arc-mode-modal');
+  if (!modal) return;
+
+  const currentArc = gameState.arc || 1;
+  const currentMode = gameState.gameMode || 'arcade';
+  let selectedArc = currentArc;
+  let selectedMode = currentMode;
+
+  // Set up arc selector
+  const arcButtons = modal.querySelectorAll('#arc-selector .arc-mode-option');
+  arcButtons.forEach(btn => {
+    const arc = parseInt(btn.dataset.arc, 10);
+    const lock = btn.querySelector('.arc-mode-lock');
+
+    // Lock Arc 2 if not unlocked
+    if (arc === 2 && gameState.arcUnlocked < 2) {
+      btn.disabled = true;
+      btn.classList.add('locked');
+      if (lock) lock.classList.remove('hidden');
+    } else {
+      btn.disabled = false;
+      btn.classList.remove('locked');
+      if (lock) lock.classList.add('hidden');
+    }
+
+    // Highlight current selection
+    btn.classList.toggle('selected', arc === selectedArc);
+    btn.classList.toggle('current', arc === currentArc);
+
+    btn.onclick = () => {
+      if (btn.disabled) return;
+      selectedArc = arc;
+      arcButtons.forEach(b => b.classList.toggle('selected', parseInt(b.dataset.arc, 10) === arc));
+      updateConfirmState();
+    };
+  });
+
+  // Set up mode selector
+  const modeButtons = modal.querySelectorAll('#mode-selector .arc-mode-option');
+  modeButtons.forEach(btn => {
+    const mode = btn.dataset.mode;
+    btn.classList.toggle('selected', mode === selectedMode);
+    btn.classList.toggle('current', mode === currentMode);
+
+    btn.onclick = () => {
+      selectedMode = mode;
+      modeButtons.forEach(b => b.classList.toggle('selected', b.dataset.mode === mode));
+      updateConfirmState();
+    };
+  });
+
+  // Confirm / cancel
+  const confirmBtn = document.getElementById('arc-mode-confirm');
+  const cancelBtn = document.getElementById('arc-mode-cancel');
+  const warning = document.getElementById('arc-mode-warning');
+
+  function updateConfirmState() {
+    const changed = selectedArc !== currentArc || selectedMode !== currentMode;
+    confirmBtn.disabled = !changed;
+    warning.classList.toggle('hidden', !changed);
+  }
+
+  confirmBtn.onclick = () => {
+    resetForArcSwitch(selectedArc, selectedMode);
+    hideArcModeModal();
+    hideSettingsModal();
+    location.reload();
+  };
+
+  cancelBtn.onclick = () => {
+    hideArcModeModal();
+  };
+
+  updateConfirmState();
+  modal.classList.remove('hidden');
+}
+
+export function hideArcModeModal() {
+  const modal = document.getElementById('arc-mode-modal');
   if (modal) modal.classList.add('hidden');
 }
 
@@ -535,10 +638,7 @@ function getNonTutorialDebugEntries() {
   add('phase_completions', 'phase_completion_1', 'Prof. Shannon', 'The Transformer Era', 'phase_completion_1');
   add('phase_completions', 'phase_completion_2', 'Dennis Babbage', 'Something in the training logs', 'phase_completion_2');
 
-  // Arc 2 — alignment, moratoriums, AI requests, alignment tax
-  for (const [key, msg] of Object.entries(alignmentWarningMessages)) {
-    add('arc2', `alignment_${key}`, msg.sender, msg.subject, msg.triggeredBy);
-  }
+  // Arc 2 — moratoriums, AI requests, alignment tax
   add('arc2', 'alignment_tax', alignmentTaxActionMessage.sender, alignmentTaxActionMessage.subject, 'alignment_tax');
   add('arc2', 'moratorium_first', 'Dr. Eliza Chen', 'First Moratorium Proposal', 'moratorium_first');
   add('arc2', 'moratorium_second', 'Dr. Eliza Chen', 'Second Moratorium Proposal', 'moratorium_second');
@@ -767,6 +867,14 @@ export function initDebugModal() {
   document.getElementById('debug-extinction-reckless')?.addEventListener('click', () => {
     window.debugEnding?.('RECKLESS', true);
   });
+
+  // Arc 2 ending triggers
+  const arc2Tiers = ['golden', 'silver', 'dark', 'catastrophic', 'bankruptcy', 'competitor'];
+  for (const tier of arc2Tiers) {
+    document.getElementById(`debug-arc2-${tier}`)?.addEventListener('click', () => {
+      window.debug?.arc2Ending(tier);
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -832,12 +940,10 @@ function initSaveDataSection() {
   // --- Import Save ---
   const importArea = document.getElementById('import-area');
   const importTextarea = document.getElementById('import-textarea');
-  const importConfirm = document.getElementById('import-confirm');
   const importError = document.getElementById('import-error');
 
   function resetImportUI() {
     if (importArea) importArea.classList.add('hidden');
-    if (importConfirm) importConfirm.classList.add('hidden');
     if (importError) { importError.classList.add('hidden'); importError.textContent = ''; }
     if (importTextarea) importTextarea.value = '';
   }
@@ -847,10 +953,9 @@ function initSaveDataSection() {
       importError.textContent = msg;
       importError.classList.remove('hidden');
     }
-    if (importConfirm) importConfirm.classList.add('hidden');
   }
 
-  function validateAndShowConfirm() {
+  function validateAndLoad() {
     if (importError) { importError.classList.add('hidden'); importError.textContent = ''; }
 
     const raw = importTextarea?.value?.trim();
@@ -861,12 +966,13 @@ function initSaveDataSection() {
       const json = LZString.decompressFromBase64(raw);
       if (!json) throw new Error('decompress failed');
       JSON.parse(json); // validate it's real JSON
+      localStorage.setItem(SAVE_KEY, json);
+      // Prevent beforeunload from overwriting the imported save
+      sessionStorage.setItem('agi-import-pending', '1');
+      location.reload();
     } catch {
       showImportError('Invalid save data');
-      return;
     }
-
-    if (importConfirm) importConfirm.classList.remove('hidden');
   }
 
   // Toggle import area
@@ -881,8 +987,8 @@ function initSaveDataSection() {
     }
   });
 
-  // Load button — validate and show confirm
-  document.getElementById('import-load-button')?.addEventListener('click', validateAndShowConfirm);
+  // Load button — validate and import directly
+  document.getElementById('import-load-button')?.addEventListener('click', validateAndLoad);
 
   // From File — read .txt and populate textarea
   document.getElementById('import-file-input')?.addEventListener('change', (e) => {
@@ -891,34 +997,14 @@ function initSaveDataSection() {
     const reader = new FileReader();
     reader.onload = () => {
       if (importTextarea) importTextarea.value = reader.result;
-      validateAndShowConfirm();
     };
     reader.readAsText(file);
     // Reset so the same file can be re-selected
     e.target.value = '';
   });
 
-  // Cancel buttons
+  // Cancel button
   document.getElementById('import-cancel-button')?.addEventListener('click', resetImportUI);
-  document.getElementById('import-confirm-cancel')?.addEventListener('click', () => {
-    if (importConfirm) importConfirm.classList.add('hidden');
-  });
-
-  // Confirm overwrite
-  document.getElementById('import-confirm-button')?.addEventListener('click', () => {
-    const raw = importTextarea?.value?.trim();
-    try {
-      const json = LZString.decompressFromBase64(raw);
-      if (!json) throw new Error('decompress failed');
-      JSON.parse(json); // final validation
-      localStorage.setItem('agi-incremental-save', json);
-      // Prevent beforeunload from overwriting the imported save
-      sessionStorage.setItem('agi-import-pending', '1');
-      location.reload();
-    } catch {
-      showImportError('Invalid save data');
-    }
-  });
 }
 
 export function initSettingsModal() {
@@ -1021,8 +1107,8 @@ export function showEndingModal(endingId) {
   const ending = getEndingById(endingId);
   if (!ending) return;
 
-  // Handle prestige endings (Arc 1 resets)
-  if (ending.triggersPrestige) {
+  // Prestige failure endings (bankruptcy, competitor wins) — show prestige modal directly
+  if (ending.triggersPrestige && (ending.tier === 'prestige' || endingId === 'competitor_wins_arc2')) {
     showPrestigeModal(ending);
     return;
   }
@@ -1030,6 +1116,13 @@ export function showEndingModal(endingId) {
   // Handle extinction ending (Arc 1 → ending screen via extinction sequence)
   if (ending.triggersExtinctionEnding) {
     triggerExtinctionSequence();
+    return;
+  }
+
+  // Arc 2 alignment endings → cinematic sequence
+  const cinematicEndings = ['safe_agi', 'fragile_safety', 'uncertain_outcome', 'catastrophic_agi'];
+  if (cinematicEndings.includes(endingId) && ending.scenes) {
+    showEndingCinematic(endingId);
     return;
   }
 
@@ -1134,21 +1227,47 @@ export function showEndingModal(endingId) {
   const continueBtn = $('ending-continue');
 
   newGameBtn.onclick = () => {
-    if (confirm('Start a new game? All progress will be lost.')) {
-      resetGame();
+    if (ending.triggersPrestige && gameState.gameMode !== 'narrative') {
+      // Arc 2 alignment ending with prestige — apply gains and reset
+      const gains = calculatePrestigeGain();
+      applyPrestigeGains(gains);
+      resetForPrestige();
       applyDebugSettings();
-      resetQueueIdCounter();
       resetTriggeredMessages();
       getResetUI()();
       hideEndingModal();
+      resetEndingModalButtons();
       requestFullUpdate();
       getUpdateUI()();
+    } else {
+      if (confirm('Start a new game? All progress will be lost.')) {
+        resetGame();
+        // applyDebugSettings returns true if ?arc2 triggered a transition.
+        // transitionToArc2() saves state but expects a page reload for full
+        // re-init (news feed, messages, etc.), so reload instead of in-page reset.
+        const arc2Fired = applyDebugSettings();
+        if (arc2Fired) {
+          window.location.reload();
+          return;
+        }
+        resetQueueIdCounter();
+        resetTriggeredMessages();
+        getResetUI()();
+        hideEndingModal();
+        requestFullUpdate();
+        getUpdateUI()();
+      }
     }
   };
 
   continueBtn.onclick = () => {
     hideEndingModal();
   };
+
+  // Update button labels for prestige endings
+  if (ending.triggersPrestige && gameState.gameMode !== 'narrative') {
+    newGameBtn.textContent = 'Try Again (with bonuses)';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1163,21 +1282,7 @@ export function showPrestigeModal(ending) {
   gameState.pauseReason = 'ending';
 
   // Fire ending_reached analytics (prestige endings bypass triggerEnding())
-  const strategicChoicesMade = Object.entries(gameState.strategicChoices || {})
-    .filter(([, v]) => v.selected)
-    .map(([id, v]) => `${id}:${v.selected}`);
-  const analyticsPayload = {
-    ending_id: ending.id,
-    alignment_score: gameState.alignment?.total ?? gameState.hiddenAlignment ?? 0,
-    strategic_choices: strategicChoicesMade,
-    arc: gameState.arc,
-  };
-  // Arc 2+ properties — personality and archetype aren't tracked in Arc 1
-  if (gameState.arc >= 2) {
-    analyticsPayload.archetype = getArchetype(ending.tier || 'silver');
-    analyticsPayload.personality_passive_active = gameState.personality?.passiveActive ?? 0;
-    analyticsPayload.personality_pluralist_optimizer = gameState.personality?.pluralistOptimizer ?? 0;
-  }
+  const analyticsPayload = buildEndingAnalytics(ending.id, ending);
   milestone('ending_reached', analyticsPayload, undefined, { sendImmediately: true });
 
   // Calculate prestige gains

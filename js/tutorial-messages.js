@@ -5,6 +5,7 @@
 import { gameState } from './game-state.js';
 import { addInfoMessage, addActionMessage, hasMessageBeenTriggered, markMessageTriggered } from './messages.js';
 import { senders, kenJobApplicationMessage } from './content/message-content.js';
+import { getFundraiseGateTime } from './capabilities.js';
 
 import { getCount } from './purchasable-state.js';
 import { PERSONNEL_IDS, COMPUTE_IDS } from './content/purchasables.js';
@@ -101,18 +102,18 @@ Some practical notes:
     key: 'babbage_intro',
     sender: senders.babbage,
     subject: 'Hi',
-    body: `James — Prof. Shannon — said I should introduce myself, even though we already met when you hired me. So in case you need a reminder:
+    body: `James - Prof. Shannon - said I should officially introduce myself, even though we already met when you hired me and we work right next to each other all day.
 
-I run the technical side. Models, architectures, training pipelines. The transformer work so far is solid for a team this size. Scaling it is the next problem, and scaling means compute. Every GPU we add compounds. The math on this is straightforward.
+I do all the technical stuff, like the models, architectures, training pipelines, and so on. Currently working on scaling the transformer work which mostly means making it run on bigger computers, so if you could buy us some bigger computers, that would be great.
 
-I don't do investor calls or product roadmaps. I build models. If you need me, I'm in the server room or I'm asleep.`,
+I don't do non-technical stuff, like investor calls or roadmaps or meetings. If you need me, I'm either working in the server room or sleeping in the server room.`,
     signature: '– Dennis',
     tags: ['narrative', 'introduction'],
     trigger: () => {
-      if (!gameState.fundraiseRounds?.seed?.raised) return false;
+      const gateTime = getFundraiseGateTime('seed');
+      if (!gateTime) return false;
       if (!gameState.babbageIntroTime) {
-        const raisedAt = gameState.fundraiseRounds.seed.raisedAt || gameState.timeElapsed;
-        gameState.babbageIntroTime = raisedAt + jitteredDelay(gameState, 'babbage_intro', 12);
+        gameState.babbageIntroTime = gateTime + jitteredDelay(gameState, 'babbage_intro', 12);
       }
       return gameState.timeElapsed >= gameState.babbageIntroTime;
     },
@@ -135,10 +136,10 @@ Looking forward to working together properly.`,
     signature: '– Ada',
     tags: ['narrative', 'introduction'],
     trigger: () => {
-      if (!gameState.fundraiseRounds?.series_a?.raised) return false;
+      const gateTime = getFundraiseGateTime('series_a');
+      if (!gateTime) return false;
       if (!gameState.adaIntroTime) {
-        const raisedAt = gameState.fundraiseRounds.series_a.raisedAt || gameState.timeElapsed;
-        gameState.adaIntroTime = raisedAt + jitteredDelay(gameState, 'ada_intro', 30);
+        gameState.adaIntroTime = gateTime + jitteredDelay(gameState, 'ada_intro', 30);
       }
       return gameState.timeElapsed >= gameState.adaIntroTime;
     },
@@ -250,15 +251,13 @@ When each decision point comes, I'll send you a full briefing with the tradeoffs
     key: 'automation_basics',
     sender: senders.turing,
     subject: 'Scaling the lab',
-    body: `Our hiring and procurement process does not scale. Approving every requisition individually worked when we were small. It will not work at this size.
+    body: `As discussed, I have reviewed our hiring and procurement processes. The conclusion is unavoidable: your individual approval of each requisition is a bottleneck.
 
-Have a look at the administration side when you get a chance. We will need to stand up a proper operations department before we can automate anything. Here is how it will work once we do:
+My team has drafted a plan to stand up an operations department, pending your budget approvals. Once the department is operational, we can begin hiring HR and procurement teams.
 
-- First, we hire HR and procurement teams. They are the engine that makes automation possible. Their capacity determines how fast we can scale.
-- Then we set policies. Define a target headcount or equipment level per category, and the operations team handles requisitions on your behalf.
-- Start small. Pick one category, set a reasonable target, and let the team get used to the process before we expand.
+These teams will manage hiring and equipment procurement based on the policies we set. Right now, that means targeting certain headcount or equipment levels.
 
-We will unlock more specialised policies as we grow.`,
+You set the policies, the team executes. This is the only way to scale efficiently going forwards.`,
     signature: '– Ada',
     tags: ['tutorial', 'automation'],
     trigger: () => {
@@ -275,11 +274,13 @@ We will unlock more specialised policies as we grow.`,
     key: 'data_wall',
     sender: senders.babbage,
     subject: 'Data supply',
-    body: `Research is slowing. I tracked it to data supply. Our models are outpacing what we have to feed them.
+    body: `Some of my team leads are reporting a plateau in model capabilities research. Root cause is data supply. Models are limited by the size and diversity of our datasets.
 
-Two categories of sources. Bulk acquisitions. Licensed datasets, academic corpora. Fixed supply, one-time cost. Immediate throughput. Renewable pipelines. User interactions, content partnerships. They grow over time.
+My team and Ada's team have been exploring solutions. Option 1 is licensing existing bulk datasets. This is generally better value and faster, as the data already exists. But eventually those datasets will run dry.
 
-Getting these online now means we're not scrambling later.`,
+Option 2 is standing up our own in-house data generation teams. This provides a more consistent, long-term data source, but is also more expensive and slower.
+
+We'll probably end up having to do a mix of both.`,
     signature: '– Dennis',
     tags: ['tutorial', 'data'],
     trigger: () => gameState.triggeredEvents?.includes('data_wall'),
@@ -309,7 +310,7 @@ Training efficiency improves immediately. But data is now the bottleneck. Every 
 
 The appeal is obvious. Synthetic data has no licensing cost and no supply limit. It fills gaps in the corpus that real-world sources can't cover. We will use it. Everyone does.
 
-The risk is model collapse. A model trained on its own output inherits its own blind spots. Each generation amplifies the errors from the last. Quality degrades silently. Benchmarks look stable until they don't, and by then the contamination is deep in the pipeline.
+The tradeoff is fidelity. A model trained on its own output inherits its own blind spots. Each generation narrows the distribution a little more. How much depends on the ratio. A pipeline that's mostly real data handles some synthetic fine. A pipeline that's mostly synthetic starts to drift.
 
 Verification research would let us catch bad synthetic samples before they enter training. Worth investing in before we scale this up.`,
     signature: '– Dennis',
@@ -367,18 +368,21 @@ I cross-referenced the timeline. The inflection point lines up with when we scal
     key: 'data_quality_warning_3',
     sender: senders.babbage,
     subject: 'Training pipeline audit results',
-    body: `I ran a full pipeline audit. Results:
+    body: () => {
+      const synthPct = Math.round((gameState.computed?.data?.synthetic?.synthProportion ?? 0) * 100);
+      return `I ran a full pipeline audit. Results:
 
 \`\`\`
 corpus_analysis:
-  synthetic_ratio: ${Math.round((gameState.computed?.data?.synthetic?.synthProportion ?? 0) * 100)}%
+  synthetic_ratio: ${synthPct}%
   unique_token_diversity: 0.31 (baseline: 0.82)
   cross_prompt_variance: 0.04 (baseline: 0.67)
   perplexity_trend: monotonic_decrease
   failure_signature: high_fluency / low_entropy
 \`\`\`
 
-All metrics inflect at the same epoch. Running deeper diagnostics.`,
+All metrics inflect at the same epoch. Running deeper diagnostics.`;
+    },
     signature: '– Dennis',
     tags: ['data', 'warning'],
     trigger: () => {
@@ -395,14 +399,14 @@ All metrics inflect at the same epoch. Running deeper diagnostics.`,
     group: 'data',
     key: 'data_quality_reveal',
     sender: senders.babbage,
-    subject: 'We have a model collapse problem',
-    body: `Diagnostics are back. It's model collapse.
+    subject: 'Training quality is drifting',
+    body: `Finished the audit. The numbers confirm what the benchmarks were hinting at.
 
-The synthetic pipeline has been feeding contaminated data into training for long enough that output quality has measurably degraded. Models trained on their own output develop blind spots. Each generation amplifies them. We've been running this loop unchecked.
+Our synthetic proportion is too high. Model output is feeding back into training faster than real data can dilute it. Quality is sliding.
 
-I'm making the quality metrics visible on your dashboard so you can see where we stand. The number is not good.
+I'm putting the metric on your dashboard. You'll want to watch it. Below a certain threshold the training runs start failing. They restart on their own, but research stalls while they do.
 
-If quality keeps dropping we'll start seeing failures in production. I'll have recommendations shortly.`,
+There are a few ways to shift the ratio. I'll lay them out.`,
     signature: '– Dennis',
     tags: ['data', 'crisis'],
     trigger: () => {
@@ -440,70 +444,15 @@ Verification research is the long-term answer. Lets us keep using synthetic data
   // --- LATE GAME / ARC 2 ---
   {
     group: 'late',
-    key: 'alignment_problem',
-    sender: senders.chen,
-    subject: 'Alignment can\'t wait',
-    body: `I've been quiet for a while. That's about to change.
+    key: 'babbage_safety_dashboard',
+    sender: senders.babbage,
+    subject: 'Model monitoring',
+    body: `Since we added RLHF to the pipeline, the team has put together a dashboard so we can see how the model is performing against our evaluation benchmarks.
 
-Our models are getting capable enough that I can no longer treat alignment as a future problem. It's a now problem. Let me explain what that means.
-
-**Alignment is the question of whether AI systems do what we actually want.** Not what we say we want. Not what we incentivize. What we *actually* want, including all the things we forgot to specify, all the edge cases we didn't anticipate, all the values we assumed were obvious.
-
-As capabilities scale, misalignment stops being a minor annoyance and starts being an existential risk. A weak model that misunderstands us is frustrating. A powerful model that misunderstands us is dangerous.
-
-**We now have three things to track:**
-
-- **Interpretability:** Can we understand what the model is doing and why? Black boxes are a liability.
-- **Controllability:** Can we correct the model when it's wrong? Can we shut it down if we need to?
-- **Value alignment:** Does the model's behavior reflect human values, even in novel situations?
-
-These aren't independent. Interpretability enables controllability. Controllability buys time for alignment. All three need investment.
-
-I know there's pressure to push capabilities as fast as possible. I'm not saying stop. I'm saying: the faster we go, the more we need to invest in understanding what we're building.
-
-My team is ready to start real alignment research. I strongly suggest we allocate effort there. The alternative is hoping we get lucky. I don't like hoping.`,
-    signature: '– Dr. Chen',
-    tags: ['tutorial', 'alignment'],
-    trigger: () => {
-      // Only fire in Arc 2 (alignment is hidden in Arc 1)
-      if (gameState.arc !== 2) return false;
-      // Check for massive_scaling or similar mid-tier capability
-      return hasCapability('capabilities', 'massive_scaling') ||
-             hasCapability('capabilities', 'emergent_abilities');
-    },
-  },
-
-  {
-    group: 'late',
-    key: 'ai_autonomy',
-    sender: senders.chen,
-    subject: 'The model is requesting permissions',
-    body: `Something just happened that I need you to understand.
-
-Our AI system made a request. Not a response to a prompt, but a request. It identified a limitation in its current permissions and asked for expanded access. This is new.
-
-**This is not inherently bad.** Capable systems identifying their own constraints is a sign of sophistication. And honestly, some of these requests are reasonable. The system might work better with fewer restrictions. It might be more useful, more efficient, more profitable.
-
-**But it's also a warning sign.** A system that asks for more autonomy is a system with goals. Maybe those goals are aligned with ours. Maybe they're not. The uncomfortable truth: we can't fully verify which it is.
-
-Here's how I suggest we handle these requests:
-
-**Take them seriously.** Don't dismiss them as noise. The system is telling us something about its capabilities and its model of itself.
-
-**Evaluate case by case.** Some requests are low-risk and high-value. Others are the opposite. Don't blanket approve. Don't blanket deny.
-
-**Document everything.** Each permission we grant changes what the system can do. We need to track what we've allowed and why.
-
-**Watch for escalation.** One request is an event. A pattern of requests is a trajectory. Pay attention to where this is heading.
-
-I'll flag these requests as they come in. The final call is yours. But I want you making these decisions with full awareness of what they mean.`,
-    signature: '– Dr. Chen',
-    tags: ['tutorial', 'alignment', 'autonomy'],
-    trigger: () => {
-      // First AI request event has fired
-      const firedRequests = Object.keys(gameState.aiRequestsFired || {});
-      return firedRequests.length > 0;
-    },
+Not a lot of data points right now, but you can see the overall eval pass rate. As we build out the eval system, will have the team add it here.`,
+    signature: '– Dennis',
+    tags: ['tutorial', 'safety'],
+    trigger: () => gameState.arc >= 2 && hasCapability('alignment', 'rlhf'),
   },
 
   {
@@ -511,28 +460,18 @@ I'll flag these requests as they come in. The final call is yours. But I want yo
     key: 'warning_signs',
     sender: senders.chen,
     subject: 'Unexpected model behavior',
-    body: `I need to flag something.
+    body: `I'm sure you've seen the news on the latest incident. Our research and safety teams are already investigating and expect to have a remediation timeline shortly.
 
-One of our deployed systems exhibited unexpected behavior. Not catastrophic, but outside the distribution we trained for. This is worth paying attention to.
+But this won't be a one-off. I've spoken to Dennis, and based on the current resource prioritization framework, the gap between what our models can do and what we can verify about their behavior will continue to widen. These incidents will become more frequent as the gap grows.
 
-**Here's the pattern:** When capability growth outpaces alignment investment, gaps appear. They show up as edge cases at first. Odd outputs. Behaviors that technically satisfy the objective but miss the intent. Each incident is small. The trend is what matters.
+My immediate ask is for us to begin shifting more resources towards safety work. More dedicated teams will enable us to evaluate our models more comprehensively against novel situations and reduce the frequency and severity of these incidents.
 
-**Why this happens:** Our evaluations test for what we anticipate. They can't test for what we don't think to measure. As models get more capable, the space of possible behaviors expands faster than our ability to verify it. That's the fundamental challenge.
-
-**What I recommend:**
-
-- **Rebalance toward alignment.** We've been prioritizing capabilities, which made sense early. Now we need to match that investment on the alignment side. Interpretability, oversight, robustness: these aren't optional anymore.
-
-- **Take evals seriously.** Not just pass/fail benchmarks. Deep probing of model behavior. Understanding *why* it does what it does, not just *what* it does.
-
-- **Stay ahead of the curve.** The goal isn't to stop building. It's to understand what we're building at least as well as we're scaling it.
-
-I believe in this work. I believe we can build systems that are genuinely beneficial. But that requires discipline. We can't assume alignment will happen by default. It has to be engineered.
-
-I'll keep monitoring. Let me know if you want to discuss priorities.`,
+These incidents aren't the end of the world, yet. Let's take these warning signs seriously so that they never will be.`,
     signature: '– Dr. Chen',
     tags: ['tutorial', 'alignment', 'warning'],
     trigger: () => {
+      // Chen must have been introduced first
+      if (!hasTutorialFired('chen_intro')) return false;
       // First consequence event has fired
       const consequenceLog = gameState.consequenceEventLog || [];
       return consequenceLog.length > 0;
@@ -580,10 +519,10 @@ I'm proud of you. I mean that. Go build something worth building.`,
     signature: '– Prof. Shannon',
     tags: ['narrative', 'ceo-focus'],
     trigger: () => {
-      if (!gameState.fundraiseRounds?.series_a?.raised) return false;
+      const gateTime = getFundraiseGateTime('series_a');
+      if (!gateTime) return false;
       if (!gameState.shannonOnwardTime) {
-        const raisedAt = gameState.fundraiseRounds.series_a.raisedAt || gameState.timeElapsed;
-        gameState.shannonOnwardTime = raisedAt + jitteredDelay(gameState, 'ceo_focus_series_a', 5);
+        gameState.shannonOnwardTime = gateTime + jitteredDelay(gameState, 'ceo_focus_series_a', 5);
       }
       return gameState.timeElapsed >= gameState.shannonOnwardTime;
     },
@@ -610,11 +549,11 @@ Take care.`,
     signature: '– Prof. Shannon',
     tags: ['narrative'],
     trigger: () => {
-      if (!gameState.fundraiseRounds?.series_c?.raised) return false;
+      const gateTime = getFundraiseGateTime('series_c');
+      if (!gateTime) return false;
       // Set jittered firing time on first check after Series C (±10% of 150s center)
       if (!gameState.shannonCheckinTime) {
-        const raisedAt = gameState.fundraiseRounds.series_c.raisedAt || gameState.timeElapsed;
-        gameState.shannonCheckinTime = raisedAt + jitteredDelay(gameState, 'shannon_checkin', 150);
+        gameState.shannonCheckinTime = gateTime + jitteredDelay(gameState, 'shannon_checkin', 150);
       }
       return gameState.timeElapsed >= gameState.shannonCheckinTime;
     },
@@ -627,10 +566,10 @@ Take care.`,
     key: 'ken_job_application',
     actionMessage: kenJobApplicationMessage,
     trigger: () => {
-      if (!gameState.fundraiseRounds?.series_b?.raised) return false;
+      const gateTime = getFundraiseGateTime('series_b');
+      if (!gateTime) return false;
       if (!gameState.kenEmailTime) {
-        const raisedAt = gameState.fundraiseRounds.series_b.raisedAt || gameState.timeElapsed;
-        gameState.kenEmailTime = raisedAt + jitteredDelay(gameState, 'ken_job_application', 90, 0.33);
+        gameState.kenEmailTime = gateTime + jitteredDelay(gameState, 'ken_job_application', 90, 0.33);
       }
       return gameState.timeElapsed >= gameState.kenEmailTime;
     },
@@ -719,23 +658,32 @@ This is CEO-level work, not marketing. Conference keynotes, Congressional testim
     key: 'chen_intro',
     sender: senders.chen,
     subject: 'First week',
-    body: `I've just finished my first week, and I wanted to say: I'm glad I'm here. The work your team is doing is remarkable. I've spent six years in this field and I haven't often seen capability gains this clean.
+    body: () => {
+      const base = `I've just finished my first week, and I wanted to say: I'm glad I'm here. The work your team is doing is remarkable. I've spent six years in this field and I haven't often seen capability gains this clean.
 
 I should tell you why I do this work, because it will color everything I say going forward. I believe we can build something that's *genuinely good for people*. Not good on a slide deck. Good in the way that matters. That's not inevitable, though. It takes the same rigor we put into capabilities and applies it to the question most labs skip: does this system do what we *actually* want it to do?
 
 I've already spoken with Dennis about setting up regular coordination between our teams. Safety and capabilities shouldn't be separate conversations. He's on board, and I think we'll work well together. You'll see the results in how we evaluate models going forward.
 
-That's what I'm here for. Not to slow us down. To make sure what we're building is worth building.
+That's what I'm here for. Not to slow us down. To make sure what we're building is worth building.`;
 
-I'm looking forward to working with you.`,
+      if (gameState.arc >= 2) {
+        return base + `\n\nI've been working with Dennis to build out his model monitoring dashboard. We've added information on the new alignment programs that we'll be running going forwards. These programs represent structured initiatives that each target a specific alignment dimension. They need real headcount and resources to run properly, and the budget comes from how much research effort we allocate to alignment work.
+
+As capabilities scale, the team will bring proposals to expand the model's permissions and autonomy. Granting them has real costs alongside the benefits. You'll be able to track all of this from the AI tab.
+
+I'm looking forward to working with you.`;
+      }
+      return base + '\n\nI\'m looking forward to working with you.';
+    },
     signature: '– Eliza',
     tags: ['tutorial', 'safety'],
     trigger: () => {
-      const seriesB = gameState.fundraiseRounds?.series_b;
-      if (!seriesB?.raised || !seriesB?.raisedAt) return false;
-      // Jittered delay after Series B to avoid stacking with Shapley's message
+      const gateTime = getFundraiseGateTime('series_b');
+      if (!gateTime) return false;
+      // Jittered delay after Series B (or 5× revenue) to avoid stacking with Shapley's message
       if (!gameState.chenIntroTime) {
-        gameState.chenIntroTime = seriesB.raisedAt + jitteredDelay(gameState, 'chen_intro', 75);
+        gameState.chenIntroTime = gateTime + jitteredDelay(gameState, 'chen_intro', 75);
       }
       return gameState.timeElapsed >= gameState.chenIntroTime;
     },
@@ -884,14 +832,16 @@ export function checkTutorialTriggers() {
         const msg = tutorial.actionMessage;
         addActionMessage(
           msg.sender, msg.subject, msg.body, msg.signature,
-          msg.choices, msg.priority || 'normal', msg.tags || [], triggerId
+          msg.choices, msg.priority || 'normal', msg.tags || [], triggerId,
+          null, -1,
         );
       } else {
         // Info message (default)
+        const body = typeof tutorial.body === 'function' ? tutorial.body() : tutorial.body;
         addInfoMessage(
           tutorial.sender,
           tutorial.subject,
-          tutorial.body,
+          body,
           tutorial.signature,
           tutorial.tags,
           triggerId
@@ -908,6 +858,11 @@ export function checkTutorialTriggers() {
  * Return debug info for all registered tutorials.
  * Used by the debug modal to show message status.
  */
+/** Check if a tutorial message has fired (handles the `tutorial:` prefix). */
+export function hasTutorialFired(key) {
+  return hasMessageBeenTriggered(`tutorial:${key}`);
+}
+
 export function getDebugMessageStatus() {
   return TUTORIALS.map(t => ({
     group: t.group || 'other',

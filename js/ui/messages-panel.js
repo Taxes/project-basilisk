@@ -2,7 +2,7 @@
 // Two-panel inbox: message list on left, detail view on right
 
 import { gameState } from '../game-state.js';
-import { registerUpdate, SLOW } from './scheduler.js';
+import { registerUpdate, FAST, SLOW } from './scheduler.js';
 import {
   getMessagesBySections,
   getMessageById,
@@ -11,39 +11,35 @@ import {
   updatePauseState,
   getRecentMessages
 } from '../messages.js';
-import { formatGameDate, renderMarkdown } from '../utils/format.js';
+import { formatGameDate, renderMarkdown, formatDuration } from '../utils/format.js';
 // Note: updateTabBadge imported dynamically to break circular dependency
 import { applyMessageChoiceEffects } from '../message-effects.js';
 import { handleAIRequestChoice } from '../ai-requests.js';
 import { handleAlignmentTaxChoice } from '../alignment-tax-handler.js';
 import { handleModelCollapseChoice } from '../data-quality.js';
 import { handleCreditWarningChoice } from '../economics.js';
+import { applyFlavorEventChoice } from '../flavor-events.js';
 import { strategicChoiceDefinitions } from '../../data/strategic-choices.js';
 import { attachTooltip, hideTooltip } from './stats-tooltip.js';
+import { buildEffectDescription } from '../consequence-events.js';
 
 
 let selectedMessageId = null;
 
-// Look up strategic choice option effects for tooltip display (returns HTML)
-function getChoiceEffectsTooltipHTML(optionId) {
-  for (const choice of strategicChoiceDefinitions) {
-    for (const option of choice.options) {
-      if (option.id === optionId && option.effects) {
-        let html = '';
-        for (const e of option.effects) {
-          if (e.minPhase && gameState.phase < e.minPhase) continue;
-          if (e.minArc && gameState.arc < e.minArc) continue;
-          const cls = e.type === 'positive' ? ' class="positive"' : '';
-          html += `<div class="tooltip-row"><span${cls}>${e.label}</span></div>`;
-        }
-        if (option.alignmentNote) {
-          html += `<div class="tooltip-row dim"><span>Note: ${option.alignmentNote}</span></div>`;
-        }
-        return html;
-      }
-    }
+// Track which blocking message has already had a toast shown (prevents re-fire every second)
+let _shownBlockingToastId = null;
+
+// Build tooltip HTML from a choice's tooltipRows array (universal format)
+function buildChoiceTooltipHTML(choice) {
+  if (choice.tooltipRows?.length) {
+    const rows = choice.tooltipRows.map(r => {
+      const cls = r.type && r.type !== 'neutral' ? ` class="${r.type}"` : '';
+      return `<div class="tooltip-row"><span${cls}>${r.label}</span></div>`;
+    }).join('');
+    return `<div class="tooltip-section">${rows}</div>`;
   }
-  return null;
+  // Legacy fallback for old saves without tooltipRows
+  return choice.tooltip || null;
 }
 
 // Look up strategic choice option effects as raw array, filtering by current phase
@@ -72,12 +68,14 @@ export function renderMessagesPanel() {
   renderMessageList('new', sections.new);
   renderMessageList('reference', sections.reference);
   renderMessageList('archive', sections.archive);
+  renderMessageList('incidents', sections.incidents);
   renderMessageList('news', sections.news);
 
   // Update section counts
   updateSectionCount('new', sections.new.length);
   updateSectionCount('reference', sections.reference.length);
   updateSectionCount('archive', sections.archive.length);
+  updateSectionCount('incidents', sections.incidents.length);
   updateSectionCount('news', sections.news.length);
 
   // Show/hide dismiss button (visible when New has non-action messages)
@@ -131,12 +129,26 @@ function createMessageListItem(msg, sectionId) {
   // Tag — consistent labels across all views
   const tag = document.createElement('span');
   const isTutorial = msg.tags && msg.tags.includes('tutorial');
+  const isConsequence = msg.tags && msg.tags.includes('consequence');
   if (sectionId === 'archive' && msg.type === 'action') {
     tag.className = 'message-tag decision';
     tag.textContent = 'DECISION';
   } else if (isTutorial) {
     tag.className = 'message-tag ref';
     tag.textContent = 'REF';
+  } else if (isConsequence) {
+    const isTier4 = msg.tags.includes('tier_4');
+    const isTier3 = msg.tags.includes('tier_3');
+    if (isTier4) {
+      tag.className = 'message-tag incident-critical';
+      tag.textContent = 'CRITICAL';
+    } else if (isTier3) {
+      tag.className = 'message-tag incident';
+      tag.textContent = 'SEVERE';
+    } else {
+      tag.className = 'message-tag incident';
+      tag.textContent = 'INCIDENT';
+    }
   } else if (msg.type === 'info') {
     tag.className = 'message-tag note';
     tag.textContent = 'NOTE';
@@ -152,17 +164,46 @@ function createMessageListItem(msg, sectionId) {
   subject.textContent = msg.subject;
   item.appendChild(subject);
 
-  // Date (right-aligned)
-  const date = document.createElement('span');
-  date.className = 'message-date';
-  date.textContent = formatGameDate(msg.timestamp);
-  item.appendChild(date);
+  // Countdown badge for timed action messages
+  if (msg.type === 'action' && !msg.actionTaken && msg.deadline != null) {
+    const countdown = document.createElement('span');
+    countdown.className = 'message-countdown';
+    countdown.dataset.deadline = msg.deadline;
+    updateCountdownEl(countdown, msg.deadline);
+    item.appendChild(countdown);
+  } else {
+    // Date (right-aligned)
+    const date = document.createElement('span');
+    date.className = 'message-date';
+    date.textContent = formatGameDate(msg.timestamp);
+    item.appendChild(date);
+  }
 
   item.addEventListener('click', () => {
     selectMessage(msg.id);
   });
 
   return item;
+}
+
+// Update a single countdown element text and urgency class
+function updateCountdownEl(el, deadline) {
+  const remaining = Math.ceil(deadline - Math.floor(gameState.timeElapsed));
+  if (remaining <= 0) {
+    el.textContent = 'OVERDUE';
+    el.className = 'message-countdown overdue';
+  } else {
+    el.textContent = `⏱ ${formatDuration(remaining)}`;
+    el.className = `message-countdown${remaining <= 15 ? ' urgent' : remaining <= 60 ? ' warning' : ''}`;
+  }
+}
+
+// Lightweight per-second refresh of all visible countdown badges
+function refreshCountdowns() {
+  const els = document.querySelectorAll('.message-countdown[data-deadline]');
+  for (const el of els) {
+    updateCountdownEl(el, parseFloat(el.dataset.deadline));
+  }
 }
 
 // Get tag label for message type
@@ -281,6 +322,31 @@ function renderMessageDetail(msg) {
     }
   }
 
+  // Consequence event effect description (reconstructed from tags)
+  const effectContainer = document.getElementById('detail-effect');
+  if (effectContainer) {
+    effectContainer.innerHTML = '';
+    const isConsequence = msg.tags && msg.tags.includes('consequence');
+    if (isConsequence) {
+      const subfactorTag = msg.tags.find(t => t.startsWith('subfactor_'));
+      const tierTag = msg.tags.find(t => t.startsWith('tier_'));
+      if (subfactorTag && tierTag) {
+        const subfactor = subfactorTag.replace('subfactor_', '');
+        const tier = parseInt(tierTag.replace('tier_', ''), 10);
+        const effectDesc = buildEffectDescription(subfactor, tier);
+        if (effectDesc) {
+          const list = document.createElement('ul');
+          list.className = 'message-actioned-effects';
+          const li = document.createElement('li');
+          li.className = 'negative';
+          li.textContent = effectDesc;
+          list.appendChild(li);
+          effectContainer.appendChild(list);
+        }
+      }
+    }
+  }
+
   // Signature
   const signature = document.getElementById('detail-signature');
   if (signature) {
@@ -304,15 +370,19 @@ function renderMessageDetail(msg) {
         label.textContent = `Decision made: ${chosenChoice?.label || msg.selectedChoice}`;
         actioned.appendChild(label);
 
-        // Look up effects from strategic choice definitions
-        const effects = getChoiceEffects(msg.selectedChoice);
-        if (effects.length > 0) {
+        // Show effects: strategic choices use phase-gated definitions,
+        // everything else uses tooltipRows stored on the choice object
+        let rows = getChoiceEffects(msg.selectedChoice);
+        if (!rows.length && chosenChoice?.tooltipRows?.length) {
+          rows = chosenChoice.tooltipRows;
+        }
+        if (rows.length > 0) {
           const list = document.createElement('ul');
           list.className = 'message-actioned-effects';
-          for (const e of effects) {
+          for (const r of rows) {
             const li = document.createElement('li');
-            li.textContent = e.label;
-            if (e.type === 'positive') li.classList.add('positive');
+            li.textContent = r.label;
+            if (r.type && r.type !== 'neutral') li.classList.add(r.type);
             list.appendChild(li);
           }
           actioned.appendChild(list);
@@ -326,9 +396,8 @@ function renderMessageDetail(msg) {
           btn.className = 'message-choice-btn';
           btn.textContent = choice.label;
 
-          // Add tooltip: strategic choice effects lookup, then inline tooltip
-          const effectsHTML = getChoiceEffectsTooltipHTML(choice.id);
-          const tooltipHTML = effectsHTML || choice.tooltip;
+          // Add tooltip from tooltipRows (universal format) or legacy fallback
+          const tooltipHTML = buildChoiceTooltipHTML(choice);
           if (tooltipHTML) {
             attachTooltip(btn, () => tooltipHTML);
           }
@@ -367,6 +436,9 @@ function handleChoice(messageId, choice) {
     handleAlignmentTaxChoice(choice.id);
   } else if (trigger.startsWith('model_collapse')) {
     handleModelCollapseChoice(choice.id);
+  } else if (trigger.startsWith('flavor_event:')) {
+    const eventId = trigger.replace('flavor_event:', '');
+    applyFlavorEventChoice(eventId, choice.id);
   } else if (choice.effects && typeof choice.effects === 'object') {
     // Generic effects object
     applyMessageChoiceEffects(choice.effects);
@@ -393,26 +465,31 @@ export function updatePauseOverlay() {
   const overlay = document.getElementById('message-pause-overlay');
   if (!overlay) return;
 
-  const isPausedForMessages =
-    gameState.pauseReason === 'critical_message' ||
-    gameState.pauseReason === 'message_deadline';
+  const blockingId = gameState.pauseMessageId || gameState.pauseMessageIds?.[0];
+  const blockingMsg = blockingId ? getMessageById(blockingId) : null;
 
-  if (isPausedForMessages && gameState.paused) {
-    overlay.classList.remove('hidden');
+  const isPaused = gameState.paused &&
+    (gameState.pauseReason === 'critical_message' || gameState.pauseReason === 'message_deadline');
 
-    // Update text based on reason
-    const title = document.getElementById('pause-overlay-title');
-    const text = document.getElementById('pause-overlay-text');
-
-    if (gameState.pauseReason === 'critical_message') {
-      if (title) title.textContent = 'Critical Decision Required';
-      if (text) text.textContent = 'A critical situation requires your immediate attention.';
-    } else {
-      if (title) title.textContent = 'Decisions Awaiting Response';
-      if (text) text.textContent = 'You have messages that require your attention before continuing.';
+  if (isPaused) {
+    // Both critical and deadline messages: persistent toast, no blocking overlay
+    overlay.classList.add('hidden');
+    if (blockingId && blockingId !== _shownBlockingToastId) {
+      _shownBlockingToastId = blockingId;
+      import('../ui.js').then(({ showDecisionToast }) => {
+        showDecisionToast(
+          blockingMsg ? blockingMsg.subject : 'A message requires your attention.',
+          () => import('./tab-navigation.js').then(({ navigateToMessage, switchTab }) => {
+            if (blockingMsg) navigateToMessage(blockingMsg.id);
+            else switchTab('messages');
+          })
+        );
+      });
     }
   } else {
     overlay.classList.add('hidden');
+    _shownBlockingToastId = null;
+    import('../ui.js').then(({ dismissDecisionToast }) => dismissDecisionToast());
   }
 }
 
@@ -446,12 +523,15 @@ export function initializeMessagesPanel() {
 
   // Register dashboard feed update with scheduler (runs ~1/sec)
   registerUpdate(renderDashboardFeed, SLOW);
+
+  // Register countdown badge refresh (runs ~4/sec to avoid aliasing with SLOW scheduler)
+  registerUpdate(refreshCountdowns, FAST);
 }
 
 // === DASHBOARD FEED ===
 
-// Track previous message count for auto-scroll detection
-let previousMessageCount = 0;
+// Track previous feed content for change detection
+let previousFeedKey = '';
 
 // Render the dashboard feed (auto-scrolling, newest at top)
 export function renderDashboardFeed() {
@@ -462,9 +542,15 @@ export function renderDashboardFeed() {
   // Get recent messages (newest-first, which is how getRecentMessages returns them)
   const recentMessages = getRecentMessages(8);
 
-  // Check if we should auto-scroll (new messages arrived)
-  const shouldAutoScroll = recentMessages.length > previousMessageCount;
-  previousMessageCount = recentMessages.length;
+  // Build a key from message IDs + read/action state to detect changes
+  const feedKey = recentMessages.map(m =>
+    `${m.id}:${m.read}:${m.actionTaken}`
+  ).join(',');
+
+  if (feedKey === previousFeedKey) return;
+
+  const shouldAutoScroll = recentMessages.length > previousFeedKey.split(',').filter(Boolean).length;
+  previousFeedKey = feedKey;
 
   const frag = document.createDocumentFragment();
 
@@ -524,9 +610,23 @@ export function renderDashboardFeed() {
 
     // Tag — consistent with messages pane
     const tag = document.createElement('span');
+    const isConsequence = msg.tags && msg.tags.includes('consequence');
     if (isTutorial) {
       tag.className = 'message-tag ref';
       tag.textContent = 'REF';
+    } else if (isConsequence) {
+      const isTier4 = msg.tags.includes('tier_4');
+      const isTier3 = msg.tags.includes('tier_3');
+      if (isTier4) {
+        tag.className = 'message-tag incident-critical';
+        tag.textContent = 'CRITICAL';
+      } else if (isTier3) {
+        tag.className = 'message-tag incident';
+        tag.textContent = 'SEVERE';
+      } else {
+        tag.className = 'message-tag incident';
+        tag.textContent = 'INCIDENT';
+      }
     } else if (msg.type === 'info') {
       tag.className = 'message-tag note';
       tag.textContent = 'NOTE';
@@ -541,6 +641,15 @@ export function renderDashboardFeed() {
     subject.className = 'feed-subject';
     subject.textContent = msg.subject;
     item.appendChild(subject);
+
+    // Countdown badge for timed action messages
+    if (msg.type === 'action' && !msg.actionTaken && msg.deadline != null) {
+      const countdown = document.createElement('span');
+      countdown.className = 'message-countdown';
+      countdown.dataset.deadline = msg.deadline;
+      updateCountdownEl(countdown, msg.deadline);
+      item.appendChild(countdown);
+    }
 
     frag.appendChild(item);
   }

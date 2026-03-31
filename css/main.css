@@ -134,14 +134,69 @@ button:focus-visible,
   outline-offset: 1px;
 }
 
+/* Range slider — terminal aesthetic */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 150px;
+  height: 4px;
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+  --track-color: var(--accent);
+}
+
 input[type="range"]:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 2px;
 }
 
-/* Inputs */
-input[type="range"] {
-  width: 150px;
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border: 1px solid var(--border);
+  background: linear-gradient(to right, var(--track-color) var(--val, 0%), var(--surface) var(--val, 0%));
+}
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+input[type="range"]::-moz-range-progress {
+  height: 4px;
+  background: var(--track-color);
+  border: 1px solid var(--border);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -5px;
+  background: var(--surface);
+  border: 1px solid var(--track-color);
+  border-radius: 0;
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--surface);
+  border: 1px solid var(--track-color);
+  border-radius: 0;
+  cursor: pointer;
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+  border-width: 2px;
+}
+input[type="range"]:hover::-moz-range-thumb {
+  border-width: 2px;
+}
+input[type="range"]:active::-webkit-slider-thumb {
+  background: var(--track-color);
+}
+input[type="range"]:active::-moz-range-thumb {
+  background: var(--track-color);
 }
 
 /* Utility classes */
@@ -207,6 +262,15 @@ input[type="range"] {
   border-color: var(--warning);
 }
 
+.notification-danger {
+  border-color: var(--negative);
+}
+
+.notification-effect {
+  opacity: 0.7;
+  font-size: 0.85em;
+}
+
 .notification-milestone {
   border-color: var(--accent);
 }
@@ -263,6 +327,16 @@ input[type="range"] {
 @keyframes notificationSlideOut {
   from { transform: translateX(0); opacity: 1; }
   to { transform: translateX(100px); opacity: 0; }
+}
+
+.notification-flash {
+  animation: notificationFlash 0.4s ease;
+}
+
+@keyframes notificationFlash {
+  0%   { border-color: var(--warning); }
+  30%  { border-color: #fff; box-shadow: 0 0 8px var(--warning); }
+  100% { border-color: var(--warning); box-shadow: none; }
 }
 
 /* Modal */
@@ -355,6 +429,46 @@ input[type="range"] {
   font-weight: bold;
   text-align: right;
 }
+
+/* --- Achievements Tab --- */
+
+.achievements-header {
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.achievements-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.achievement-tile {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-size: 13px;
+}
+
+.achievement-tile.locked {
+  opacity: 0.5;
+}
+
+.achievement-tile.earned {
+  border-color: var(--accent);
+}
+
+.achievement-name {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
 
 /* Changelog (inside settings tab) */
 
@@ -460,7 +574,7 @@ input[type="range"] {
 /* Main Layout: persistent left column + swappable right content */
 #main-layout {
   display: grid;
-  grid-template-columns: 20% 1fr;
+  grid-template-columns: 360px 1fr;
   flex: 1;
   overflow: hidden;
   min-height: 0;
@@ -504,7 +618,8 @@ input[type="range"] {
 #stats-bar {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 12px;
+  row-gap: 4px;
   padding: 8px 20px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
@@ -526,6 +641,8 @@ input[type="range"] {
   cursor: help;
   border-bottom: 1px dotted transparent;
   transition: border-color 0.15s;
+  width: 26ch;
+  flex-shrink: 0;
 }
 
 #stats-bar .stats-group:first-child:hover {
@@ -535,7 +652,7 @@ input[type="range"] {
 .stats-separator {
   color: transparent;
   border-left: 1px solid var(--border);
-  margin: 0 8px;
+  margin: 0 4px;
   font-size: 0;
 }
 
@@ -590,7 +707,7 @@ input[type="range"] {
 /* Two-Column Main Content */
 #main-columns {
   display: grid;
-  grid-template-columns: 50% 50%;
+  grid-template-columns: minmax(664px, 1fr) minmax(0, 1fr);
   gap: 0;
   flex: 1;
   overflow: hidden;
@@ -642,6 +759,12 @@ input[type="range"] {
   margin-bottom: 4px;
 }
 
+/* Research column: flex layout so scrollable-section fills available space */
+#col-research {
+  display: flex;
+  flex-direction: column;
+}
+
 /* Compact section headers in columns */
 .column h2 {
   font-size: 12px;
@@ -678,6 +801,74 @@ input[type="range"] {
 
 .mobile-notice-close:hover {
   color: var(--text);
+}
+
+/* Column tabs (Operations/Research toggle at narrow viewports) */
+.column-tabs {
+  display: none;
+  gap: 4px;
+  grid-column: 1 / -1;
+  align-self: start;
+  padding: 16px 16px 8px;
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.column-tab {
+  padding: 4px 8px;
+  min-width: 60px;
+  background: var(--hover-bg);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-family: inherit;
+}
+
+.column-tab.active {
+  color: var(--text);
+  border-color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.column-tab:hover {
+  color: var(--text);
+}
+
+/* Narrow viewport: merge Operations + Research into tabbed single column */
+@media (max-width: 1400px) {
+  #main-columns {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    align-items: start;
+  }
+
+  #main-columns > .column-tabs {
+    display: flex;
+  }
+
+  #main-columns > .column > .column-header {
+    display: none;
+  }
+
+  #col-research.narrow-hidden {
+    display: none;
+  }
+
+  #col-operations.narrow-hidden {
+    display: none;
+  }
+
+  /* Remove redundant column chrome at narrow — tabs provide the top edge */
+  .column {
+    padding-top: 8px;
+    border-right: none;
+  }
+
+  /* Disable flex-fill so research content pins to top instead of centering */
+  #research-section {
+    flex: none;
+  }
 }
 
 @media (min-width: 768px) {

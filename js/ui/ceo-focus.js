@@ -1,7 +1,7 @@
 // js/ui/ceo-focus.js — CEO Focus UI rendering
 import { gameState } from '../game-state.js';
 import { registerUpdate, EVERY_TICK } from './scheduler.js';
-import { getAvailableActivities, selectActivity, ACTIVITIES, BUILDUP_TIME, IR_BUILDUP_TIME, DECAY_TIME, MASTERY_BUILDUP_TIME, MASTERY_DECAY_TIME } from '../ceo-focus.js';
+import { getAvailableActivities, selectActivity, ACTIVITIES, BUILDUP_TIME, IR_BUILDUP_TIME, DECAY_TIME, MASTERY_BUILDUP_TIME } from '../ceo-focus.js';
 import { formatFunding, formatDuration, getRateUnit } from '../utils/format.js';
 import { $ } from '../utils/dom-cache.js';
 import { attachTooltip } from './stats-tooltip.js';
@@ -97,7 +97,6 @@ function formatActivityValue(computed) {
 
 function getDirectionIndicator(computed) {
   const selected = computed.selected;
-  const activity = ACTIVITIES[selected];
 
   // Continuous / mixed
   if (computed.idle) {
@@ -225,14 +224,10 @@ function masteryTimeEstimate(activityId, computed) {
   const m = computed.mastery?.[activityId] || 0;
   const isBuilding = computed.idle && computed.selected === activityId && (computed.buildup?.[activityId] || 0) >= 1.0;
 
-  if (isBuilding) {
-    const remaining = 1 - m;
-    if (remaining <= 0.01) return null;
-    return `<div class="tooltip-row dim"><span>Mastery to max</span><span>~${formatDuration(remaining * MASTERY_BUILDUP_TIME)}</span></div>`;
-  } else {
-    if (m <= 0.01) return null;
-    return `<div class="tooltip-row dim"><span>Mastery to zero</span><span>~${formatDuration(m * MASTERY_DECAY_TIME)}</span></div>`;
-  }
+  if (!isBuilding) return null;
+  const remaining = 1 - m;
+  if (remaining <= 0.01) return null;
+  return `<div class="tooltip-row dim"><span>Mastery to max</span><span>~${formatDuration(remaining * MASTERY_BUILDUP_TIME)}</span></div>`;
 }
 
 /** Mastery tooltip hint — shows time estimate if building, or a dim unlock hint if mastery hasn't started */
@@ -256,7 +251,8 @@ const ACTIVITY_TOOLTIPS = {
     html += '<div class="tooltip-row dim"><span>Scales with efficiency and fundraise rounds</span></div>';
     html += buildupTimeEstimate('grants', computed) || '';
     html += '<div class="tooltip-section-header">Mastery</div>';
-    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Grant rate</span><span>×${(computed.grantMasteryMultiplier || 1).toFixed(2)} (max ×4.00)</span></div>`;
+    const grantMastery = computed.mastery?.grants || 0;
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Grant rate</span><span>×${(1 + 3 * grantMastery).toFixed(2)} (max ×4.00)</span></div>`;
     html += masteryHint('grants', computed);
     html += '</div>';
     return html;
@@ -272,8 +268,9 @@ const ACTIVITY_TOOLTIPS = {
     html += '<div class="tooltip-row dim"><span>Multiplier builds while idle, decays while busy</span></div>';
     html += buildupTimeEstimate('research', computed) || '';
     html += '<div class="tooltip-section-header">Mastery</div>';
-    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Org synergy</span><span>×${(1 + (computed.orgTierBonus || 0)).toFixed(2)} (max ×1.50)</span></div>`;
-    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Compute cap</span><span>+${(computed.computeCapBonus || 0).toFixed(1)} (max +2.0)</span></div>`;
+    const resMastery = computed.mastery?.research || 0;
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Org synergy</span><span>×${(1 + 0.50 * resMastery).toFixed(2)} (max ×1.50)</span></div>`;
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Compute cap</span><span>+${(2.0 * resMastery).toFixed(1)} (max +2.0)</span></div>`;
     html += masteryHint('research', computed);
     html += '</div>';
     return html;
@@ -291,8 +288,9 @@ const ACTIVITY_TOOLTIPS = {
     html += '<div class="tooltip-row dim"><span>Resets after completing a fundraise</span></div>';
     html += buildupTimeEstimate('ir', computed) || '';
     html += '<div class="tooltip-section-header">Mastery</div>';
-    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Overshoot cap</span><span>×${(computed.irCapMultiplier || 1).toFixed(2)} (max ×2.00)</span></div>`;
-    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Revenue multiple</span><span>+${Math.round((computed.irMasteryMultFraction || 0) * 100)}pp (max +20pp)</span></div>`;
+    const irMast = computed.mastery?.ir || 0;
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Overshoot cap</span><span>×${(1 + irMast).toFixed(2)} (max ×2.00)</span></div>`;
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Revenue multiple</span><span>+${Math.round(0.20 * irMast * 100)}pp (max +20pp)</span></div>`;
     html += masteryHint('ir', computed);
     html += '</div>';
     return html;
@@ -319,7 +317,8 @@ const ACTIVITY_TOOLTIPS = {
     html += '<div class="tooltip-row dim"><span>Cap increases with COO and Process Optimization</span></div>';
     html += buildupTimeEstimate('operations', computed) || '';
     html += '<div class="tooltip-section-header">Mastery</div>';
-    html += `<div class="tooltip-row" style="color: #9b59b6"><span>TFLOPS</span><span>×${(computed.tflopsMultiplier || 1).toFixed(2)} (max ×1.50)</span></div>`;
+    const opsMast = computed.mastery?.operations || 0;
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>TFLOPS</span><span>×${(1 + 0.50 * opsMast).toFixed(2)} (max ×1.50)</span></div>`;
     html += masteryHint('operations', computed);
     html += '</div>';
     return html;
@@ -337,7 +336,8 @@ const ACTIVITY_TOOLTIPS = {
     html += '<div class="tooltip-row dim"><span>All build while idle, decay while busy</span></div>';
     html += buildupTimeEstimate('public_positioning', computed) || '';
     html += '<div class="tooltip-section-header">Mastery</div>';
-    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Purchase costs</span><span>×${(computed.purchaseCostDiscount || 1).toFixed(2)} (max ×0.80)</span></div>`;
+    const ppMast = computed.mastery?.public_positioning || 0;
+    html += `<div class="tooltip-row" style="color: #9b59b6"><span>Purchase costs</span><span>×${(1 - 0.20 * ppMast).toFixed(2)} (max ×0.80)</span></div>`;
     html += masteryHint('public_positioning', computed);
     html += '</div>';
     return html;
