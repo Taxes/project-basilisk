@@ -3,6 +3,19 @@
 
 export const changelog = [
   {
+    version: '1.0.1',
+    date: '2026-04-03',
+    changes: [
+      {
+        section: 'Fixes',
+        items: [
+          'Added click-to-skip for ending scenes on replay',
+          'Fixed unreachable achievements and retroactively awarded Arc 1 completion achievements to players who completed before v1',
+        ],
+      },
+    ],
+  },
+  {
     version: '1.0.0',
     date: '2026-03-31',
     changes: [

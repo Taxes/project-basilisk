@@ -511,6 +511,9 @@ export function showEndingCinematic(endingId) {
     return;
   }
 
+  // Allow click-to-reveal on replay (player has seen at least one ending before)
+  const isReplay = (gameState.endingsSeen || []).length > 0;
+
   // Hold on black after fade-in before starting narration
   const holdDelay = debugFastMode ? 0 : 3500; // 2s fade + 1.5s silence
 
@@ -557,7 +560,7 @@ export function showEndingCinematic(endingId) {
           });
         });
       }
-    }, { skipEndTransition: true });
+    }, { skipEndTransition: true, skippable: isReplay });
   }
 
   setTimeout(playNextScene, holdDelay);

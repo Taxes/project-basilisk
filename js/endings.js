@@ -15,6 +15,14 @@ import { checkAchievements } from './achievements.js';
 import { getFocusTimePercents } from './ceo-focus.js';
 import { getPrestigeMultiplier } from './prestige.js';
 
+// --- Ending → archetype tier mapping (shared by analytics + epilogue) ---
+const ENDING_ARCHETYPE_TIER = {
+  safe_agi: 'golden',
+  fragile_safety: 'silver',
+  uncertain_outcome: 'dark',
+  catastrophic_agi: 'catastrophic',
+};
+
 // --- Shared narrative variants (used by both Arc 1 and Arc 2) ---
 
 const BANKRUPTCY_SHANNON = {
@@ -478,7 +486,7 @@ export function buildEndingAnalytics(endingId, ending, { variant = null } = {}) 
   payload.prestige_revenue_multiplier = getPrestigeMultiplier('revenueMultiplier');
   // Arc 2+ properties — personality and archetype aren't tracked in Arc 1
   if (gameState.arc >= 2) {
-    payload.archetype = getArchetype(ending.tier || 'silver');
+    payload.archetype = getArchetype(ENDING_ARCHETYPE_TIER[endingId] || ending.tier || 'silver');
     payload.personality_authority_liberty = gameState.personality?.authorityLiberty ?? 0;
     payload.personality_pluralist_optimizer = gameState.personality?.pluralistOptimizer ?? 0;
   }
@@ -560,16 +568,7 @@ export function getPersonalityEpilogue(endingId) {
   }
 
   // Map ending tier to archetype tier
-  let archetypeTier;
-  if (endingId === 'safe_agi') {
-    archetypeTier = 'golden';
-  } else if (endingId === 'fragile_safety') {
-    archetypeTier = 'silver';
-  } else if (endingId === 'uncertain_outcome') {
-    archetypeTier = 'dark';
-  } else if (endingId === 'catastrophic_agi') {
-    archetypeTier = 'catastrophic';
-  }
+  const archetypeTier = ENDING_ARCHETYPE_TIER[endingId];
 
   // Get archetype based on personality axes
   const archetypeId = getArchetype(archetypeTier);

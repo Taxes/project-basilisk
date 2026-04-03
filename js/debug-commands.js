@@ -25,6 +25,8 @@ import { formatGrantEffectsRows, formatDenyEffectsRows } from './ai-requests.js'
 import { debugModelCollapseMessage } from './data-quality.js';
 import { FLAVOR_EVENTS } from './content/flavor-event-content.js';
 import { notify } from './ui.js';
+import { ACHIEVEMENTS } from '../data/achievements.js';
+import { isEarned, getProgress } from './achievements.js';
 import { showChangelog, showEndingModal } from './ui/modals.js';
 import { VERSION, DISPLAY_VERSION } from './version.js';
 import { BALANCE } from '../data/balance.js';
@@ -488,13 +490,38 @@ const debug = {
     }
   },
 
+  achievement(id) {
+    if (!id) {
+      const { earned, total } = getProgress();
+      console.log(`[debug] Achievements: ${earned}/${total}`);
+      for (const a of ACHIEVEMENTS) {
+        const status = isEarned(a.id) ? '✓' : '○';
+        console.log(`  ${status} ${a.id} — ${a.name}`);
+      }
+      return;
+    }
+    const a = ACHIEVEMENTS.find(a => a.id === id);
+    if (!a) {
+      console.error(`[debug] Unknown achievement: ${id}. Run debug.achievement() to list.`);
+      return;
+    }
+    if (isEarned(id)) {
+      console.log(`[debug] ${id} already earned`);
+      return;
+    }
+    if (!gameState.lifetimeAllTime) gameState.lifetimeAllTime = {};
+    if (!gameState.lifetimeAllTime.achievements) gameState.lifetimeAllTime.achievements = {};
+    gameState.lifetimeAllTime.achievements[id] = { earnedAt: Date.now() };
+    console.log(`[debug] Awarded achievement: ${a.name}`);
+  },
+
   resetSeenCards() {
     gameState.ui.seenCards = [];
     console.log('[debug] Reset seenCards — all cards will show first-unlock highlight on next render');
   },
 
   versionToast() {
-    notify(`Updated to ${DISPLAY_VERSION}`, 'Arc 2: Alignment is here. View the full changelog in Settings or click here.', 'info', {
+    notify(`Updated to ${DISPLAY_VERSION}`, 'Minor fixes for achievements. View the full changelog in Settings or click here.', 'info', {
       duration: BALANCE.VERSION_TOAST_DURATION,
       onClick: () => showChangelog(),
       onDismiss: () => { gameState.lastSeenVersion = VERSION; },
@@ -526,6 +553,7 @@ const debug = {
   debug.preventEnding(bool)                   — Toggle ending prevention, omit arg to check
   debug.disableBankruptcy(bool)               — Toggle bankruptcy prevention, omit arg to check
   debug.status()                              — Show active persisted debug settings
+  debug.achievement(id)                       — Award achievement (omit id to list all)
   debug.resetSeenCards()                      — Reset first-unlock highlights
   debug.versionToast()                        — Show version update toast
   debug.resetDebug()                          — Clear all debug settings

@@ -1210,6 +1210,14 @@ export function loadGame() {
         if (gameState.lifetimeAllTime.dataCollapses === undefined) gameState.lifetimeAllTime.dataCollapses = 0;
       }
 
+      // Save migration: backfill arc1_complete achievement for players who reached Arc 2
+      // before the achievement system was added
+      if (gameState.arcUnlocked >= 2 && !gameState.lifetimeAllTime?.achievements?.arc1_complete) {
+        if (!gameState.lifetimeAllTime) gameState.lifetimeAllTime = {};
+        if (!gameState.lifetimeAllTime.achievements) gameState.lifetimeAllTime.achievements = {};
+        gameState.lifetimeAllTime.achievements.arc1_complete = { earnedAt: Date.now() };
+      }
+
       // Save migration: computeEfficiency → revenueMultiplier rename
       if (gameState.arc1Upgrades?.computeEfficiency !== undefined) {
         gameState.arc1Upgrades.revenueMultiplier = gameState.arc1Upgrades.computeEfficiency;

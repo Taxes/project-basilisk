@@ -113,10 +113,26 @@ export function splitSections(lines) {
   return sections;
 }
 
+// Helper: is this a non-action key event? (modifier keys, arrows, etc.)
+function isIgnoredKey(e) {
+  if (e.type !== 'keydown') return false;
+  if (e.metaKey || e.ctrlKey || e.altKey) return true;
+  return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Shift', 'Control', 'Alt', 'Meta', 'Tab'].includes(e.key);
+}
+
 // Core typewriter engine — types narrative lines section by section with click-to-advance
-export function typeNarrative(scrollArea, container, lines, onComplete, { skipEndTransition = false } = {}) {
+// Options:
+//   skipEndTransition: skip the final padding transition (used by Arc 2 cinematics)
+//   skippable: allow click/key to instantly reveal remaining text in a section (replay mode)
+export function typeNarrative(scrollArea, container, lines, onComplete, { skipEndTransition = false, skippable = false } = {}) {
   const sections = splitSections(lines);
   let sectionIndex = 0;
+  let pendingTimer = null;  // Current setTimeout handle — cleared on skip
+  let sectionDone = false;  // Guard against skip firing after section completes
+
+  function schedule(fn, delay) {
+    pendingTimer = setTimeout(fn, delay);
+  }
 
   // Lock user scrolling (but allow programmatic scrollBy)
   function blockScroll(e) { e.preventDefault(); }
@@ -153,12 +169,13 @@ export function typeNarrative(scrollArea, container, lines, onComplete, { skipEn
         container.style.paddingBottom = '2rem';
       }
       // Don't scroll — keep user where they just finished reading
-      setTimeout(onComplete, PROMPT_DELAY);
+      schedule(onComplete, PROMPT_DELAY);
       return;
     }
 
     const sectionLines = sections[sectionIndex];
     sectionIndex++;
+    sectionDone = false;
 
     // Create section element
     const sectionEl = document.createElement('div');
@@ -168,39 +185,98 @@ export function typeNarrative(scrollArea, container, lines, onComplete, { skipEn
     // Smooth-scroll so new section starts at consistent position
     scrollToSection(sectionEl);
 
+    // --- Skip handler: reveal all remaining lines instantly ---
+    let skipHandler = null;
+    let currentLineEl = null;  // Track the line being typed so skip can clean its cursor
+
+    function removeSkipHandler() {
+      if (skipHandler) {
+        document.removeEventListener('keydown', skipHandler);
+        document.removeEventListener('click', skipHandler);
+        skipHandler = null;
+      }
+    }
+
+    function revealRemaining() {
+      if (sectionDone) return;
+      sectionDone = true;
+      clearTimeout(pendingTimer);
+      removeSkipHandler();
+
+      // Finish the current line (remove cursor, render final text)
+      if (currentLineEl) {
+        const rawLine = sectionLines[lineIdx - 1]; // lineIdx already incremented
+        const { clean, emphStart: es, emphEnd: ee } = parseEmphasis(rawLine);
+        renderLineText(currentLineEl, clean, es, ee);
+      }
+
+      // Render all remaining lines
+      for (let i = lineIdx; i < sectionLines.length; i++) {
+        const { clean, emphStart: es, emphEnd: ee } = parseEmphasis(sectionLines[i]);
+        const el = document.createElement('div');
+        el.className = 'ending-line';
+        sectionEl.appendChild(el);
+        renderLineText(el, clean, es, ee);
+      }
+
+      onSectionComplete();
+    }
+
+    if (skippable) {
+      skipHandler = function(e) {
+        if (isIgnoredKey(e)) return;
+        e.preventDefault();
+        revealRemaining();
+      };
+      // Brief delay prevents the click that advanced the previous section from
+      // immediately skipping this one
+      setTimeout(() => {
+        if (!sectionDone) {
+          document.addEventListener('keydown', skipHandler);
+          document.addEventListener('click', skipHandler);
+        }
+      }, 300);
+    }
+
+    // --- Section complete handler ---
+    function onSectionComplete() {
+      sectionDone = true;
+      removeSkipHandler();
+
+      if (sectionIndex < sections.length) {
+        // More sections — show cursor, wait for advance
+        const cursor = document.createElement('div');
+        cursor.className = 'ending-line ending-cursor-pause';
+        cursor.textContent = '\u258C';
+        sectionEl.appendChild(cursor);
+
+        function advance(e) {
+          if (isIgnoredKey(e)) return;
+          e.preventDefault();
+          document.removeEventListener('keydown', advance);
+          document.removeEventListener('click', advance);
+          cursor.remove();
+          // Dim the completed section
+          sectionEl.classList.add('dimmed');
+          // Brief pause, then scroll up and start next section
+          setTimeout(playSection, 400);
+        }
+
+        setTimeout(() => {
+          document.addEventListener('keydown', advance);
+          document.addEventListener('click', advance);
+        }, 200);
+      } else {
+        // Last section — go to prompt
+        playSection(); // triggers unlock + onComplete
+      }
+    }
+
     // Type lines within this section
     let lineIdx = 0;
     function nextLine() {
       if (lineIdx >= sectionLines.length) {
-        // Section complete
-        if (sectionIndex < sections.length) {
-          // More sections — show cursor, wait for advance
-          const cursor = document.createElement('div');
-          cursor.className = 'ending-line ending-cursor-pause';
-          cursor.textContent = '\u258C';
-          sectionEl.appendChild(cursor);
-
-          function advance(e) {
-            if (e.type === 'keydown' && (e.metaKey || e.ctrlKey || e.altKey)) return;
-            if (e.type === 'keydown' && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Shift', 'Control', 'Alt', 'Meta', 'Tab'].includes(e.key)) return;
-            e.preventDefault();
-            document.removeEventListener('keydown', advance);
-            document.removeEventListener('click', advance);
-            cursor.remove();
-            // Dim the completed section
-            sectionEl.classList.add('dimmed');
-            // Brief pause, then scroll up and start next section
-            setTimeout(playSection, 400);
-          }
-
-          setTimeout(() => {
-            document.addEventListener('keydown', advance);
-            document.addEventListener('click', advance);
-          }, 200);
-        } else {
-          // Last section — go to prompt
-          playSection(); // triggers unlock + onComplete
-        }
+        if (!sectionDone) onSectionComplete();
         return;
       }
 
@@ -212,11 +288,13 @@ export function typeNarrative(scrollArea, container, lines, onComplete, { skipEn
       const lineEl = document.createElement('div');
       lineEl.className = 'ending-line';
       sectionEl.appendChild(lineEl);
+      currentLineEl = lineEl;
 
       // Typewriter effect with trailing cursor and sentence pauses
       let charIndex = 0;
       const CURSOR = '\u258C';
       function typeChar() {
+        if (sectionDone) return; // Skip fired — stop typing
         if (charIndex < line.length) {
           const partial = line.substring(0, charIndex + 1);
           renderLineText(lineEl, partial + CURSOR, emphStart, emphEnd);
@@ -225,15 +303,17 @@ export function typeNarrative(scrollArea, container, lines, onComplete, { skipEn
           // Sentence break: pause with blinking cursor
           if (isSentenceBreak(line, charIndex)) {
             showBlinkCursor(lineEl, line.substring(0, charIndex), emphStart, emphEnd);
-            setTimeout(typeChar, SENTENCE_PAUSE);
+            schedule(typeChar, SENTENCE_PAUSE);
           } else {
-            setTimeout(typeChar, CHAR_DELAY);
+            schedule(typeChar, CHAR_DELAY);
           }
         } else {
           // End of line: blink cursor during pause, then advance
           showBlinkCursor(lineEl, line, emphStart, emphEnd);
-          setTimeout(() => {
+          schedule(() => {
+            if (sectionDone) return;
             renderLineText(lineEl, line, emphStart, emphEnd);
+            currentLineEl = null;
             nextLine();
           }, LINE_PAUSE);
         }

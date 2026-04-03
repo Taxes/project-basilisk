@@ -499,7 +499,7 @@ function initializeGame() {
 
   // Version update toast for returning players
   if (loaded && gameState.lastSeenVersion != null && gameState.lastSeenVersion < VERSION && changelog[0]?.version === VERSION) {
-    notify(`Updated to ${DISPLAY_VERSION}`, 'Arc 2: Alignment is here. View the full changelog in Settings or click here.', 'info', {
+    notify(`Updated to ${DISPLAY_VERSION}`, 'Minor fixes for achievements. View the full changelog in Settings or click here.', 'info', {
       duration: BALANCE.VERSION_TOAST_DURATION,
       onClick: () => showChangelog(),
       onDismiss: () => { gameState.lastSeenVersion = VERSION; },
