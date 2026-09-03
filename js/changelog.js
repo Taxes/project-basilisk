@@ -3,6 +3,18 @@
 
 export const changelog = [
   {
+    version: '1.0.2',
+    date: '2026-09-03',
+    changes: [
+      {
+        section: 'Fixes',
+        items: [
+          'Fixed an Arc 1 culture bonus that dropped out at full capabilities/applications focus',
+        ],
+      },
+    ],
+  },
+  {
     version: '1.0.1',
     date: '2026-04-03',
     changes: [

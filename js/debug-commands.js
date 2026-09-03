@@ -521,7 +521,7 @@ const debug = {
   },
 
   versionToast() {
-    notify(`Updated to ${DISPLAY_VERSION}`, 'Minor fixes for achievements. View the full changelog in Settings or click here.', 'info', {
+    notify(`Updated to ${DISPLAY_VERSION}`, 'Fixed arc 1 culture bonus bug. View the full changelog in Settings or click here.', 'info', {
       duration: BALANCE.VERSION_TOAST_DURATION,
       onClick: () => showChangelog(),
       onDismiss: () => { gameState.lastSeenVersion = VERSION; },

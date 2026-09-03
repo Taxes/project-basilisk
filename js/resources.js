@@ -531,13 +531,13 @@ export function computeCultureAxes() {
   const l = trks.alignment.researcherAllocation;
   const B = BALANCE;
 
-  // Arc 1: suppress axes at single-zero (early-game protection).
-  // Arc 2: zero allocation = max lean, not suppression.
-  // Axes 2 & 3 require fine_tuning — before the alignment slider is revealed,
-  // l=0 is forced (not a player choice), so treat as suppressed.
+  // Each axis is suppressed until its non-capabilities track is revealed —
+  // before that, its allocation is forced by defaults, not a player choice.
+  // Once revealed, zero allocation is a deliberate max-lean choice, not suppression.
   const arc1 = gameState.arc < 2;
+  const appsRevealed = gameState.tracks.capabilities.unlockedCapabilities.includes('basic_transformer');
   const alignmentRevealed = gameState.tracks.capabilities.unlockedCapabilities.includes('fine_tuning');
-  const pos1 = (arc1 && (c <= 0 || a <= 0)) ? 0 : axisPosition(c, a);
+  const pos1 = (arc1 && !appsRevealed) ? 0 : axisPosition(c, a);
   const pos2 = (arc1 || !alignmentRevealed) ? 0 : axisPosition(c, l);
   const pos3 = (arc1 || !alignmentRevealed) ? 0 : axisPosition(a, l);
 
